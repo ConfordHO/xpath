@@ -30,13 +30,20 @@ import {
 
 import { useState } from 'react'
 
+import {
+  Cell,
+  Pie,
+  PieChart,
+  ResponsiveContainer,
+  Tooltip,
+} from 'recharts'
+
 import { Link as RouterLink, useParams } from 'react-router-dom'
 
 import { api } from '../api'
 
 import {
   CourierChip,
-  EChartPanel,
   EmptyState,
   LoadingPanel,
   MetricCard,
@@ -48,7 +55,6 @@ import { chartColors, errorMessage, PageError, useActionLock, useLoadable } from
 
 import type {
   FinanceSummary,
-  FinanceMonthlyTrendPoint,
   HydratedOrder,
   MavianceGatewayConfig,
   MavianceTransaction,
@@ -71,54 +77,6 @@ const mavianceChannels = [
   { value: 'orange_cameroon', label: 'Orange Money' },
 ] as const
 
-function buildPaymentsMethodOption(summary: FinanceSummary) {
-  const entries = Object.entries(summary.paymentsByMethod)
-    .filter(([, value]) => value > 0)
-    .map(([method, amount]) => ({
-      name: paymentMethodLabel(method as FinanceSummary['transactions'][number]['method']),
-      value: amount,
-    }))
-
-  return {
-    tooltip: { trigger: 'item' as const },
-    legend: { bottom: 0 },
-    series: [
-      {
-        type: 'pie' as const,
-        radius: ['42%', '70%'],
-        data: entries,
-      },
-    ],
-  }
-}
-
-function buildMonthlyRevenueOption(points: FinanceMonthlyTrendPoint[]) {
-  return {
-    tooltip: { trigger: 'axis' as const },
-    legend: { bottom: 0 },
-    xAxis: {
-      type: 'category' as const,
-      data: points.map((item) => item.label),
-    },
-    yAxis: { type: 'value' as const },
-    series: [
-      {
-        name: 'Revenue',
-        type: 'bar' as const,
-        itemStyle: { color: chartColors[0] },
-        data: points.map((item) => item.totalRevenue),
-      },
-      {
-        name: 'Transactions',
-        type: 'line' as const,
-        smooth: true,
-        itemStyle: { color: chartColors[1] },
-        data: points.map((item) => item.transactionCount),
-      },
-    ],
-  }
-}
-
 export function FinancePage() {
   const actionLock = useActionLock()
   const summaryState = useLoadable<FinanceSummary | null>(null, [], async () => {
@@ -135,12 +93,6 @@ export function FinancePage() {
   })
   const mavianceTransactionsState = useLoadable<Array<MavianceTransaction & { order: HydratedOrder }>>([], [], async () => {
     const response = await api.get<Array<MavianceTransaction & { order: HydratedOrder }>>('/payments/maviance/transactions')
-    return response.data
-  })
-  const monthlyTrendState = useLoadable<FinanceMonthlyTrendPoint[]>([], [], async () => {
-    const response = await api.get<FinanceMonthlyTrendPoint[]>('/finance/monthly-trends', {
-      params: { months: 12 },
-    })
     return response.data
   })
   const [dialogOpen, setDialogOpen] = useState(false)
@@ -179,10 +131,12 @@ export function FinancePage() {
     tag: '',
   })
 
-  if (summaryState.loading || ordersState.loading || monthlyTrendState.loading) return <LoadingPanel label="Loading finance…" />
+  if (summaryState.loading || ordersState.loading) return <LoadingPanel label="Loading finance…" />
   if (summaryState.error || !summaryState.data) return <PageError message={summaryState.error ?? 'Could not load finance'} />
-  const paymentMethodOption = buildPaymentsMethodOption(summaryState.data)
-  const monthlyRevenueOption = buildMonthlyRevenueOption(monthlyTrendState.data)
+
+  const pieData = Object.entries(summaryState.data.paymentsByMethod)
+    .filter(([, value]) => value > 0)
+    .map(([name, value]) => ({ name: paymentMethodLabel(name as FinanceSummary['transactions'][number]['method']), value }))
   const completedAmountsByOrder = summaryState.data.transactions
     .filter((payment) => payment.status === 'completed')
     .reduce<Record<string, number>>((acc, payment) => {
@@ -238,7 +192,6 @@ export function FinancePage() {
     ordersState.refresh()
     mavianceConfigState.refresh()
     mavianceTransactionsState.refresh()
-    monthlyTrendState.refresh()
   }
 
   const selectedOrder = ordersState.data.data.find((order) => order._id === paymentForm.orderId)
@@ -349,11 +302,11 @@ export function FinancePage() {
             ))}
           </Stack>
         </SectionCard>
-        <SectionCard title="Recent Maviance collections" description="Track MTN and Orange payment prompts, then verify pending ones." scrollable maxBodyHeight={360}>
+        <SectionCard title="Recent Maviance collections" description="Track MTN and Orange payment prompts, then verify pending ones.">
           {mavianceTransactionsState.error ? <Alert severity="error">{mavianceTransactionsState.error}</Alert> : null}
           {mavianceTransactionsState.data.length ? (
             <Stack spacing={1.5}>
-              {mavianceTransactionsState.data.slice(0, 10).map((transaction) => (
+              {mavianceTransactionsState.data.slice(0, 5).map((transaction) => (
                 <Paper key={transaction._id} sx={{ p: 2 }}>
                   <Stack direction={{ xs: 'column', md: 'row' }} spacing={1.5} justifyContent="space-between">
                     <Box>
@@ -390,17 +343,28 @@ export function FinancePage() {
         </SectionCard>
       </Box>
       <Box sx={{ display: 'grid', gap: 2, gridTemplateColumns: { xs: '1fr', xl: '1fr 1fr' } }}>
-        <EChartPanel title="Payments by method" option={paymentMethodOption} />
-        <EChartPanel
-          title="Monthly revenue"
-          description="Month by month totals and transaction volume."
-          option={monthlyRevenueOption}
-        />
+        <SectionCard title="Payments by method">
+          <Box sx={{ height: 280, minWidth: 0 }}>
+            <ResponsiveContainer width="100%" height="100%">
+              <PieChart>
+                <Pie data={pieData} dataKey="value" nameKey="name" outerRadius={92} label>
+                  {pieData.map((entry, index) => (
+                    <Cell key={entry.name} fill={chartColors[index % chartColors.length]} />
+                  ))}
+                </Pie>
+                <Tooltip />
+              </PieChart>
+            </ResponsiveContainer>
+          </Box>
+        </SectionCard>
+        <SectionCard title="Revenue (last 7 days)">
+          <EmptyState title="No revenue in the last 7 days" body="Transaction activity will appear here as payments are processed." />
+        </SectionCard>
       </Box>
-      <SectionCard title="Outstanding clearance queue" description="Orders remain here until they are financially cleared or fully paid." scrollable maxBodyHeight={420}>
+      <SectionCard title="Outstanding clearance queue" description="Orders remain here until they are financially cleared or fully paid.">
         {outstandingOrders.length ? (
           <Stack spacing={1.5}>
-            {outstandingOrders.slice(0, 10).map(({ order, totalAmount, paidAmount, outstandingAmount }) => (
+            {outstandingOrders.slice(0, 8).map(({ order, totalAmount, paidAmount, outstandingAmount }) => (
               <Paper key={order._id} sx={{ p: 2 }}>
                 <Stack direction={{ xs: 'column', lg: 'row' }} spacing={1.5} justifyContent="space-between">
                   <Box>
@@ -428,7 +392,7 @@ export function FinancePage() {
         )}
       </SectionCard>
       <SectionCard title="Transactions">
-        <TableContainer sx={{ maxHeight: 460 }}>
+        <TableContainer>
           <Table>
             <TableHead>
               <TableRow>
@@ -443,7 +407,7 @@ export function FinancePage() {
               </TableRow>
             </TableHead>
             <TableBody>
-              {summaryState.data.transactions.slice(0, 10).map((payment) => (
+              {summaryState.data.transactions.map((payment) => (
                 <TableRow key={payment._id}>
                   <TableCell>{formatDateTime(payment.createdAt)}</TableCell>
                   <TableCell>{payment.order.orderNumber}</TableCell>
@@ -1007,21 +971,19 @@ export function NotificationsPage() {
   return (
     <Stack spacing={3}>
       <PageHeader title="Notifications" />
-      <SectionCard title="Messages" scrollable maxBodyHeight={640}>
-        <Stack spacing={2}>
-          {notificationsState.data.slice(0, 10).map((item) => (
-            <Paper key={item._id} sx={{ p: 3 }}>
-              <Typography variant="h6">{item.title}</Typography>
-              <Typography color="text.secondary" sx={{ mt: 1 }}>{item.body}</Typography>
-              {!item.read ? (
-                <Button sx={{ mt: 2 }} onClick={async () => { await api.post(`/notifications/${item._id}/read`); notificationsState.refresh() }}>
-                  Mark read
-                </Button>
-              ) : null}
-            </Paper>
-          ))}
-        </Stack>
-      </SectionCard>
+      <Stack spacing={2}>
+        {notificationsState.data.map((item) => (
+          <Paper key={item._id} sx={{ p: 3 }}>
+            <Typography variant="h6">{item.title}</Typography>
+            <Typography color="text.secondary" sx={{ mt: 1 }}>{item.body}</Typography>
+            {!item.read ? (
+              <Button sx={{ mt: 2 }} onClick={async () => { await api.post(`/notifications/${item._id}/read`); notificationsState.refresh() }}>
+                Mark read
+              </Button>
+            ) : null}
+          </Paper>
+        ))}
+      </Stack>
     </Stack>
   )
 }

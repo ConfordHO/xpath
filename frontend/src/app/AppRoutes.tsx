@@ -3,7 +3,6 @@ import { Navigate, Route, Routes } from 'react-router-dom'
 import {
   AnalyticalOperationsPage,
   ClinicalOperationsPage,
-  CommunicationsPage,
   CreateOrderPage,
   CourierPage,
   CytologyCasesPage,
@@ -100,7 +99,6 @@ export function AppRoutes() {
 
         <Route element={<RoleGuard roles={['super_admin', 'admin', 'receptionist', 'technician', 'pathologist', 'finance', 'courier']} />}>
           <Route path="/notifications" element={<NotificationsPage />} />
-          <Route path="/communications" element={<CommunicationsPage />} />
         </Route>
 
         <Route element={<RoleGuard roles={['super_admin', 'admin']} />}>

@@ -1,7 +1,6 @@
 export { AppShell } from './components/AppShell'
 export { BrandLogo } from './components/BrandLogo'
 export { EmptyState } from './components/EmptyState'
-export { EChartPanel } from './components/EChartPanel'
 export { LoadingPanel } from './components/LoadingPanel'
 export { MetricCard } from './components/MetricCard'
 export { PageHeader } from './components/PageHeader'

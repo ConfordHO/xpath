@@ -922,25 +922,6 @@ export interface CommunicationLog {
   updatedAt: string;
 }
 
-export type InternalMessageRecipientType = "role" | "user" | "broadcast";
-
-export interface InternalMessage {
-  _id: string;
-  siteId?: string | null;
-  senderUserId: string;
-  senderName: string;
-  senderRole: UserRole;
-  recipientType: InternalMessageRecipientType;
-  recipientRole?: UserRole | null;
-  recipientUserId?: string | null;
-  subject?: string | null;
-  message: string;
-  relatedOrderId?: string | null;
-  readByUserIds: string[];
-  createdAt: string;
-  updatedAt: string;
-}
-
 export interface QualityEvent {
   _id: string;
   module: string;
@@ -1015,12 +996,7 @@ export interface AuditEvent {
   action: string;
   targetId: string;
   actor: string;
-  actorUserId?: string | null;
-  actorRole?: UserRole | null;
-  orderId?: string | null;
-  siteId?: string | null;
   summary: string;
-  details?: string | null;
   createdAt: string;
 }
 
@@ -1187,7 +1163,6 @@ export interface Database {
   workflowHistory: WorkflowHistoryEntry[];
   notifications: Notification[];
   communicationLogs: CommunicationLog[];
-  internalMessages: InternalMessage[];
   qualityEvents: QualityEvent[];
   tatAlerts: TatAlert[];
   archiveRecords: ArchiveRecord[];

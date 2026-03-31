@@ -2,8 +2,6 @@ import { Alert, LinearProgress } from '@mui/material'
 import axios from 'axios'
 import { useEffect, useEffectEvent, useRef, useState, type DependencyList } from 'react'
 
-import { api, getStoredToken } from '../api'
-
 export function errorMessage(error: unknown) {
   if (axios.isAxiosError(error)) {
     return String(error.response?.data?.message ?? error.message)
@@ -53,72 +51,6 @@ export function TablePlaceholder({ loading }: { loading: boolean }) {
 }
 
 export const chartColors = ['#1565c0', '#2e7d32', '#ed6c02', '#8b5e34']
-
-export type AnalyticsRange = 'daily' | 'weekly' | 'monthly' | 'custom'
-
-export function useRealtimeStream(
-  path: string,
-  onEvent: (eventName: string, payload: unknown) => void,
-  enabled = true,
-) {
-  const [connected, setConnected] = useState(false)
-  const handleEvent = useEffectEvent(onEvent)
-  const hasConnectedRef = useRef(false)
-
-  useEffect(() => {
-    if (!enabled) {
-      setConnected(false)
-      hasConnectedRef.current = false
-      return
-    }
-
-    const token = getStoredToken()
-    const baseUrl = String(api.defaults.baseURL ?? '')
-    if (!token || !baseUrl) {
-      setConnected(false)
-      hasConnectedRef.current = false
-      return
-    }
-
-    const normalizedBaseUrl = baseUrl.startsWith('http')
-      ? baseUrl
-      : `${window.location.origin}${baseUrl.startsWith('/') ? baseUrl : `/${baseUrl}`}`
-
-    const url = new URL(
-      `${normalizedBaseUrl.replace(/\/+$/, '')}${path.startsWith('/') ? path : `/${path}`}`,
-    )
-    url.searchParams.set('token', token)
-    const source = new EventSource(url.toString())
-
-    source.onopen = () => {
-      hasConnectedRef.current = true
-      setConnected(true)
-    }
-    source.addEventListener('connected', () => setConnected(true))
-    source.addEventListener('heartbeat', () => setConnected(true))
-    source.addEventListener('internal-message', (event) => {
-      setConnected(true)
-      handleEvent('internal-message', JSON.parse((event as MessageEvent<string>).data))
-    })
-    source.addEventListener('message-read', (event) => {
-      setConnected(true)
-      handleEvent('message-read', JSON.parse((event as MessageEvent<string>).data))
-    })
-    source.onerror = () => {
-      if (!hasConnectedRef.current || source.readyState === EventSource.CLOSED) {
-        setConnected(false)
-      }
-    }
-
-    return () => {
-      source.close()
-      setConnected(false)
-      hasConnectedRef.current = false
-    }
-  }, [enabled, handleEvent, path])
-
-  return connected
-}
 
 export function useActionLock() {
   const [pendingMap, setPendingMap] = useState<Record<string, boolean>>({})

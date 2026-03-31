@@ -1,4 +1,4 @@
-import { Box, Paper, Stack, Typography, type SxProps, type Theme } from '@mui/material'
+import { Box, Paper, Stack, Typography } from '@mui/material'
 import type { ReactNode } from 'react'
 
 interface SectionCardProps {
@@ -6,31 +6,9 @@ interface SectionCardProps {
   description?: string
   children: ReactNode
   action?: ReactNode
-  scrollable?: boolean
-  maxBodyHeight?: number | string
-  bodySx?: SxProps<Theme>
 }
 
-export function SectionCard({
-  title,
-  description,
-  children,
-  action,
-  scrollable = false,
-  maxBodyHeight = 420,
-  bodySx,
-}: SectionCardProps) {
-  const mergedBodySx: SxProps<Theme> | undefined = scrollable
-    ? ([
-        {
-          maxHeight: maxBodyHeight,
-          overflowY: 'auto',
-          pr: 0.5,
-        },
-        ...((Array.isArray(bodySx) ? bodySx : bodySx ? [bodySx] : []) as SxProps<Theme>[]),
-      ] as SxProps<Theme>)
-    : bodySx
-
+export function SectionCard({ title, description, children, action }: SectionCardProps) {
   return (
     <Paper sx={{ p: 3 }}>
       {title || action ? (
@@ -52,9 +30,7 @@ export function SectionCard({
           {action}
         </Stack>
       ) : null}
-      <Box sx={mergedBodySx}>
-        {children}
-      </Box>
+      {children}
     </Paper>
   )
 }

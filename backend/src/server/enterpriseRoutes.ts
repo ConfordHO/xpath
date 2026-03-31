@@ -17,7 +17,6 @@ import {
   sameTrimmedText,
   scopeDbForUser,
 } from "./helpers.js";
-import { buildAnalyticsOverview, recordAuditEvent, recordOrderAudit, syncOrderTat } from "./observability.js";
 import { registerVendorIntegrationRoutes } from "./vendorIntegrations.js";
 
 type CollectionName =
@@ -67,33 +66,15 @@ function logAudit(
   targetId: string,
   actor: string,
   summary: string,
-  context?: {
-    actorUserId?: string | null;
-    actorRole?: UserRole | null;
-    orderId?: string | null;
-    siteId?: string | null;
-    details?: string | null;
-  },
 ) {
-  recordAuditEvent(db, {
+  db.auditEvents.unshift({
+    _id: createId(),
     module,
     action,
     targetId,
-    actorName: actor,
+    actor,
     summary,
-    actorUser:
-      context?.actorUserId && context?.actorRole
-        ? ({
-            _id: context.actorUserId,
-            role: context.actorRole,
-            name: actor,
-            email: actor,
-            siteId: context.siteId ?? null,
-          } as const)
-        : null,
-    orderId: context?.orderId ?? null,
-    siteId: context?.siteId ?? null,
-    details: context?.details ?? null,
+    createdAt: now(),
   });
 }
 
@@ -724,15 +705,13 @@ export function registerEnterpriseRoutes(app: express.Express) {
       order.validationStatus = parsed.data.validationStatus;
       order.validationNotes = parsed.data.validationNotes ?? "";
       order.updatedAt = now();
-      recordOrderAudit(
+      logAudit(
         db,
-        order,
-        req.user,
+        "Order Management",
         "validate",
+        order._id,
+        actorName(req),
         `Order ${order.orderNumber} validation set to ${parsed.data.validationStatus}`,
-        {
-          module: "Order Management",
-        },
       );
       return hydrateOrder(db, order);
     }).catch((error: Error) => {
@@ -766,10 +745,14 @@ export function registerEnterpriseRoutes(app: express.Express) {
         .filter(Boolean)
         .join("\n");
       order.updatedAt = now();
-      recordOrderAudit(db, order, req.user, "amend", `Order ${order.orderNumber} amended`, {
-        module: "Order Management",
-        details: `${parsed.data.reason}: ${parsed.data.details}`,
-      });
+      logAudit(
+        db,
+        "Order Management",
+        "amend",
+        order._id,
+        actorName(req),
+        `Order ${order.orderNumber} amended`,
+      );
       return amendment;
     }).catch((error: Error) => {
       res.status(404).json({ message: error.message });
@@ -800,10 +783,14 @@ export function registerEnterpriseRoutes(app: express.Express) {
         createdBy: req.user?._id ?? "system",
         createdAt: now(),
       });
-      recordOrderAudit(db, order, req.user, "add_on_tests", `Add-on tests applied to ${order.orderNumber}`, {
-        module: "Billing",
-        details: parsed.data.testTypeIds.join(", "),
-      });
+      logAudit(
+        db,
+        "Billing",
+        "add_on_tests",
+        order._id,
+        actorName(req),
+        `Add-on tests applied to ${order.orderNumber}`,
+      );
       return hydrateOrder(db, order);
     }).catch((error: Error) => {
       res.status(404).json({ message: error.message });
@@ -836,10 +823,14 @@ export function registerEnterpriseRoutes(app: express.Express) {
         createdAt: now(),
       });
       addNotification(db, "Order cancelled", `Order ${order.orderNumber} was cancelled.`);
-      recordOrderAudit(db, order, req.user, "cancel", `Order ${order.orderNumber} cancelled`, {
-        module: "Order Management",
-        details: parsed.data.reason,
-      });
+      logAudit(
+        db,
+        "Order Management",
+        "cancel",
+        order._id,
+        actorName(req),
+        `Order ${order.orderNumber} cancelled`,
+      );
       return hydrateOrder(db, order);
     }).catch((error: Error) => {
       res.status(404).json({ message: error.message });
@@ -860,15 +851,13 @@ export function registerEnterpriseRoutes(app: express.Express) {
       const order = findOrder(db, String(req.params.id));
       order.financialClearance = parsed.data.financialClearance;
       order.updatedAt = now();
-      recordOrderAudit(
+      logAudit(
         db,
-        order,
-        req.user,
+        "Finance",
         "financial_clearance",
+        order._id,
+        actorName(req),
         `Order ${order.orderNumber} financial clearance set to ${parsed.data.financialClearance}`,
-        {
-          module: "Finance",
-        },
       );
       return hydrateOrder(db, order);
     }).catch((error: Error) => {
@@ -972,7 +961,6 @@ export function registerEnterpriseRoutes(app: express.Express) {
       if (!existingReport) {
         throw new Error("Report not found");
       }
-      const order = findOrder(db, existingReport.orderId);
       existingReport.addenda ??= [];
       const duplicate = existingReport.addenda.find(
         (entry) =>
@@ -989,11 +977,14 @@ export function registerEnterpriseRoutes(app: express.Express) {
         createdAt: now(),
       });
       existingReport.updatedAt = now();
-      recordOrderAudit(db, order, req.user, "report_addendum", `Addendum added to ${order.orderNumber}`, {
-        module: "Reporting",
-        targetId: existingReport._id,
-        details: parsed.data.note,
-      });
+      logAudit(
+        db,
+        "Reporting",
+        "addendum",
+        existingReport._id,
+        actorName(req),
+        `Addendum added to report ${existingReport._id}`,
+      );
       return existingReport;
     }).catch((error: Error) => {
       res.status(404).json({ message: error.message });
@@ -1010,7 +1001,6 @@ export function registerEnterpriseRoutes(app: express.Express) {
       if (!existingReport) {
         throw new Error("Report not found");
       }
-      const order = findOrder(db, existingReport.orderId);
       if (
         existingReport.signedAt &&
         existingReport.signedBy === (req.user?.name ?? req.user?.email ?? "Unknown")
@@ -1021,10 +1011,14 @@ export function registerEnterpriseRoutes(app: express.Express) {
       existingReport.signedAt = now();
       existingReport.releaseRuleStatus = "ready";
       existingReport.updatedAt = now();
-      recordOrderAudit(db, order, req.user, "report_sign", `Report for ${order.orderNumber} digitally signed`, {
-        module: "Reporting",
-        targetId: existingReport._id,
-      });
+      logAudit(
+        db,
+        "Reporting",
+        "sign",
+        existingReport._id,
+        actorName(req),
+        `Report ${existingReport._id} digitally signed`,
+      );
       return existingReport;
     }).catch((error: Error) => {
       res.status(404).json({ message: error.message });
@@ -1068,18 +1062,19 @@ export function registerEnterpriseRoutes(app: express.Express) {
 
   app.get("/api/tat/summary", requireRoles("admin"), async (req: AuthRequest, res) => {
     const db = scopeDbForUser(await loadDb(), ensureUser(req));
-    const overview = buildAnalyticsOverview(db, {
-      range: typeof req.query.range === "string" ? req.query.range : undefined,
-      start: typeof req.query.start === "string" ? req.query.start : undefined,
-      end: typeof req.query.end === "string" ? req.query.end : undefined,
-    });
+    const riskCount = db.tatAlerts.filter((entry) => entry.status === "risk").length;
+    const breachCount = db.tatAlerts.filter((entry) => entry.status === "breach").length;
+    const averagePreAnalytics =
+      db.preAnalyticsLogs.length > 0
+        ? Math.round(
+            db.preAnalyticsLogs.reduce((sum, entry) => sum + entry.tatMinutes, 0) /
+              db.preAnalyticsLogs.length,
+          )
+        : 0;
     res.json({
-      averagePreAnalyticsMinutes:
-        overview.tat.byPhase.find((entry) => entry.phase === "pre_analytics")?.averageMinutes ?? 0,
-      averageOverallMinutes: overview.tat.overallAverageMinutes,
-      riskCount: overview.tat.riskCount,
-      breachCount: overview.tat.breachCount,
-      byPhase: overview.tat.byPhase,
+      averagePreAnalyticsMinutes: averagePreAnalytics,
+      riskCount,
+      breachCount,
       openAlerts: db.tatAlerts,
     });
   });
@@ -1099,17 +1094,6 @@ export function registerEnterpriseRoutes(app: express.Express) {
       multiSiteTransfers: db.siteTransfers.length,
       deidentifiedExports,
     });
-  });
-
-  app.get("/api/analytics/overview", requireRoles("admin", "finance"), async (req: AuthRequest, res) => {
-    const db = scopeDbForUser(await loadDb(), ensureUser(req));
-    res.json(
-      buildAnalyticsOverview(db, {
-        range: typeof req.query.range === "string" ? req.query.range : undefined,
-        start: typeof req.query.start === "string" ? req.query.start : undefined,
-        end: typeof req.query.end === "string" ? req.query.end : undefined,
-      }),
-    );
   });
 
   app.get("/api/audit/events", requireRoles("admin"), async (req: AuthRequest, res) => {
