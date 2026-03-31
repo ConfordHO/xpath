@@ -62,6 +62,11 @@ import {
   userCanManageUser,
 } from "./server/helpers.js";
 import {
+  buildDerivedOrderAuditTrail,
+  buildFinanceMonthlyTrend,
+  recordOrderAudit,
+} from "./server/observability.js";
+import {
   getOrderWorkflowPlan,
   inferAnalyzerRunType,
   inferCytologyCaseDefaults,
@@ -82,6 +87,7 @@ import {
 } from "./server/schemas.js";
 import { registerEnterpriseRoutes } from "./server/enterpriseRoutes.js";
 import { registerHl7IntegrationRoutes, startHl7MllpListener } from "./server/hl7Integration.js";
+import { registerInternalMessagingRoutes } from "./server/internalMessaging.js";
 import {
   initiateMavianceCollection,
   isMavianceMethod,
@@ -927,6 +933,10 @@ app.post("/api/public/order-request", async (req, res) => {
       updatedAt: timestamp,
     };
     db.orders.push(order);
+    recordOrderAudit(db, order, null, "create_public_order", `Public requisition ${order.orderNumber} submitted`, {
+      module: "Order Intake",
+      details: `Tests: ${parsed.testTypeIds.join(", ")}`,
+    });
     if (reservation) {
       reservation.status = "consumed";
       reservation.updatedAt = timestamp;
@@ -941,6 +951,8 @@ app.post("/api/public/order-request", async (req, res) => {
     orderNumber: result.orderNumber,
   });
 });
+
+registerInternalMessagingRoutes(app);
 
 app.use("/api", requireAuth);
 
@@ -1414,6 +1426,9 @@ app.get("/api/orders/:id", async (req: AuthRequest, res) => {
     const accession = getAccessionByOrder(db, order._id);
     const sample = getSampleByOrder(db, order._id);
     const report = buildReport(db, order);
+    const auditTrail = db.auditEvents
+      .filter((entry) => entry.orderId === order._id)
+      .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
     res.json({
       ...hydrateOrder(db, order),
       patient,
@@ -1424,6 +1439,7 @@ app.get("/api/orders/:id", async (req: AuthRequest, res) => {
       sample,
       report,
       timeline: buildTimeline(db, order),
+      auditTrail: auditTrail.length ? auditTrail : buildDerivedOrderAuditTrail(db, order),
     });
   } catch (error) {
     res.status(404).json({ message: (error as Error).message });
@@ -1483,6 +1499,10 @@ app.post("/api/orders", requireRoles("admin", "receptionist"), async (req: AuthR
       updatedAt: timestamp,
     };
     db.orders.push(order);
+    recordOrderAudit(db, order, currentUser, "create_order", `Order ${order.orderNumber} created`, {
+      module: "Order Intake",
+      details: `Source ${order.orderSource}; priority ${order.priority}`,
+    });
     return order;
   });
 
@@ -1527,6 +1547,10 @@ app.post("/api/orders/create", requireRoles("admin", "receptionist"), async (req
       updatedAt: timestamp,
     };
     db.orders.push(order);
+    recordOrderAudit(db, order, currentUser, "create_order", `Order ${order.orderNumber} created`, {
+      module: "Order Intake",
+      details: `Source ${order.orderSource}; priority ${order.priority}`,
+    });
     return order;
   });
 
@@ -1544,6 +1568,17 @@ app.put("/api/orders/:id", requireRoles("admin", "receptionist"), async (req: Au
 
   const updated = await updateDb((db) => {
     const order = getAccessibleOrderOrThrow(db, req, req.params.id);
+    const before = JSON.stringify({
+      patientId: order.patientId,
+      testTypeIds: order.testTypeIds,
+      priority: order.priority,
+      orderSource: order.orderSource,
+      referringDoctorId: order.referringDoctorId,
+      referringDoctorName: order.referringDoctorName,
+      notes: order.notes,
+      clinicalHistory: order.clinicalHistory,
+      siteId: order.siteId,
+    });
     if (parsed.data.patientId !== undefined) order.patientId = parsed.data.patientId;
     if (parsed.data.testTypeIds !== undefined) order.testTypeIds = parsed.data.testTypeIds;
     if (parsed.data.priority !== undefined) order.priority = parsed.data.priority;
@@ -1564,6 +1599,22 @@ app.put("/api/orders/:id", requireRoles("admin", "receptionist"), async (req: Au
         : normalizeSiteId(currentUser.siteId);
     }
     order.updatedAt = now();
+    const after = JSON.stringify({
+      patientId: order.patientId,
+      testTypeIds: order.testTypeIds,
+      priority: order.priority,
+      orderSource: order.orderSource,
+      referringDoctorId: order.referringDoctorId,
+      referringDoctorName: order.referringDoctorName,
+      notes: order.notes,
+      clinicalHistory: order.clinicalHistory,
+      siteId: order.siteId,
+    });
+    if (before !== after) {
+      recordOrderAudit(db, order, currentUser, "update_order", `Order ${order.orderNumber} details updated`, {
+        module: "Order Intake",
+      });
+    }
     return order;
   }).catch((error: Error) => {
     res.status(
@@ -1595,6 +1646,9 @@ app.post(
     order.status = "received";
     order.receivedAt = order.receivedAt ?? now();
     order.updatedAt = now();
+    recordOrderAudit(db, order, req.user, "mark_received", `Order ${order.orderNumber} marked as received`, {
+      module: "Order Workflow",
+    });
     return order;
   }).catch((error: Error) => {
     res.status(error.message.includes("access") ? 403 : 400).json({ message: error.message });
@@ -1678,6 +1732,11 @@ app.post("/api/orders/:id/payment", requireRoles("admin", "finance"), async (req
     if (parsed.data.status === "completed" && getOrderPaid(db, order._id) >= getOrderTotal(db, order)) {
       order.financialClearance = "cleared";
     }
+    recordOrderAudit(db, order, req.user, "record_payment", `Payment recorded for ${order.orderNumber}`, {
+      module: "Finance",
+      targetId: created._id,
+      details: `${created.amount} via ${created.method} (${created.status})`,
+    });
     return created;
   }).catch((error: Error) => {
     res.status(404).json({ message: error.message });
@@ -1708,6 +1767,11 @@ app.post(
     }
     payment.confirmedWithPatientAt = now();
     payment.updatedAt = now();
+    const order = findOrder(db, payment.orderId);
+    recordOrderAudit(db, order, req.user, "confirm_payment", `Payment confirmed with patient for ${order.orderNumber}`, {
+      module: "Finance",
+      targetId: payment._id,
+    });
     return payment;
   }).catch((error: Error) => {
     res.status(400).json({ message: error.message });
@@ -1734,6 +1798,9 @@ app.post(
     order.courierStatus = "ready_for_pickup";
     order.courierCheckedInAt = order.courierCheckedInAt ?? timestamp;
     order.updatedAt = timestamp;
+    recordOrderAudit(db, order, req.user, "courier_check_in", `Courier workflow started for ${order.orderNumber}`, {
+      module: "Courier",
+    });
     return order;
   }).catch((error: Error) => {
     res.status(
@@ -1785,6 +1852,16 @@ app.post(
       }
     }
     order.updatedAt = now();
+    recordOrderAudit(
+      db,
+      order,
+      req.user,
+      "courier_status",
+      `Courier status for ${order.orderNumber} moved to ${parsed.data.courierStatus}`,
+      {
+        module: "Courier",
+      },
+    );
     return order;
   }).catch((error: Error) => {
     res.status(
@@ -1829,6 +1906,17 @@ app.post(
     }
     order.receivedAt = order.receivedAt ?? now();
     order.updatedAt = now();
+    recordOrderAudit(
+      db,
+      order,
+      req.user,
+      "assign_technician",
+      `Technician assigned to ${order.orderNumber}`,
+      {
+        module: "Order Workflow",
+        details: parsed.data.technicianId,
+      },
+    );
     return order;
   }).catch((error: Error) => {
     res.status(error.message.includes("access") ? 403 : 400).json({ message: error.message });
@@ -1902,6 +1990,11 @@ app.post(
       };
       db.accessions.push(accession);
       db.samples.push(sample);
+      recordOrderAudit(db, order, currentUser, "accession_order", `Order ${order.orderNumber} accessioned`, {
+        module: "Technical Workflow",
+        targetId: accession._id,
+        details: accession.accessionId,
+      });
       return { order, accession, sample };
     }
 
@@ -1928,6 +2021,11 @@ app.post(
         updatedAt: timestamp,
       };
       db.cytologyCases.push(cytologyCase);
+      recordOrderAudit(db, order, currentUser, "create_cytology_case", `Cytology case created for ${order.orderNumber}`, {
+        module: "Technical Workflow",
+        targetId: cytologyCase._id,
+        details: cytologyCase.caseNumber,
+      });
       return { order, cytologyCase };
     }
 
@@ -2010,6 +2108,11 @@ app.post(
     order.receivedAt = order.receivedAt ?? timestamp;
     order.assignedTechnicianId = order.assignedTechnicianId ?? currentUser._id;
     order.updatedAt = timestamp;
+    recordOrderAudit(db, order, currentUser, "complete_technical_step", `Technical step completed for ${order.orderNumber}`, {
+      module: "Technical Workflow",
+      targetId: run._id,
+      details: runType,
+    });
     return run;
   }).catch((error: Error) => {
     res.status(error.message.includes("access") ? 403 : 400).json({ message: error.message });
@@ -2056,6 +2159,10 @@ app.post(
       sample.status = "ready_for_review";
       sample.updatedAt = now();
     }
+    recordOrderAudit(db, order, req.user, "ready_for_review", `Order ${order.orderNumber} moved to pathologist review`, {
+      module: "Pathology",
+      details: parsed.data.pathologistId ?? order.assignedPathologistId ?? "",
+    });
     return order;
   }).catch((error: Error) => {
     res.status(
@@ -2178,6 +2285,11 @@ app.post("/api/accessions/:id/grossing", requireRoles("admin", "technician"), as
     }
     order.status = "in_progress";
     order.updatedAt = now();
+    recordOrderAudit(db, order, currentUser, "grossing", `Grossing completed for ${order.orderNumber}`, {
+      module: "Histology",
+      targetId: target._id,
+      details: `${parsed.data.numberOfBlocks} blocks created`,
+    });
 
     return target;
   }).catch((error: Error) => {
@@ -2231,6 +2343,11 @@ app.post("/api/accessions/:id/processing", requireRoles("admin", "technician"), 
       sample.status = "processed";
       sample.updatedAt = now();
     }
+    recordOrderAudit(db, order, req.user, "processing", `Processing completed for ${order.orderNumber}`, {
+      module: "Histology",
+      targetId: target._id,
+      details: parsed.data.processingNotes ?? "",
+    });
     return target;
   }).catch((error: Error) => {
     res.status(
@@ -2279,6 +2396,11 @@ app.post("/api/accessions/:id/embedding", requireRoles("admin", "technician"), a
       sample.status = "embedded";
       sample.updatedAt = now();
     }
+    recordOrderAudit(db, order, req.user, "embedding", `Embedding completed for ${order.orderNumber}`, {
+      module: "Histology",
+      targetId: block._id,
+      details: block.blockId,
+    });
     return target;
   }).catch((error: Error) => {
     res.status(
@@ -2341,6 +2463,11 @@ app.post("/api/accessions/:id/sectioning", requireRoles("admin", "technician"), 
       sample.status = "sectioned";
       sample.updatedAt = now();
     }
+    recordOrderAudit(db, order, req.user, "sectioning", `Sectioning completed for ${order.orderNumber}`, {
+      module: "Histology",
+      targetId: block._id,
+      details: `${block.blockId}; slides ${parsed.data.slideCount}`,
+    });
     return target;
   }).catch((error: Error) => {
     res.status(
@@ -2398,6 +2525,11 @@ app.post("/api/accessions/:id/staining", requireRoles("admin", "technician"), as
       sample.status = "stained";
       sample.updatedAt = now();
     }
+    recordOrderAudit(db, order, req.user, "staining", `Staining completed for ${order.orderNumber}`, {
+      module: "Histology",
+      targetId: slide._id,
+      details: `${slide.slideId}; ${parsed.data.stainType}`,
+    });
     return target;
   }).catch((error: Error) => {
     res.status(
@@ -2505,6 +2637,11 @@ app.post("/api/slides/:slideId/ihc", requireRoles("admin", "technician"), async 
             ...parsed.data,
             createdAt: now(),
           });
+          recordOrderAudit(db, order, req.user, "ihc_entry", `IHC entry recorded for ${order.orderNumber}`, {
+            module: "IHC",
+            targetId: slide._id,
+            details: `${slide.slideId}; ${parsed.data.antibody}`,
+          });
           return slide;
         }
       }
@@ -2568,6 +2705,11 @@ app.post("/api/slide-images/simulate", requireRoles("admin", "technician"), asyn
             `generated:${slide.slideId}:detail`,
             `generated:${slide.slideId}:cellular`,
           ];
+          recordOrderAudit(db, order, req.user, "digital_slide_simulated", `Digital slide images generated for ${order.orderNumber}`, {
+            module: "Digital Pathology",
+            targetId: slide._id,
+            details: slide.slideId,
+          });
           return slide;
         }
       }
@@ -2655,6 +2797,10 @@ app.post("/api/reports/:orderId/save", requireRoles("admin", "pathologist"), asy
         createdAt: now(),
       });
       target.updatedAt = now();
+      recordOrderAudit(db, order, currentUser, "save_report", `Report draft saved for ${order.orderNumber}`, {
+        module: "Reporting",
+        targetId: target._id,
+      });
     }
     return target;
   }).catch((error: Error) => {
@@ -2689,6 +2835,10 @@ app.post("/api/reports/:orderId/lock", requireRoles("admin", "pathologist"), asy
     order.status = "completed";
     order.completedAt = target.lockedAt;
     order.updatedAt = now();
+    recordOrderAudit(db, order, req.user, "lock_report", `Report locked for ${order.orderNumber}`, {
+      module: "Reporting",
+      targetId: target._id,
+    });
     return target;
   }).catch((error: Error) => {
     res.status(404).json({ message: error.message });
@@ -2735,6 +2885,10 @@ app.post("/api/reports/:orderId/email", requireRoles("admin", "pathologist"), as
       mandatory: false,
       createdAt: now(),
       updatedAt: now(),
+    });
+    recordOrderAudit(db, order, req.user, "release_report", `Result released for ${order.orderNumber}`, {
+      module: "Reporting",
+      targetId: target._id,
     });
     return target;
   }).catch((error: Error) => {
@@ -2797,6 +2951,11 @@ app.post("/api/cytology/cases", requireRoles("admin", "technician"), async (req:
       updatedAt: timestamp,
     };
     db.cytologyCases.push(entry);
+    recordOrderAudit(db, order, req.user, "create_cytology_case", `Cytology case created for ${order.orderNumber}`, {
+      module: "Cytology",
+      targetId: entry._id,
+      details: caseNumber,
+    });
     return entry;
   });
 
@@ -2852,6 +3011,11 @@ app.put("/api/cytology/cases/:id", requireRoles("admin", "technician", "patholog
         });
       }
     }
+    recordOrderAudit(db, order, req.user, "update_cytology_case", `Cytology case updated for ${order.orderNumber}`, {
+      module: "Cytology",
+      targetId: entry._id,
+      details: parsed.data.qcStatus ?? parsed.data.status ?? "",
+    });
     return entry;
   }).catch((error: Error) => {
     res.status(
@@ -2987,6 +3151,12 @@ app.post("/api/notifications/:id/read", async (req, res) => {
 app.get("/api/finance/summary", requireRoles("admin", "finance"), async (req: AuthRequest, res) => {
   const db = getScopedDb(req, await loadDb());
   res.json(getFinanceSummary(db));
+});
+
+app.get("/api/finance/monthly-trends", requireRoles("admin", "finance"), async (req: AuthRequest, res) => {
+  const db = getScopedDb(req, await loadDb());
+  const months = Math.max(3, Math.min(Number(req.query.months ?? 12), 24));
+  res.json(buildFinanceMonthlyTrend(db, months));
 });
 
 app.put("/api/settings", requireRoles("admin"), async (req, res) => {

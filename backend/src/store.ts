@@ -294,6 +294,7 @@ function normalizeDatabase(raw: Partial<Database>): Database {
     seed.mavianceTransactions,
     (item) => item._id,
   );
+  const internalMessages = raw.internalMessages ?? seed.internalMessages;
   const rawSettings = raw.settings;
   const settings = {
     ...seed.settings,
@@ -424,13 +425,21 @@ function normalizeDatabase(raw: Partial<Database>): Database {
     workflowHistory: raw.workflowHistory ?? seed.workflowHistory,
     notifications: raw.notifications ?? seed.notifications,
     communicationLogs: raw.communicationLogs ?? seed.communicationLogs,
+    internalMessages,
     qualityEvents: raw.qualityEvents ?? seed.qualityEvents,
     tatAlerts: raw.tatAlerts ?? seed.tatAlerts,
     archiveRecords: raw.archiveRecords ?? seed.archiveRecords,
     reagentInventory: raw.reagentInventory ?? seed.reagentInventory,
     wasteLogs: raw.wasteLogs ?? seed.wasteLogs,
     documents: raw.documents ?? seed.documents,
-    auditEvents: raw.auditEvents ?? seed.auditEvents,
+    auditEvents: (raw.auditEvents ?? seed.auditEvents).map((entry) => ({
+      actorUserId: null,
+      actorRole: null,
+      orderId: null,
+      siteId: null,
+      details: null,
+      ...entry,
+    })),
     sessionRecords: raw.sessionRecords ?? seed.sessionRecords,
     credentialAudits: raw.credentialAudits ?? seed.credentialAudits,
     integrations,

@@ -719,6 +719,25 @@ export interface CommunicationLog {
   updatedAt: string
 }
 
+export type InternalMessageRecipientType = 'role' | 'user' | 'broadcast'
+
+export interface InternalMessage {
+  _id: string
+  siteId?: string | null
+  senderUserId: string
+  senderName: string
+  senderRole: UserRole
+  recipientType: InternalMessageRecipientType
+  recipientRole?: UserRole | null
+  recipientUserId?: string | null
+  subject?: string | null
+  message: string
+  relatedOrderId?: string | null
+  readByUserIds: string[]
+  createdAt: string
+  updatedAt: string
+}
+
 export interface QualityEvent {
   _id: string
   module: string
@@ -793,7 +812,12 @@ export interface AuditEvent {
   action: string
   targetId: string
   actor: string
+  actorUserId?: string | null
+  actorRole?: UserRole | null
+  orderId?: string | null
+  siteId?: string | null
   summary: string
+  details?: string | null
   createdAt: string
 }
 
@@ -982,4 +1006,74 @@ export interface FinanceSummary {
     'cash' | 'card' | 'mobile_money' | 'bank_transfer' | 'mtn_mobile_money' | 'orange_money' | 'transfer' | 'other',
     number
   >
+}
+
+export interface FinanceMonthlyTrendPoint {
+  periodKey: string
+  label: string
+  totalRevenue: number
+  transactionCount: number
+}
+
+export interface DepartmentTally {
+  department: string
+  label: string
+  currentQueue: number
+  activityCount: number
+  completedCount: number
+}
+
+export interface TatPhaseSummary {
+  phase: string
+  label: string
+  averageMinutes: number
+  count: number
+  riskCount: number
+  breachCount: number
+}
+
+export interface AnalyticsOverview {
+  filters: {
+    range: 'daily' | 'weekly' | 'monthly' | 'custom'
+    bucketUnit: 'hour' | 'day' | 'month'
+    start: string
+    end: string
+  }
+  departmentTallies: DepartmentTally[]
+  orderStatusTallies: Array<{
+    status: string
+    count: number
+  }>
+  paymentMethodTallies: Array<{
+    method: string
+    amount: number
+  }>
+  departmentActivityTrend: Array<Record<string, number | string>>
+  tat: {
+    overallAverageMinutes: number
+    riskCount: number
+    breachCount: number
+    ordersTracked: number
+    byPhase: TatPhaseSummary[]
+  }
+}
+
+export interface InternalMessageConversation {
+  key: string
+  label: string
+  recipientType: InternalMessageRecipientType
+  recipientRole?: UserRole | null
+  recipientUserId?: string | null
+  unreadCount: number
+  lastMessageAt: string
+  lastMessagePreview: string
+}
+
+export interface InternalMessageContactDirectory {
+  roles: Array<{
+    role: UserRole
+    label: string
+    count: number
+  }>
+  users: SafeUser[]
 }

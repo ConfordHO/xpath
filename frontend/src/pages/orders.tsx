@@ -539,6 +539,8 @@ export function OrderDetailPage() {
       <SectionCard
         title="Payments"
         action={canRecordPayment ? <Button onClick={() => setPaymentOpen(true)}>Record payment</Button> : undefined}
+        scrollable
+        maxBodyHeight={360}
       >
         <Typography>Order total: {formatMoney(detail.totalAmount)}</Typography>
         <Typography>Paid: {formatMoney(detail.paidAmount)}</Typography>
@@ -626,7 +628,7 @@ export function OrderDetailPage() {
         )}
       </SectionCard>
       {detail.report?.versions?.length ? (
-        <SectionCard title="Report history">
+        <SectionCard title="Report history" scrollable maxBodyHeight={320}>
           <Stack spacing={1.5}>
             {detail.report.versions.map((version: any) => (
               <Paper key={`${version.version}-${version.createdAt}`} sx={{ p: 2 }}>
@@ -639,7 +641,7 @@ export function OrderDetailPage() {
         </SectionCard>
       ) : null}
       {detail.report?.addenda?.length ? (
-        <SectionCard title="Addenda">
+        <SectionCard title="Addenda" scrollable maxBodyHeight={300}>
           <Stack spacing={1.5}>
             {detail.report.addenda.map((entry: any) => (
               <Paper key={entry._id} sx={{ p: 2 }}>
@@ -658,7 +660,22 @@ export function OrderDetailPage() {
           <Typography>Assigned pathologist: {detail.assignedPathologist?.name ?? 'Unassigned'}</Typography>
         </Stack>
       </SectionCard>
-      <SectionCard title="Timeline">
+      {detail.auditTrail?.length && user?.role !== 'doctor' ? (
+        <SectionCard title="Audit trail" scrollable maxBodyHeight={360}>
+          <Stack spacing={1.5}>
+            {detail.auditTrail.map((entry: any) => (
+              <Paper key={entry._id} sx={{ p: 2 }}>
+                <Typography fontWeight={700}>{entry.summary}</Typography>
+                <Typography color="text.secondary" sx={{ mt: 0.5 }}>
+                  {entry.actorRole ? `${entry.actor} · ${entry.actorRole}` : entry.actor}
+                </Typography>
+                <Typography color="text.secondary">{formatDateTime(entry.createdAt)}</Typography>
+              </Paper>
+            ))}
+          </Stack>
+        </SectionCard>
+      ) : null}
+      <SectionCard title="Timeline" scrollable maxBodyHeight={360}>
         <Stack spacing={1.5}>
           {detail.timeline.map((item: any) => (
             <Paper key={`${item.label}-${item.at}`} sx={{ p: 2 }}>

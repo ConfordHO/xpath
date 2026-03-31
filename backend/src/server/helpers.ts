@@ -8,6 +8,7 @@ import type {
   CourierStatus,
   Database,
   Doctor,
+  InternalMessage,
   Order,
   PaymentMethod,
   Patient,
@@ -161,6 +162,27 @@ export function userCanAccessOrder(db: Database, actor: User, order: Order) {
     return Boolean(doctor && order.referringDoctorId === doctor._id);
   }
   return normalizeSiteId(actor.siteId) === normalizeSiteId(order.siteId);
+}
+
+export function internalMessageVisibleToUser(message: InternalMessage, actor: User) {
+  if (isSuperAdmin(actor)) {
+    return true;
+  }
+  const actorSiteId = normalizeSiteId(actor.siteId);
+  const messageSiteId = message.siteId ? normalizeSiteId(message.siteId) : null;
+  if (messageSiteId && actorSiteId !== messageSiteId) {
+    return false;
+  }
+  if (message.senderUserId === actor._id) {
+    return true;
+  }
+  if (message.recipientType === "broadcast") {
+    return true;
+  }
+  if (message.recipientType === "user") {
+    return message.recipientUserId === actor._id;
+  }
+  return message.recipientRole === actor.role;
 }
 
 export function userCanAccessAccession(db: Database, actor: User, accession: Accession) {
@@ -328,6 +350,9 @@ export function scopeDbForUser(db: Database, actor: User): Database {
       (entry) => !entry.orderId || orderIds.has(entry.orderId),
     ),
     communicationLogs: db.communicationLogs.filter((entry) => orderIds.has(entry.orderId)),
+    internalMessages: db.internalMessages.filter((entry) =>
+      internalMessageVisibleToUser(entry, actor),
+    ),
     tatAlerts: db.tatAlerts.filter((entry) => !entry.orderId || orderIds.has(entry.orderId)),
     archiveRecords: db.archiveRecords.filter(
       (entry) =>
@@ -340,6 +365,12 @@ export function scopeDbForUser(db: Database, actor: User): Database {
     ),
     credentialAudits: db.credentialAudits.filter(
       (entry) => entry.userId === actor._id || visibleUserIds.has(entry.userId),
+    ),
+    auditEvents: db.auditEvents.filter(
+      (entry) =>
+        orderIds.has(entry.orderId ?? "") ||
+        visibleUserIds.has(entry.actorUserId ?? "") ||
+        normalizeSiteId(entry.siteId) === actorSiteId,
     ),
     sites: visibleSites,
     siteTransfers: db.siteTransfers.filter(

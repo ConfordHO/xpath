@@ -1,7 +1,11 @@
 import {
   Box,
   Button,
+  FormControl,
+  InputLabel,
+  MenuItem,
   Paper,
+  Select,
   Stack,
   Table,
   TableBody,
@@ -9,20 +13,23 @@ import {
   TableContainer,
   TableHead,
   TableRow,
+  TextField,
   Typography,
 } from '@mui/material'
-import type { ReactNode } from 'react'
+import { useState, type ReactNode } from 'react'
 import { Link as RouterLink } from 'react-router-dom'
 
 import { api } from '../api'
 import { useAuth } from '../auth'
-import { CourierChip, LoadingPanel, MetricCard, PageHeader, SectionCard, StatusChip } from '../components'
+import { CourierChip, EChartPanel, LoadingPanel, MetricCard, PageHeader, SectionCard, StatusChip } from '../components'
 import { roleLabels } from '../app/access'
-import { PageError, useLoadable } from './shared'
+import { PageError, chartColors, useLoadable } from './shared'
 
 import type {
   Accession,
+  AnalyticsOverview,
   DashboardSummary,
+  FinanceMonthlyTrendPoint,
   FinanceSummary,
   HydratedOrder,
   NotificationEntry,
@@ -52,12 +59,64 @@ function MetricsGrid({ children }: { children: ReactNode }) {
   return <Box sx={{ display: 'grid', gap: 2, gridTemplateColumns: { xs: '1fr', md: 'repeat(4, 1fr)' } }}>{children}</Box>
 }
 
+function AnalyticsFilterBar({
+  range,
+  startDate,
+  endDate,
+  onRangeChange,
+  onStartDateChange,
+  onEndDateChange,
+}: {
+  range: 'daily' | 'weekly' | 'monthly' | 'custom'
+  startDate: string
+  endDate: string
+  onRangeChange: (value: 'daily' | 'weekly' | 'monthly' | 'custom') => void
+  onStartDateChange: (value: string) => void
+  onEndDateChange: (value: string) => void
+}) {
+  return (
+    <SectionCard title="Analytics window" description="Filter tallies by day, week, month, or a custom date range.">
+      <Stack direction={{ xs: 'column', lg: 'row' }} spacing={2}>
+        <FormControl sx={{ minWidth: 180 }}>
+          <InputLabel>Range</InputLabel>
+          <Select
+            label="Range"
+            value={range}
+            onChange={(event) => onRangeChange(String(event.target.value) as 'daily' | 'weekly' | 'monthly' | 'custom')}
+          >
+            <MenuItem value="daily">Daily</MenuItem>
+            <MenuItem value="weekly">Weekly</MenuItem>
+            <MenuItem value="monthly">Monthly</MenuItem>
+            <MenuItem value="custom">Custom</MenuItem>
+          </Select>
+        </FormControl>
+        <TextField
+          label="Start date"
+          type="date"
+          InputLabelProps={{ shrink: true }}
+          value={startDate}
+          disabled={range !== 'custom'}
+          onChange={(event) => onStartDateChange(event.target.value)}
+        />
+        <TextField
+          label="End date"
+          type="date"
+          InputLabelProps={{ shrink: true }}
+          value={endDate}
+          disabled={range !== 'custom'}
+          onChange={(event) => onEndDateChange(event.target.value)}
+        />
+      </Stack>
+    </SectionCard>
+  )
+}
+
 function NotificationsPanel({ items }: { items: NotificationEntry[] }) {
   return (
-    <SectionCard title="Notifications">
+    <SectionCard title="Notifications" scrollable maxBodyHeight={360}>
       <Stack spacing={1.5}>
         {items.length ? (
-          items.slice(0, 5).map((item) => (
+          items.slice(0, 10).map((item) => (
             <Paper key={item._id} sx={{ p: 2, bgcolor: item.read ? 'white' : 'rgba(21,101,192,0.05)' }}>
               <Typography fontWeight={700}>{item.title}</Typography>
               <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
@@ -110,10 +169,11 @@ function OrdersTable({
   actionLabel?: string
   actionTo?: (order: HydratedOrder) => string
 }) {
+  const visibleOrders = orders.slice(0, 10)
   return (
     <SectionCard title="Orders">
-      {orders.length ? (
-        <TableContainer>
+      {visibleOrders.length ? (
+        <TableContainer sx={{ maxHeight: 440 }}>
           <Table>
             <TableHead>
               <TableRow>
@@ -125,7 +185,7 @@ function OrdersTable({
               </TableRow>
             </TableHead>
             <TableBody>
-              {orders.map((order) => (
+              {visibleOrders.map((order) => (
                 <TableRow key={order._id}>
                   <TableCell>{order.orderNumber}</TableCell>
                   <TableCell>{order.patient.firstName} {order.patient.lastName}</TableCell>
@@ -159,11 +219,12 @@ function QueueList({
   renderMeta: (order: HydratedOrder) => React.ReactNode
   actionForOrder?: (order: HydratedOrder) => React.ReactNode
 }) {
+  const visibleRows = rows.slice(0, 10)
   return (
-    <SectionCard title={title}>
+    <SectionCard title={title} scrollable maxBodyHeight={420}>
       <Stack spacing={1.5}>
-        {rows.length ? (
-          rows.slice(0, 6).map((order) => (
+        {visibleRows.length ? (
+          visibleRows.map((order) => (
             <Paper key={order._id} sx={{ p: 2 }}>
               <Stack direction={{ xs: 'column', md: 'row' }} spacing={1.5} justifyContent="space-between">
                 <Box>
@@ -197,8 +258,129 @@ function RoleIntro({ user }: { user: SafeUser }) {
   )
 }
 
+function buildDepartmentQueueOption(analytics: AnalyticsOverview) {
+  return {
+    tooltip: { trigger: 'axis' as const },
+    legend: { bottom: 0 },
+    xAxis: {
+      type: 'category' as const,
+      data: analytics.departmentTallies.map((item) => item.label),
+      axisLabel: { interval: 0, rotate: 20 },
+    },
+    yAxis: { type: 'value' as const },
+    series: [
+      {
+        name: 'Current queue',
+        type: 'bar' as const,
+        itemStyle: { color: '#1565c0' },
+        data: analytics.departmentTallies.map((item) => item.currentQueue),
+      },
+      {
+        name: 'Activity in range',
+        type: 'bar' as const,
+        itemStyle: { color: '#2e7d32' },
+        data: analytics.departmentTallies.map((item) => item.activityCount),
+      },
+    ],
+  }
+}
+
+function buildDepartmentTrendOption(analytics: AnalyticsOverview) {
+  const seriesKeys = ['Reception', 'Courier', 'Finance', 'Technical', 'Pathology']
+  return {
+    tooltip: { trigger: 'axis' as const },
+    legend: { bottom: 0 },
+    xAxis: {
+      type: 'category' as const,
+      data: analytics.departmentActivityTrend.map((item) => String(item.label)),
+    },
+    yAxis: { type: 'value' as const },
+    series: seriesKeys.map((seriesName, index) => ({
+      name: seriesName,
+      type: 'line' as const,
+      smooth: true,
+      symbolSize: 8,
+      lineStyle: { width: 3 },
+      itemStyle: { color: chartColors[index % chartColors.length] },
+      data: analytics.departmentActivityTrend.map((item) => Number(item[seriesName] ?? 0)),
+    })),
+  }
+}
+
+function buildTatOption(analytics: AnalyticsOverview) {
+  return {
+    tooltip: { trigger: 'axis' as const },
+    xAxis: {
+      type: 'category' as const,
+      data: analytics.tat.byPhase.map((item) => item.label),
+      axisLabel: { interval: 0, rotate: 15 },
+    },
+    yAxis: { type: 'value' as const, name: 'Minutes' },
+    series: [
+      {
+        name: 'Average minutes',
+        type: 'bar' as const,
+        itemStyle: { color: '#ed6c02' },
+        data: analytics.tat.byPhase.map((item) => item.averageMinutes),
+      },
+    ],
+  }
+}
+
+function buildFinanceTrendOption(points: FinanceMonthlyTrendPoint[]) {
+  return {
+    tooltip: { trigger: 'axis' as const },
+    xAxis: {
+      type: 'category' as const,
+      data: points.map((item) => item.label),
+    },
+    yAxis: { type: 'value' as const },
+    series: [
+      {
+        name: 'Revenue',
+        type: 'bar' as const,
+        itemStyle: { color: '#1565c0' },
+        data: points.map((item) => item.totalRevenue),
+      },
+      {
+        name: 'Transactions',
+        type: 'line' as const,
+        smooth: true,
+        yAxisIndex: 0,
+        itemStyle: { color: '#2e7d32' },
+        data: points.map((item) => item.transactionCount),
+      },
+    ],
+  }
+}
+
+function buildPaymentsByMethodOption(summary: FinanceSummary | null) {
+  const entries = Object.entries(summary?.paymentsByMethod ?? {})
+    .filter(([, value]) => value > 0)
+    .map(([method, amount]) => ({
+      name: paymentMethodLabel(method as FinanceSummary['transactions'][number]['method']),
+      value: amount,
+    }))
+
+  return {
+    tooltip: { trigger: 'item' as const },
+    legend: { bottom: 0 },
+    series: [
+      {
+        type: 'pie' as const,
+        radius: ['42%', '70%'],
+        avoidLabelOverlap: false,
+        data: entries,
+      },
+    ],
+  }
+}
+
 export function DashboardPage() {
   const { user } = useAuth()
+  const [analyticsRange, setAnalyticsRange] = useState<'daily' | 'weekly' | 'monthly' | 'custom'>('weekly')
+  const [customStartDate, setCustomStartDate] = useState('')
+  const [customEndDate, setCustomEndDate] = useState('')
 
   const summaryState = useLoadable<DashboardSummary | null>(null, [user?._id], async () => {
     const response = await api.get<DashboardSummary>('/dashboard/summary')
@@ -220,6 +402,15 @@ export function DashboardPage() {
       return null
     }
     const response = await api.get<FinanceSummary>('/finance/summary')
+    return response.data
+  })
+  const financeTrendState = useLoadable<FinanceMonthlyTrendPoint[]>([], [user?._id], async () => {
+    if (!user || !['super_admin', 'admin', 'finance'].includes(user.role)) {
+      return []
+    }
+    const response = await api.get<FinanceMonthlyTrendPoint[]>('/finance/monthly-trends', {
+      params: { months: 12 },
+    })
     return response.data
   })
   const accessionsState = useLoadable<Accession[]>([], [user?._id], async () => {
@@ -250,6 +441,23 @@ export function DashboardPage() {
     const response = await api.get<OperationalSummary>('/analytics/operational-summary')
     return response.data
   })
+  const analyticsState = useLoadable<AnalyticsOverview | null>(
+    null,
+    [user?._id, analyticsRange, customStartDate, customEndDate],
+    async () => {
+      if (!user || !['super_admin', 'admin'].includes(user.role)) {
+        return null
+      }
+      const response = await api.get<AnalyticsOverview>('/analytics/overview', {
+        params: {
+          range: analyticsRange,
+          start: analyticsRange === 'custom' ? customStartDate || undefined : undefined,
+          end: analyticsRange === 'custom' ? customEndDate || undefined : undefined,
+        },
+      })
+      return response.data
+    },
+  )
   const doctorStatsState = useLoadable<DoctorStats | null>(null, [user?._id], async () => {
     if (user?.role !== 'doctor') {
       return null
@@ -259,14 +467,15 @@ export function DashboardPage() {
   })
 
   const waitingForRoleData =
-    (user?.role === 'finance' && financeState.loading) ||
+    (user?.role === 'finance' && (financeState.loading || financeTrendState.loading)) ||
     (user?.role === 'courier' && notificationsState.loading) ||
     (user?.role === 'technician' && accessionsState.loading) ||
     (user?.role === 'pathologist' && accessionsState.loading) ||
     (user?.role === 'doctor' && doctorStatsState.loading) ||
-    (user?.role === 'admin' && (financeState.loading || usersState.loading || operationalState.loading)) ||
+    (user?.role === 'admin' &&
+      (financeState.loading || financeTrendState.loading || usersState.loading || operationalState.loading || analyticsState.loading)) ||
     (user?.role === 'super_admin' &&
-      (financeState.loading || usersState.loading || sitesState.loading || operationalState.loading))
+      (financeState.loading || financeTrendState.loading || usersState.loading || sitesState.loading || operationalState.loading || analyticsState.loading))
 
   if (!user || summaryState.loading || ordersState.loading || notificationsState.loading || waitingForRoleData) {
     return <LoadingPanel label="Loading dashboard…" />
@@ -284,11 +493,19 @@ export function DashboardPage() {
   const activeAccessions = accessionsState.data.filter((entry) => !entry.stainedAt)
   const completedDeliveries = orders.filter((order) => order.courierStatus === 'received_at_lab')
   const latestTransactions = financeState.data?.transactions.slice(0, 6) ?? []
+  const analytics = analyticsState.data
   const usersByRole = usersState.data.reduce<Record<string, number>>((acc, item) => {
     acc[item.role] = (acc[item.role] ?? 0) + 1
     return acc
   }, {})
   const accessionByOrderId = new Map(accessionsState.data.map((entry) => [entry.orderId, entry]))
+  const departmentQueueOption = analytics ? buildDepartmentQueueOption(analytics) : null
+  const departmentTrendOption = analytics ? buildDepartmentTrendOption(analytics) : null
+  const tatOption = analytics ? buildTatOption(analytics) : null
+  const financeTrendOption = financeTrendState.data.length
+    ? buildFinanceTrendOption(financeTrendState.data)
+    : null
+  const paymentsByMethodOption = buildPaymentsByMethodOption(financeState.data)
 
   let content: React.ReactNode
 
@@ -446,10 +663,24 @@ export function DashboardPage() {
             />
             <NotificationsPanel items={notificationsState.data} />
           </Box>
-          <SectionCard title="Latest transactions">
+          <Box sx={{ display: 'grid', gap: 2, gridTemplateColumns: { xs: '1fr', xl: '1fr 1fr' } }}>
+            {financeTrendOption ? (
+              <EChartPanel
+                title="Monthly revenue"
+                description="Month by month totals and transaction volume."
+                option={financeTrendOption}
+              />
+            ) : null}
+            <EChartPanel
+              title="Payments by method"
+              description="Completed collections by payment channel."
+              option={paymentsByMethodOption}
+            />
+          </Box>
+          <SectionCard title="Latest transactions" scrollable maxBodyHeight={420}>
             <Stack spacing={1.5}>
               {latestTransactions.length ? (
-                latestTransactions.map((payment) => (
+                latestTransactions.slice(0, 10).map((payment) => (
                   <Paper key={payment._id} sx={{ p: 2 }}>
                     <Typography fontWeight={700}>{payment.order.orderNumber}</Typography>
                     <Typography color="text.secondary">
@@ -540,6 +771,14 @@ export function DashboardPage() {
     case 'admin':
       content = (
         <Stack spacing={3}>
+          <AnalyticsFilterBar
+            range={analyticsRange}
+            startDate={customStartDate}
+            endDate={customEndDate}
+            onRangeChange={setAnalyticsRange}
+            onStartDateChange={setCustomStartDate}
+            onEndDateChange={setCustomEndDate}
+          />
           <QuickActions
             actions={[
               { label: 'Manage staff', description: 'Create, activate, and update users for this lab only.', to: '/admin/users' },
@@ -553,6 +792,8 @@ export function DashboardPage() {
             <MetricCard label="Review queue" value={String(summaryState.data.reviewOrders)} />
             <MetricCard label="Revenue" value={financeState.data?.totalRevenueDisplay ?? formatMoney(0)} />
             <MetricCard label="Active staff" value={String(usersState.data.filter((item) => item.active).length)} />
+            <MetricCard label="Average TAT" value={`${analytics?.tat.overallAverageMinutes ?? 0} min`} />
+            <MetricCard label="TAT breaches" value={String(analytics?.tat.breachCount ?? 0)} />
           </MetricsGrid>
           <Box sx={{ display: 'grid', gap: 2, gridTemplateColumns: { xs: '1fr', xl: '1fr 1fr' } }}>
             <SectionCard title="Workforce mix">
@@ -564,6 +805,32 @@ export function DashboardPage() {
             </SectionCard>
             <NotificationsPanel items={notificationsState.data} />
           </Box>
+          {analytics && departmentQueueOption && departmentTrendOption && tatOption ? (
+            <Box sx={{ display: 'grid', gap: 2, gridTemplateColumns: { xs: '1fr', xl: '1fr 1fr' } }}>
+              <EChartPanel
+                title="Department tallies"
+                description="Current workload versus filtered activity by department."
+                option={departmentQueueOption}
+              />
+              <EChartPanel
+                title="Department trend"
+                description="Filtered activity over time."
+                option={departmentTrendOption}
+              />
+              <EChartPanel
+                title="Turnaround time"
+                description="Average TAT per major phase."
+                option={tatOption}
+              />
+              {financeTrendOption ? (
+                <EChartPanel
+                  title="Monthly financial performance"
+                  description="Revenue and transaction volume by month."
+                  option={financeTrendOption}
+                />
+              ) : null}
+            </Box>
+          ) : null}
           <OrdersTable orders={orders.slice(0, 8)} empty="No orders are available for this lab yet." />
         </Stack>
       )
@@ -571,6 +838,14 @@ export function DashboardPage() {
     case 'super_admin':
       content = (
         <Stack spacing={3}>
+          <AnalyticsFilterBar
+            range={analyticsRange}
+            startDate={customStartDate}
+            endDate={customEndDate}
+            onRangeChange={setAnalyticsRange}
+            onStartDateChange={setCustomStartDate}
+            onEndDateChange={setCustomEndDate}
+          />
           <QuickActions
             actions={[
               { label: 'Global user control', description: 'Manage users across sites, including admin and super admin accounts.', to: '/admin/users' },
@@ -584,6 +859,8 @@ export function DashboardPage() {
             <MetricCard label="Validated" value={String(operationalState.data?.validatedOrders ?? 0)} />
             <MetricCard label="Completed reports" value={String(operationalState.data?.completedReports ?? 0)} />
             <MetricCard label="Sites" value={String(sitesState.data.length)} />
+            <MetricCard label="Average TAT" value={`${analytics?.tat.overallAverageMinutes ?? 0} min`} />
+            <MetricCard label="TAT breaches" value={String(analytics?.tat.breachCount ?? 0)} />
           </MetricsGrid>
           <Box sx={{ display: 'grid', gap: 2, gridTemplateColumns: { xs: '1fr', xl: '1fr 1fr' } }}>
             <SectionCard title="Global controls">
@@ -603,7 +880,33 @@ export function DashboardPage() {
               </Stack>
             </SectionCard>
           </Box>
-          <SectionCard title="User directory">
+          {analytics && departmentQueueOption && departmentTrendOption && tatOption ? (
+            <Box sx={{ display: 'grid', gap: 2, gridTemplateColumns: { xs: '1fr', xl: '1fr 1fr' } }}>
+              <EChartPanel
+                title="Department tallies"
+                description="Current queues across the network and activity in the selected range."
+                option={departmentQueueOption}
+              />
+              <EChartPanel
+                title="Department trend"
+                description="Operational activity over time."
+                option={departmentTrendOption}
+              />
+              <EChartPanel
+                title="Turnaround time"
+                description="Average TAT per phase for the selected range."
+                option={tatOption}
+              />
+              {financeTrendOption ? (
+                <EChartPanel
+                  title="Monthly financial performance"
+                  description="Month by month revenue and payment volume."
+                  option={financeTrendOption}
+                />
+              ) : null}
+            </Box>
+          ) : null}
+          <SectionCard title="User directory" scrollable maxBodyHeight={320}>
             <Stack spacing={1}>
               {usersState.data.slice(0, 10).map((account) => (
                 <Typography key={account._id}>

@@ -39,6 +39,25 @@ export function sanitizeUser(user: User) {
   return safeUser;
 }
 
+export async function authenticateToken(token?: string | null) {
+  if (!token) {
+    return null;
+  }
+  try {
+    const payload = jwt.verify(token, JWT_SECRET) as {
+      userId: string;
+    };
+    const db = await loadDb();
+    const user = db.users.find((entry) => entry._id === payload.userId);
+    if (!user || !user.active) {
+      return null;
+    }
+    return user;
+  } catch {
+    return null;
+  }
+}
+
 export async function requireAuth(
   req: AuthRequest,
   res: Response,
@@ -47,19 +66,11 @@ export async function requireAuth(
   const header = req.header("Authorization");
   const token = header?.replace(/^Bearer\s+/i, "");
 
-  if (!token) {
+  const user = await authenticateToken(token);
+  if (!user) {
     return res.status(401).json({ message: "Authentication required" });
   }
-
   try {
-    const payload = jwt.verify(token, JWT_SECRET) as {
-      userId: string;
-    };
-    const db = await loadDb();
-    const user = db.users.find((entry) => entry._id === payload.userId);
-    if (!user || !user.active) {
-      return res.status(401).json({ message: "Authentication required" });
-    }
     req.user = user;
     return next();
   } catch {

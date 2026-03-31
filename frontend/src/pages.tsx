@@ -1,4 +1,5 @@
 export { DashboardPage } from './pages/dashboard'
+export { CommunicationsPage } from './pages/communications'
 export {
   DoctorPortalPage,
   DoctorsPage,

@@ -65,6 +65,7 @@ function createCleanSeedDatabase(db: Database): Database {
     aiResults: [],
     instrumentRuns: [],
     communicationLogs: [],
+    internalMessages: [],
     qualityEvents: [],
     tatAlerts: [],
     archiveRecords: [],
@@ -1128,6 +1129,7 @@ export function createSeedDatabase(): Database {
         updatedAt: "2026-03-31T07:31:00.000Z",
       },
     ],
+    internalMessages: [],
     qualityEvents: [
       {
         _id: "quality-1",

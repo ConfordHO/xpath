@@ -3,6 +3,7 @@ import AddCircleOutlineRoundedIcon from '@mui/icons-material/AddCircleOutlineRou
 import BiotechOutlinedIcon from '@mui/icons-material/BiotechOutlined'
 import DashboardOutlinedIcon from '@mui/icons-material/DashboardOutlined'
 import DescriptionOutlinedIcon from '@mui/icons-material/DescriptionOutlined'
+import ForumOutlinedIcon from '@mui/icons-material/ForumOutlined'
 import FolderCopyOutlinedIcon from '@mui/icons-material/FolderCopyOutlined'
 import GroupOutlinedIcon from '@mui/icons-material/GroupOutlined'
 import Inventory2OutlinedIcon from '@mui/icons-material/Inventory2Outlined'
@@ -50,6 +51,7 @@ export function getNavGroups(user: SafeUser): NavGroup[] {
             { label: 'Inventory', to: '/inventory', icon: <Inventory2OutlinedIcon /> },
             { label: 'Workflows', to: '/workflow/select', icon: <WorkspacesOutlinedIcon /> },
             { label: 'Notifications', to: '/notifications', icon: <NotificationsNoneOutlinedIcon /> },
+            { label: 'Communications', to: '/communications', icon: <ForumOutlinedIcon /> },
           ],
         },
         {
@@ -96,6 +98,7 @@ export function getNavGroups(user: SafeUser): NavGroup[] {
             { label: 'Inventory', to: '/inventory', icon: <Inventory2OutlinedIcon /> },
             { label: 'Workflows', to: '/workflow/select', icon: <WorkspacesOutlinedIcon /> },
             { label: 'Notifications', to: '/notifications', icon: <NotificationsNoneOutlinedIcon /> },
+            { label: 'Communications', to: '/communications', icon: <ForumOutlinedIcon /> },
           ],
         },
         {
@@ -131,6 +134,7 @@ export function getNavGroups(user: SafeUser): NavGroup[] {
             { label: 'Receptionist workflow', to: '/receptionist/workflow', icon: <VerifiedUserOutlinedIcon /> },
             { label: 'Courier', to: '/courier', icon: <LocalShippingOutlinedIcon /> },
             { label: 'Notifications', to: '/notifications', icon: <NotificationsNoneOutlinedIcon /> },
+            { label: 'Communications', to: '/communications', icon: <ForumOutlinedIcon /> },
           ],
         },
         settingsGroup(),
@@ -147,6 +151,7 @@ export function getNavGroups(user: SafeUser): NavGroup[] {
             { label: 'Digital pathology', to: '/digital-pathology', icon: <ViewInArOutlinedIcon /> },
             { label: 'Inventory', to: '/inventory', icon: <Inventory2OutlinedIcon /> },
             { label: 'Workflows', to: '/workflow/select', icon: <WorkspacesOutlinedIcon /> },
+            { label: 'Communications', to: '/communications', icon: <ForumOutlinedIcon /> },
           ],
         },
         settingsGroup(),
@@ -161,6 +166,7 @@ export function getNavGroups(user: SafeUser): NavGroup[] {
             { label: 'Cytology', to: '/cytology/cases', icon: <MedicalInformationOutlinedIcon /> },
             { label: 'Digital pathology', to: '/digital-pathology', icon: <ViewInArOutlinedIcon /> },
             { label: 'Notifications', to: '/notifications', icon: <NotificationsNoneOutlinedIcon /> },
+            { label: 'Communications', to: '/communications', icon: <ForumOutlinedIcon /> },
           ],
         },
         settingsGroup(),
@@ -172,6 +178,7 @@ export function getNavGroups(user: SafeUser): NavGroup[] {
             { label: 'Dashboard', to: '/dashboard', icon: <DashboardOutlinedIcon /> },
             { label: 'Financial', to: '/financial', icon: <PaymentsOutlinedIcon /> },
             { label: 'Notifications', to: '/notifications', icon: <NotificationsNoneOutlinedIcon /> },
+            { label: 'Communications', to: '/communications', icon: <ForumOutlinedIcon /> },
           ],
         },
         settingsGroup(),
@@ -183,6 +190,7 @@ export function getNavGroups(user: SafeUser): NavGroup[] {
             { label: 'Dashboard', to: '/dashboard', icon: <DashboardOutlinedIcon /> },
             { label: 'Courier', to: '/courier', icon: <LocalShippingOutlinedIcon /> },
             { label: 'Notifications', to: '/notifications', icon: <NotificationsNoneOutlinedIcon /> },
+            { label: 'Communications', to: '/communications', icon: <ForumOutlinedIcon /> },
           ],
         },
         settingsGroup(),
