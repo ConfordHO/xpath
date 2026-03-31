@@ -959,6 +959,12 @@ export function OrderOnlinePage() {
     }
   }
 
+  const switchLanguage = (selectedLanguage: FormLanguage) => {
+    setLanguage(selectedLanguage)
+    setSession((current) => (current ? { ...current, language: selectedLanguage } : current))
+    setError(null)
+  }
+
   const resetForm = async () => {
     setForm(createInitialFormState())
     setSuccess(null)
@@ -1161,7 +1167,7 @@ export function OrderOnlinePage() {
               </Typography>
             </Stack>
             <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.2}>
-              <Button variant="outlined" onClick={() => void requestSession(language === 'en' ? 'fr' : 'en')}>
+              <Button variant="outlined" onClick={() => switchLanguage(language === 'en' ? 'fr' : 'en')}>
                 {formCopy.languageButton}
               </Button>
               <Button variant="outlined" onClick={() => void requestSession(language)}>

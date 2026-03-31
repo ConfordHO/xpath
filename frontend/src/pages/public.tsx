@@ -61,7 +61,7 @@ import type {
   TestType,
 } from '../types'
 
-import { downloadPdfDocument, formatDate, formatDateTime, formatMoney, paymentMethodLabel } from '../utils'
+import { downloadPathologyReportPdf, formatDate, formatDateTime, formatMoney, paymentMethodLabel } from '../utils'
 
 interface PublicConfig {
   accreditations: string[]
@@ -1425,28 +1425,7 @@ export function PatientOrderDetailPage() {
                 startIcon={<DownloadRoundedIcon />}
                 disabled={!detail.reportSummary && !detail.pathologistDiagnosis}
                 onClick={() => {
-                  void downloadPdfDocument(`report-${detail.orderNumber}.pdf`, 'Pathology Report', [], {
-                    metadata: [
-                      { label: 'Order number', value: detail.orderNumber },
-                      { label: 'Patient', value: `${detail.patient.firstName} ${detail.patient.lastName}` },
-                      { label: 'Released', value: formatDate(detail.releasedAt) },
-                    ],
-                    note: detail.releasedAt ? undefined : 'Draft copy. Final clinical use should wait for released status.',
-                    sections: [
-                      {
-                        heading: 'Tests',
-                        lines: [detail.testTypes.map((test) => `${test.code} — ${test.name}`).join(', ')],
-                      },
-                      {
-                        heading: 'Summary',
-                        lines: [detail.reportSummary ?? 'Pending final sign-out.'],
-                      },
-                      {
-                        heading: 'Diagnosis',
-                        lines: [detail.pathologistDiagnosis ?? 'Pending'],
-                      },
-                    ],
-                  })
+                  void downloadPathologyReportPdf(`report-${detail.orderNumber}.pdf`, detail)
                 }}
               >
                 Download report PDF

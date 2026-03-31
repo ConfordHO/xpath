@@ -1,6 +1,6 @@
 import { Alert, LinearProgress } from '@mui/material'
 import axios from 'axios'
-import { useEffect, useEffectEvent, useState, type DependencyList } from 'react'
+import { useEffect, useEffectEvent, useRef, useState, type DependencyList } from 'react'
 
 export function errorMessage(error: unknown) {
   if (axios.isAxiosError(error)) {
@@ -51,3 +51,39 @@ export function TablePlaceholder({ loading }: { loading: boolean }) {
 }
 
 export const chartColors = ['#1565c0', '#2e7d32', '#ed6c02', '#8b5e34']
+
+export function useActionLock() {
+  const [pendingMap, setPendingMap] = useState<Record<string, boolean>>({})
+  const pendingRef = useRef<Record<string, boolean>>({})
+
+  const setPending = (key: string, value: boolean) => {
+    setPendingMap((current) => {
+      const next = { ...current }
+      if (value) {
+        next[key] = true
+      } else {
+        delete next[key]
+      }
+      pendingRef.current = next
+      return next
+    })
+  }
+
+  const runLocked = useEffectEvent(async (key: string, action: () => Promise<unknown>) => {
+    if (pendingRef.current[key]) {
+      return null
+    }
+
+    setPending(key, true)
+    try {
+      return await action()
+    } finally {
+      setPending(key, false)
+    }
+  })
+
+  return {
+    isPending: (key: string) => Boolean(pendingMap[key]),
+    runLocked,
+  }
+}

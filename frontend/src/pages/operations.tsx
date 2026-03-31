@@ -51,7 +51,7 @@ import {
   SectionCard,
 } from '../components'
 
-import { chartColors, errorMessage, PageError, useLoadable } from './shared'
+import { chartColors, errorMessage, PageError, useActionLock, useLoadable } from './shared'
 
 import type {
   FinanceSummary,
@@ -63,7 +63,7 @@ import type {
   Sample,
 } from '../types'
 
-import { downloadPdfDocument, formatDate, formatDateTime, formatMoney, paymentMethodLabel } from '../utils'
+import { downloadPathologyReportPdf, downloadPdfDocument, formatDate, formatDateTime, formatMoney, paymentMethodLabel } from '../utils'
 
 const manualPaymentMethods = [
   { value: 'cash', label: 'Cash' },
@@ -78,6 +78,7 @@ const mavianceChannels = [
 ] as const
 
 export function FinancePage() {
+  const actionLock = useActionLock()
   const summaryState = useLoadable<FinanceSummary | null>(null, [], async () => {
     const response = await api.get<FinanceSummary>('/finance/summary')
     return response.data
@@ -241,16 +242,18 @@ export function FinancePage() {
   }
 
   const verifyMaviance = async (transactionId: string) => {
-    try {
-      const response = await api.post<{ message?: string }>(`/payments/maviance/transactions/${transactionId}/verify`)
-      refreshFinance()
-      setFeedback({
-        kind: 'success',
-        message: response.data.message ?? 'Maviance transaction verified.',
-      })
-    } catch (verifyError) {
-      setFeedback({ kind: 'error', message: errorMessage(verifyError) })
-    }
+    await actionLock.runLocked(`verify-${transactionId}`, async () => {
+      try {
+        const response = await api.post<{ message?: string }>(`/payments/maviance/transactions/${transactionId}/verify`)
+        refreshFinance()
+        setFeedback({
+          kind: 'success',
+          message: response.data.message ?? 'Maviance transaction verified.',
+        })
+      } catch (verifyError) {
+        setFeedback({ kind: 'error', message: errorMessage(verifyError) })
+      }
+    })
   }
 
   return (
@@ -319,7 +322,11 @@ export function FinancePage() {
                       </Typography>
                     </Box>
                     <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1}>
-                      <Button size="small" onClick={() => verifyMaviance(transaction._id)}>
+                      <Button
+                        size="small"
+                        disabled={actionLock.isPending(`verify-${transaction._id}`)}
+                        onClick={() => verifyMaviance(transaction._id)}
+                      >
                         Verify
                       </Button>
                       <Button size="small" component={RouterLink} to={`/orders/${transaction.orderId}`}>
@@ -413,14 +420,17 @@ export function FinancePage() {
                     {!payment.confirmedWithPatientAt ? (
                       <Button
                         size="small"
+                        disabled={actionLock.isPending(`confirm-${payment._id}`)}
                         onClick={async () => {
-                          try {
-                            await api.post(`/orders/${payment.orderId}/confirm-payment-with-patient`)
-                            setFeedback({ kind: 'success', message: `Confirmed payment with patient for ${payment.order.orderNumber}.` })
-                            summaryState.refresh()
-                          } catch (confirmError) {
-                            setFeedback({ kind: 'error', message: errorMessage(confirmError) })
-                          }
+                          await actionLock.runLocked(`confirm-${payment._id}`, async () => {
+                            try {
+                              await api.post(`/orders/${payment.orderId}/confirm-payment-with-patient`)
+                              setFeedback({ kind: 'success', message: `Confirmed payment with patient for ${payment.order.orderNumber}.` })
+                              summaryState.refresh()
+                            } catch (confirmError) {
+                              setFeedback({ kind: 'error', message: errorMessage(confirmError) })
+                            }
+                          })
                         }}
                       >
                         Confirm with patient
@@ -666,6 +676,7 @@ export function FinancePage() {
 }
 
 export function CourierPage() {
+  const actionLock = useActionLock()
   const ordersState = useLoadable<{ data: HydratedOrder[] }>({ data: [] }, [], async () => {
     const response = await api.get('/orders')
     return response.data
@@ -676,24 +687,28 @@ export function CourierPage() {
   const pickupRequests = queue.filter((order) => order.courierStatus === 'ready_for_pickup')
   const checkInEligible = ordersState.data.data.filter((order) => !order.courierStatus && ['received', 'in_progress'].includes(order.status))
 
-  const advanceStatus = async (order: HydratedOrder) => {
-    const next =
-      order.courierStatus === 'ready_for_pickup'
-        ? 'on_way_to_pickup'
-        : order.courierStatus === 'on_way_to_pickup'
-          ? 'at_site_for_pickup'
-          : order.courierStatus === 'at_site_for_pickup'
-            ? 'picked_up_on_way_to_lab'
+  const nextCourierStatus = (order: HydratedOrder) =>
+    order.courierStatus === 'ready_for_pickup'
+      ? 'on_way_to_pickup'
+      : order.courierStatus === 'on_way_to_pickup'
+        ? 'at_site_for_pickup'
+        : order.courierStatus === 'at_site_for_pickup'
+          ? 'picked_up_on_way_to_lab'
           : order.courierStatus === 'picked_up_on_way_to_lab'
-              ? 'in_transit'
+            ? 'in_transit'
             : 'received_at_lab'
-    try {
-      await api.post(`/orders/${order._id}/courier-status`, { courierStatus: next })
-      setFeedback({ kind: 'success', message: `${order.orderNumber} advanced to the next courier step.` })
-      ordersState.refresh()
-    } catch (advanceError) {
-      setFeedback({ kind: 'error', message: errorMessage(advanceError) })
-    }
+
+  const advanceStatus = async (order: HydratedOrder) => {
+    const next = nextCourierStatus(order)
+    await actionLock.runLocked(`courier-${order._id}-${next}`, async () => {
+      try {
+        await api.post(`/orders/${order._id}/courier-status`, { courierStatus: next })
+        setFeedback({ kind: 'success', message: `${order.orderNumber} advanced to the next courier step.` })
+        ordersState.refresh()
+      } catch (advanceError) {
+        setFeedback({ kind: 'error', message: errorMessage(advanceError) })
+      }
+    })
   }
 
   const nextActionLabel = (order: HydratedOrder) => {
@@ -732,7 +747,11 @@ export function CourierPage() {
                 <Typography color="text.secondary">Pickup: {order.pickupPlaceName ?? order.pickupAddress ?? order.patient.address}</Typography>
                 <Stack direction="row" spacing={1.5} sx={{ mt: 2 }}>
                   <CourierChip status={order.courierStatus} />
-                  <Button variant="contained" onClick={() => advanceStatus(order)}>
+                  <Button
+                    variant="contained"
+                    disabled={actionLock.isPending(`courier-${order._id}-${nextCourierStatus(order)}`)}
+                    onClick={() => advanceStatus(order)}
+                  >
                     {nextActionLabel(order)}
                   </Button>
                   <Button component={RouterLink} to={`/orders/${order._id}`}>
@@ -755,14 +774,17 @@ export function CourierPage() {
                 <Button
                   sx={{ mt: 1 }}
                   onClick={async () => {
-                    try {
-                      await api.post(`/orders/${order._id}/check-in-courier`)
-                      setFeedback({ kind: 'success', message: `${order.orderNumber} moved into the courier queue.` })
-                      ordersState.refresh()
-                    } catch (checkInError) {
-                      setFeedback({ kind: 'error', message: errorMessage(checkInError) })
-                    }
+                    await actionLock.runLocked(`checkin-${order._id}`, async () => {
+                      try {
+                        await api.post(`/orders/${order._id}/check-in-courier`)
+                        setFeedback({ kind: 'success', message: `${order.orderNumber} moved into the courier queue.` })
+                        ordersState.refresh()
+                      } catch (checkInError) {
+                        setFeedback({ kind: 'error', message: errorMessage(checkInError) })
+                      }
+                    })
                   }}
+                  disabled={actionLock.isPending(`checkin-${order._id}`)}
                 >
                   Add to courier queue
                 </Button>
@@ -785,7 +807,12 @@ export function CourierPage() {
                 <Stack direction="row" spacing={1.5} alignItems="center" sx={{ mt: 2, flexWrap: 'wrap' }}>
                   <CourierChip status={order.courierStatus} />
                   {order.courierStatus !== 'received_at_lab' ? (
-                    <Button onClick={() => advanceStatus(order)}>{nextActionLabel(order)}</Button>
+                    <Button
+                      disabled={actionLock.isPending(`courier-${order._id}-${nextCourierStatus(order)}`)}
+                      onClick={() => advanceStatus(order)}
+                    >
+                      {nextActionLabel(order)}
+                    </Button>
                   ) : null}
                   <Button component={RouterLink} to={`/orders/${order._id}`}>
                     Open order
@@ -806,6 +833,7 @@ export function CourierPage() {
 }
 
 export function ReportsPage() {
+  const actionLock = useActionLock()
   const reportsState = useLoadable<Array<{ order: HydratedOrder; report: Report }>>([], [], async () => {
     const response = await api.get('/reports')
     return response.data
@@ -838,32 +866,9 @@ export function ReportsPage() {
                     <Button
                       startIcon={<DownloadRoundedIcon />}
                       onClick={() => {
-                        void downloadPdfDocument(`report-${item.order.orderNumber}.pdf`, 'Pathology Report', [], {
-                          metadata: [
-                            { label: 'Order number', value: item.order.orderNumber },
-                            { label: 'Report date', value: formatDate(item.order.createdAt) },
-                          ],
-                          note:
-                            item.report.status === 'complete'
-                              ? undefined
-                              : 'DRAFT - Not final. Do not use for clinical decisions.',
-                          sections: [
-                            {
-                              heading: 'Patient',
-                              lines: [`${item.order.patient.firstName} ${item.order.patient.lastName}`],
-                            },
-                            {
-                              heading: 'Result summary',
-                              lines: [item.report.comment || 'Pending'],
-                            },
-                            {
-                              heading: 'Pathologist diagnosis',
-                              lines: [
-                                item.report.diagnosis || 'Pending',
-                                item.report.microscopicDescription || 'Pending',
-                              ],
-                            },
-                          ],
+                        void downloadPathologyReportPdf(`report-${item.order.orderNumber}.pdf`, {
+                          ...item.order,
+                          report: item.report,
                         })
                       }}
                     >
@@ -873,7 +878,13 @@ export function ReportsPage() {
                   <TableCell>
                     <Button
                       startIcon={<EmailRoundedIcon />}
-                      onClick={async () => { await api.post(`/reports/${item.order._id}/email`); reportsState.refresh() }}
+                      disabled={actionLock.isPending(`email-${item.order._id}`)}
+                      onClick={async () => {
+                        await actionLock.runLocked(`email-${item.order._id}`, async () => {
+                          await api.post(`/reports/${item.order._id}/email`)
+                          reportsState.refresh()
+                        })
+                      }}
                     >
                       Email to client
                     </Button>

@@ -6,6 +6,7 @@ import { loadDb, updateDb } from "../store.js";
 import type { Database, Order, Report, UserRole } from "../types.js";
 import {
   createId,
+  occurredWithinWindow,
   ensureUser,
   findOrder,
   findPatient,
@@ -13,6 +14,7 @@ import {
   getOrderTotal,
   hydrateOrder,
   now,
+  sameTrimmedText,
   scopeDbForUser,
 } from "./helpers.js";
 import { registerVendorIntegrationRoutes } from "./vendorIntegrations.js";
@@ -960,6 +962,14 @@ export function registerEnterpriseRoutes(app: express.Express) {
         throw new Error("Report not found");
       }
       existingReport.addenda ??= [];
+      const duplicate = existingReport.addenda.find(
+        (entry) =>
+          sameTrimmedText(entry.note, parsed.data.note) &&
+          occurredWithinWindow(entry.createdAt, 30_000),
+      );
+      if (duplicate) {
+        return existingReport;
+      }
       existingReport.addenda.unshift({
         _id: createId(),
         note: parsed.data.note,
@@ -990,6 +1000,12 @@ export function registerEnterpriseRoutes(app: express.Express) {
       const existingReport = db.reports.find((entry) => entry.orderId === req.params.orderId);
       if (!existingReport) {
         throw new Error("Report not found");
+      }
+      if (
+        existingReport.signedAt &&
+        existingReport.signedBy === (req.user?.name ?? req.user?.email ?? "Unknown")
+      ) {
+        return existingReport;
       }
       existingReport.signedBy = req.user?.name ?? req.user?.email ?? "Unknown";
       existingReport.signedAt = now();

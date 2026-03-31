@@ -53,6 +53,49 @@ export type PaymentProvider = "manual" | "maviance";
 export type MavianceChannel = "mtn_cameroon" | "orange_cameroon";
 export type FormLanguage = "en" | "fr";
 
+export type OrderWorkflowStageId =
+  | "accessioning"
+  | "grossing"
+  | "processing"
+  | "embedding"
+  | "sectioning"
+  | "staining"
+  | "cytology_case"
+  | "cytology_qc"
+  | "ihc"
+  | "analyzer_run"
+  | "molecular_sendout"
+  | "pathologist_review"
+  | "report_signout"
+  | "result_release";
+
+export type OrderWorkflowModule =
+  | "histology"
+  | "cytology"
+  | "ihc"
+  | "analyzer"
+  | "molecular"
+  | "pathology";
+
+export interface OrderWorkflowStageState {
+  id: OrderWorkflowStageId;
+  label: string;
+  description: string;
+  module: OrderWorkflowModule;
+  status: "complete" | "current" | "pending";
+}
+
+export interface OrderWorkflowPlan {
+  summary: string;
+  routeTags: string[];
+  requiresTechnician: boolean;
+  nextStageId: OrderWorkflowStageId | null;
+  nextStageLabel: string | null;
+  nextModule: OrderWorkflowModule | null;
+  reviewReady: boolean;
+  stages: OrderWorkflowStageState[];
+}
+
 export type MavianceTransactionState =
   | "quote_created"
   | "collection_requested"

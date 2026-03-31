@@ -26,6 +26,49 @@ export type CourierStatus =
   | 'in_transit'
   | 'received_at_lab'
 
+export type OrderWorkflowStageId =
+  | 'accessioning'
+  | 'grossing'
+  | 'processing'
+  | 'embedding'
+  | 'sectioning'
+  | 'staining'
+  | 'cytology_case'
+  | 'cytology_qc'
+  | 'ihc'
+  | 'analyzer_run'
+  | 'molecular_sendout'
+  | 'pathologist_review'
+  | 'report_signout'
+  | 'result_release'
+
+export type OrderWorkflowModule =
+  | 'histology'
+  | 'cytology'
+  | 'ihc'
+  | 'analyzer'
+  | 'molecular'
+  | 'pathology'
+
+export interface OrderWorkflowStageState {
+  id: OrderWorkflowStageId
+  label: string
+  description: string
+  module: OrderWorkflowModule
+  status: 'complete' | 'current' | 'pending'
+}
+
+export interface OrderWorkflowPlan {
+  summary: string
+  routeTags: string[]
+  requiresTechnician: boolean
+  nextStageId: OrderWorkflowStageId | null
+  nextStageLabel: string | null
+  nextModule: OrderWorkflowModule | null
+  reviewReady: boolean
+  stages: OrderWorkflowStageState[]
+}
+
 export interface SafeUser {
   _id: string
   email: string
@@ -276,6 +319,7 @@ export interface HydratedOrder {
   orderNumber: string
   patient: Patient
   testTypes: TestType[]
+  workflowPlan: OrderWorkflowPlan
   status: OrderStatus
   priority: 'normal' | 'urgent'
   referringDoctor: string | null

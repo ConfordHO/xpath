@@ -40,12 +40,13 @@ import {
   StatusChip,
 } from '../components'
 
-import { useLoadable } from './shared'
+import { useActionLock, useLoadable } from './shared'
 
 import type {
   Accession,
   CytologyCase,
   HydratedOrder,
+  OrderWorkflowStageId,
   SafeUser,
   Slide,
   WorkflowHistoryEntry,
@@ -55,7 +56,37 @@ import type {
 import { formatDateTime } from '../utils'
 import { errorMessage } from './shared'
 
+function isHistologyStage(stageId: OrderWorkflowStageId | null) {
+  return ['accessioning', 'grossing', 'processing', 'embedding', 'sectioning', 'staining'].includes(stageId ?? '')
+}
+
+function nextWorkflowActionLabel(order: HydratedOrder) {
+  switch (order.workflowPlan.nextStageId) {
+    case 'accessioning':
+      return 'Start histology case'
+    case 'cytology_case':
+      return 'Initialize cytology case'
+    case 'cytology_qc':
+      return 'Open cytology QC'
+    case 'ihc':
+      return 'Record IHC'
+    case 'analyzer_run':
+      return 'Complete analyzer run'
+    case 'molecular_sendout':
+      return 'Mark molecular send-out'
+    case 'pathologist_review':
+      return 'Send to pathologist'
+    case 'report_signout':
+      return 'Await sign-out'
+    case 'result_release':
+      return 'Await release'
+    default:
+      return 'View order'
+  }
+}
+
 export function ReceptionistWorkflowPage() {
+  const actionLock = useActionLock()
   const [tab, setTab] = useState(0)
   const ordersState = useLoadable<{ data: HydratedOrder[] }>({ data: [] }, [], async () => {
     const response = await api.get('/orders')
@@ -70,7 +101,11 @@ export function ReceptionistWorkflowPage() {
   const receiveOrders = ordersState.data.data.filter((order) => order.status === 'draft')
   const paymentOrders = ordersState.data.data.filter((order) => order.status === 'received' || order.status === 'draft')
   const courierOrders = ordersState.data.data
-  const assignOrders = ordersState.data.data.filter((order) => order.status === 'received' && !order.assignedTechnician)
+  const assignOrders = ordersState.data.data.filter(
+    (order) =>
+      order.status === 'received' &&
+      ((!order.assignedTechnician && order.workflowPlan.requiresTechnician) || order.workflowPlan.reviewReady),
+  )
   const resultOrders = ordersState.data.data.filter((order) => ['completed', 'released'].includes(order.status))
 
   const [paymentDialog, setPaymentDialog] = useState<{
@@ -89,26 +124,28 @@ export function ReceptionistWorkflowPage() {
     usersState.refresh()
   }
 
-  const runOrderAction = async (handler: () => Promise<void>, successMessage: string) => {
-    try {
-      await handler()
-      setFeedback({ kind: 'success', message: successMessage })
-      refreshAll()
-    } catch (actionError) {
-      setFeedback({ kind: 'error', message: errorMessage(actionError) })
-    }
+  const runOrderAction = async (key: string, handler: () => Promise<void>, successMessage: string) => {
+    await actionLock.runLocked(key, async () => {
+      try {
+        await handler()
+        setFeedback({ kind: 'success', message: successMessage })
+        refreshAll()
+      } catch (actionError) {
+        setFeedback({ kind: 'error', message: errorMessage(actionError) })
+      }
+    })
   }
 
   return (
     <Stack spacing={3}>
       <PageHeader
         title="Receptionist workflow"
-        description="Receive orders (web or walk-in) → Confirm payment → Add courier if needed → Assign to technician → Wait for results."
+        description="Receive orders (web or walk-in) → Confirm payment → Add courier if needed → Route each case to the correct lab workflow or straight to pathologist review."
         action={<Button component={RouterLink} to="/orders/create" variant="contained">Create order</Button>}
       />
       {feedback ? <Alert severity={feedback.kind}>{feedback.message}</Alert> : null}
       <Tabs value={tab} onChange={(_event, value) => setTab(value)} variant="scrollable" allowScrollButtonsMobile>
-        {['Receive', 'Payment', 'Courier', 'Assign technician', 'Results'].map((label) => (
+        {['Receive', 'Payment', 'Courier', 'Route case', 'Results'].map((label) => (
           <Tab key={label} label={label.toUpperCase()} />
         ))}
       </Tabs>
@@ -121,6 +158,7 @@ export function ReceptionistWorkflowPage() {
                 <TableCell>Patient</TableCell>
                 <TableCell>Tests</TableCell>
                 <TableCell>Status</TableCell>
+                <TableCell>Next step</TableCell>
                 <TableCell>Actions</TableCell>
               </TableRow>
             </TableHead>
@@ -131,10 +169,14 @@ export function ReceptionistWorkflowPage() {
                   <TableCell>{order.patient.firstName} {order.patient.lastName}</TableCell>
                   <TableCell>{order.testTypes.map((item) => item.code).join(', ')}</TableCell>
                   <TableCell><StatusChip status={order.status} /></TableCell>
+                  <TableCell>{order.workflowPlan.nextStageLabel ?? 'Completed'}</TableCell>
                   <TableCell>
                     {tab === 0 ? (
                       <Stack direction={{ xs: 'column', md: 'row' }} spacing={1}>
-                        <Button onClick={() => runOrderAction(() => api.post(`/orders/${order._id}/mark-received`), `${order.orderNumber} marked as received.`)}>
+                        <Button
+                          disabled={actionLock.isPending(`receive-${order._id}`)}
+                          onClick={() => runOrderAction(`receive-${order._id}`, () => api.post(`/orders/${order._id}/mark-received`), `${order.orderNumber} marked as received.`)}
+                        >
                           Mark received
                         </Button>
                         <Button component={RouterLink} to={`/orders/${order._id}`}>
@@ -161,7 +203,10 @@ export function ReceptionistWorkflowPage() {
                     ) : null}
                     {tab === 2 ? (
                       <Stack direction={{ xs: 'column', md: 'row' }} spacing={1}>
-                        <Button onClick={() => runOrderAction(() => api.post(`/orders/${order._id}/check-in-courier`), `${order.orderNumber} added to the courier queue.`)}>
+                        <Button
+                          disabled={actionLock.isPending(`courier-${order._id}`)}
+                          onClick={() => runOrderAction(`courier-${order._id}`, () => api.post(`/orders/${order._id}/check-in-courier`), `${order.orderNumber} added to the courier queue.`)}
+                        >
                           Add courier
                         </Button>
                         <Button component={RouterLink} to="/courier">
@@ -170,29 +215,53 @@ export function ReceptionistWorkflowPage() {
                       </Stack>
                     ) : null}
                     {tab === 3 ? (
-                      <Stack direction="row" spacing={1}>
-                        <FormControl size="small" sx={{ minWidth: 180 }}>
-                          <Select
-                            value={assignment[order._id] ?? ''}
-                            displayEmpty
-                            onChange={(event) => setAssignment((prev) => ({ ...prev, [order._id]: String(event.target.value) }))}
+                      order.workflowPlan.requiresTechnician ? (
+                        <Stack direction="row" spacing={1}>
+                          <FormControl size="small" sx={{ minWidth: 180 }}>
+                            <Select
+                              value={assignment[order._id] ?? ''}
+                              displayEmpty
+                              onChange={(event) => setAssignment((prev) => ({ ...prev, [order._id]: String(event.target.value) }))}
+                            >
+                              <MenuItem value="">Select technician</MenuItem>
+                              {technicians.map((tech) => (
+                                <MenuItem key={tech._id} value={tech._id}>{tech.name}</MenuItem>
+                              ))}
+                            </Select>
+                          </FormControl>
+                          <Button
+                            disabled={!assignment[order._id] || actionLock.isPending(`assign-${order._id}`)}
+                            onClick={async () => {
+                              await runOrderAction(
+                                `assign-${order._id}`,
+                                () => api.post(`/orders/${order._id}/assign-technician`, { technicianId: assignment[order._id] }),
+                                `${order.orderNumber} assigned to technician.`,
+                              )
+                              setAssignment((prev) => ({ ...prev, [order._id]: '' }))
+                            }}
                           >
-                            <MenuItem value="">Select technician</MenuItem>
-                            {technicians.map((tech) => (
-                              <MenuItem key={tech._id} value={tech._id}>{tech.name}</MenuItem>
-                            ))}
-                          </Select>
-                        </FormControl>
-                        <Button
-                          disabled={!assignment[order._id]}
-                          onClick={() => runOrderAction(
-                            () => api.post(`/orders/${order._id}/assign-technician`, { technicianId: assignment[order._id] }),
-                            `${order.orderNumber} assigned to technician.`,
-                          )}
-                        >
-                          Assign
-                        </Button>
-                      </Stack>
+                            Assign
+                          </Button>
+                        </Stack>
+                      ) : (
+                        <Stack direction={{ xs: 'column', md: 'row' }} spacing={1}>
+                          <Button
+                            disabled={order.workflowPlan.nextStageId !== 'pathologist_review' || actionLock.isPending(`direct-review-${order._id}`)}
+                            onClick={() =>
+                              runOrderAction(
+                                `direct-review-${order._id}`,
+                                () => api.post(`/orders/${order._id}/ready-for-review`, {}),
+                                `${order.orderNumber} sent directly to pathologist review.`,
+                              )
+                            }
+                          >
+                            Send to pathologist
+                          </Button>
+                          <Button component={RouterLink} to={`/orders/${order._id}`}>
+                            View order
+                          </Button>
+                        </Stack>
+                      )
                     ) : null}
                     {tab === 4 ? (
                       <Button component={RouterLink} to={`/orders/${order._id}`}>
@@ -252,11 +321,13 @@ export function ReceptionistWorkflowPage() {
             onClick={async () => {
               if (!paymentDialog) return
               await runOrderAction(
+                `payment-${paymentDialog.orderId}`,
                 () => api.post(`/orders/${paymentDialog.orderId}/payment`, paymentDialog),
                 'Payment recorded for the selected order.',
               )
               setPaymentDialog(null)
             }}
+            disabled={!paymentDialog || actionLock.isPending(`payment-${paymentDialog.orderId}`)}
           >
             Save
           </Button>
@@ -267,6 +338,7 @@ export function ReceptionistWorkflowPage() {
 }
 
 export function TechnicianWorkflowPage() {
+  const actionLock = useActionLock()
   const [tab, setTab] = useState(0)
   const ordersState = useLoadable<{ data: HydratedOrder[] }>({ data: [] }, [], async () => {
     const response = await api.get('/orders')
@@ -283,7 +355,8 @@ export function TechnicianWorkflowPage() {
   const pathologists = usersState.data.filter((user) => user.role === 'pathologist')
   const [reviewDialog, setReviewDialog] = useState<{ orderId: string; pathologistId: string }>({ orderId: '', pathologistId: '' })
   const [feedback, setFeedback] = useState<{ kind: 'success' | 'error'; message: string } | null>(null)
-  const visible = ordersState.data.data.filter((order) => {
+  const technicalOrders = ordersState.data.data.filter((order) => order.workflowPlan.requiresTechnician)
+  const visible = technicalOrders.filter((order) => {
     if (tab === 1) return order.status === 'received'
     if (tab === 2) return order.status === 'in_progress'
     if (tab === 3) return order.status === 'review'
@@ -297,21 +370,23 @@ export function TechnicianWorkflowPage() {
     accessionsState.refresh()
   }
 
-  const runOrderAction = async (handler: () => Promise<void>, successMessage: string) => {
-    try {
-      await handler()
-      setFeedback({ kind: 'success', message: successMessage })
-      refreshAll()
-    } catch (actionError) {
-      setFeedback({ kind: 'error', message: errorMessage(actionError) })
-    }
+  const runOrderAction = async (key: string, handler: () => Promise<void>, successMessage: string) => {
+    await actionLock.runLocked(key, async () => {
+      try {
+        await handler()
+        setFeedback({ kind: 'success', message: successMessage })
+        refreshAll()
+      } catch (actionError) {
+        setFeedback({ kind: 'error', message: errorMessage(actionError) })
+      }
+    })
   }
 
   return (
     <Stack spacing={3}>
       <PageHeader
         title="Technician workflow"
-        description="Orders assigned to you. Start processing to create an accession, then proceed to Histology for grossing → processing → embedding → sectioning → staining. When ready, assign a pathologist for review."
+        description="Each case follows its own route automatically. Tissue cases flow to histology, cytology cases to cytology QC, and analyzer / molecular orders stay out of the tissue queue."
         action={<Button component={RouterLink} to="/histology">Open histology</Button>}
       />
       {feedback ? <Alert severity={feedback.kind}>{feedback.message}</Alert> : null}
@@ -327,7 +402,9 @@ export function TechnicianWorkflowPage() {
               <TableRow>
                 <TableCell>Order #</TableCell>
                 <TableCell>Patient</TableCell>
+                <TableCell>Route</TableCell>
                 <TableCell>Status</TableCell>
+                <TableCell>Next step</TableCell>
                 <TableCell>Actions</TableCell>
               </TableRow>
             </TableHead>
@@ -336,30 +413,73 @@ export function TechnicianWorkflowPage() {
                 <TableRow key={order._id}>
                   <TableCell>{order.orderNumber}</TableCell>
                   <TableCell>{order.patient.firstName} {order.patient.lastName}</TableCell>
+                  <TableCell>{order.workflowPlan.summary}</TableCell>
                   <TableCell><StatusChip status={order.status} /></TableCell>
+                  <TableCell>{order.workflowPlan.nextStageLabel ?? 'Completed'}</TableCell>
                   <TableCell>
                     <Stack direction={{ xs: 'column', md: 'row' }} spacing={1}>
-                      {order.status === 'received' ? (
-                        <Button onClick={() => runOrderAction(() => api.post(`/orders/${order._id}/start-processing`), `${order.orderNumber} started processing and accessioned.`)}>
-                          Start processing
+                      {order.workflowPlan.nextStageId === 'accessioning' || order.workflowPlan.nextStageId === 'cytology_case' ? (
+                        <Button
+                          disabled={actionLock.isPending(`start-${order._id}`)}
+                          onClick={() => runOrderAction(
+                            `start-${order._id}`,
+                            () => api.post(`/orders/${order._id}/start-processing`),
+                            order.workflowPlan.nextStageId === 'cytology_case'
+                              ? `${order.orderNumber} initialized in the cytology queue.`
+                              : `${order.orderNumber} accessioned and moved to histology.`,
+                          )}
+                        >
+                          {nextWorkflowActionLabel(order)}
                         </Button>
                       ) : null}
-                      {accessionByOrderId.get(order._id) ? (
+                      {order.workflowPlan.nextStageId === 'analyzer_run' || order.workflowPlan.nextStageId === 'molecular_sendout' ? (
+                        <Button
+                          disabled={actionLock.isPending(`technical-${order._id}`)}
+                          onClick={() =>
+                            runOrderAction(
+                              `technical-${order._id}`,
+                              () =>
+                                api.post(`/orders/${order._id}/complete-technical-step`, {
+                                  stageId: order.workflowPlan.nextStageId,
+                                }),
+                              `${order.orderNumber} completed ${order.workflowPlan.nextStageLabel?.toLowerCase() ?? 'the technical step'}.`,
+                            )
+                          }
+                        >
+                          {nextWorkflowActionLabel(order)}
+                        </Button>
+                      ) : null}
+                      {isHistologyStage(order.workflowPlan.nextStageId) && accessionByOrderId.get(order._id) ? (
                         <Button
                           component={RouterLink}
                           to={`/histology?accession=${encodeURIComponent(accessionByOrderId.get(order._id)?.accessionId ?? '')}`}
                         >
-                          Open histology
+                          Continue histology
                         </Button>
                       ) : null}
-                      {order.status === 'in_progress' || order.status === 'review' ? (
+                      {order.workflowPlan.nextStageId === 'ihc' && accessionByOrderId.get(order._id) ? (
                         <Button
-                          disabled={!accessionByOrderId.get(order._id)?.stainedAt}
+                          component={RouterLink}
+                          to={`/ihc?accession=${encodeURIComponent(accessionByOrderId.get(order._id)?.accessionId ?? '')}`}
+                        >
+                          Record IHC
+                        </Button>
+                      ) : null}
+                      {order.workflowPlan.nextStageId === 'cytology_qc' ? (
+                        <Button component={RouterLink} to={`/cytology/cases?order=${encodeURIComponent(order._id)}`}>
+                          Open cytology QC
+                        </Button>
+                      ) : null}
+                      {order.workflowPlan.reviewReady ? (
+                        <Button
                           onClick={() => setReviewDialog({ orderId: order._id, pathologistId: order.assignedPathologist?._id ?? '' })}
                         >
-                          {accessionByOrderId.get(order._id)?.stainedAt ? 'Mark ready for review' : 'Await histology completion'}
+                          Send to pathologist
                         </Button>
                       ) : null}
+                      <Button component={RouterLink} to={`/orders/${order._id}`}>
+                        View order
+                      </Button>
                     </Stack>
                   </TableCell>
                 </TableRow>
@@ -388,11 +508,13 @@ export function TechnicianWorkflowPage() {
             variant="contained"
             onClick={async () => {
               await runOrderAction(
+                `review-${reviewDialog.orderId}`,
                 () => api.post(`/orders/${reviewDialog.orderId}/ready-for-review`, { pathologistId: reviewDialog.pathologistId || null }),
                 'Case sent to pathologist review queue.',
               )
               setReviewDialog({ orderId: '', pathologistId: '' })
             }}
+            disabled={!reviewDialog.orderId || actionLock.isPending(`review-${reviewDialog.orderId}`)}
           >
             Save
           </Button>
@@ -458,6 +580,7 @@ export function PathologistWorkflowPage() {
 }
 
 export function HistologyPage() {
+  const actionLock = useActionLock()
   const [searchParams] = useSearchParams()
   const accessionsState = useLoadable<Accession[]>([], [], async () => {
     const response = await api.get<Accession[]>('/accessions')
@@ -501,15 +624,17 @@ export function HistologyPage() {
     void search(requestedAccessionId)
   }, [searchParams])
 
-  const runHistologyAction = async (handler: () => Promise<void>, successMessage: string) => {
-    try {
-      await handler()
-      await search(selected?.accession.accessionId ?? accessionId)
-      accessionsState.refresh()
-      setFeedback({ kind: 'success', message: successMessage })
-    } catch (actionError) {
-      setFeedback({ kind: 'error', message: errorMessage(actionError) })
-    }
+  const runHistologyAction = async (key: string, handler: () => Promise<void>, successMessage: string) => {
+    await actionLock.runLocked(key, async () => {
+      try {
+        await handler()
+        await search(selected?.accession.accessionId ?? accessionId)
+        accessionsState.refresh()
+        setFeedback({ kind: 'success', message: successMessage })
+      } catch (actionError) {
+        setFeedback({ kind: 'error', message: errorMessage(actionError) })
+      }
+    })
   }
 
   const selectedBlock = selected?.accession.blocks.find((block: any) => block.blockId === blockId)
@@ -527,9 +652,10 @@ export function HistologyPage() {
             <TextField label="Gross description (required)" multiline minRows={3} value={grossDescription} onChange={(event) => setGrossDescription(event.target.value)} />
             <TextField label="Number of blocks" type="number" value={blockCount} onChange={(event) => setBlockCount(Number(event.target.value))} />
             <Button
-              disabled={!selected || !grossDescription.trim() || blockCount <= 0}
+              disabled={!selected || !grossDescription.trim() || blockCount <= 0 || actionLock.isPending(`grossing-${selected?.accession._id ?? ''}`)}
               variant="contained"
               onClick={() => runHistologyAction(
+                `grossing-${selected.accession._id}`,
                 () => api.post(`/accessions/${selected.accession._id}/grossing`, { grossDescription, numberOfBlocks: blockCount }),
                 'Grossing saved and case moved to processing.',
               )}
@@ -572,9 +698,10 @@ export function HistologyPage() {
               <Stack spacing={2}>
                 <TextField label="Processing notes" value={processingNotes} onChange={(event) => setProcessingNotes(event.target.value)} />
                 <Button
-                  disabled={!selected.accession.grossedAt}
+                  disabled={!selected.accession.grossedAt || actionLock.isPending(`processing-${selected.accession._id}`)}
                   variant="contained"
                   onClick={() => runHistologyAction(
+                    `processing-${selected.accession._id}`,
                     () => api.post(`/accessions/${selected.accession._id}/processing`, { processingNotes }),
                     'Processing notes saved.',
                   )}
@@ -597,9 +724,10 @@ export function HistologyPage() {
                   Choose a histology block to embed and later section into slides.
                 </Typography>
                 <Button
-                  disabled={!selected.accession.processedAt || !blockId}
+                  disabled={!selected.accession.processedAt || !blockId || actionLock.isPending(`embedding-${selected.accession._id}-${blockId}`)}
                   variant="contained"
                   onClick={() => runHistologyAction(
+                    `embedding-${selected.accession._id}-${blockId}`,
                     () => api.post(`/accessions/${selected.accession._id}/embedding`, { blockId }),
                     `${blockId} embedded successfully.`,
                   )}
@@ -615,9 +743,10 @@ export function HistologyPage() {
                   Selected block: {selectedBlock?.blockId ?? 'Choose a block'}.
                 </Typography>
                 <Button
-                  disabled={!selectedBlock?.embeddedAt || slideCount <= 0}
+                  disabled={!selectedBlock?.embeddedAt || slideCount <= 0 || actionLock.isPending(`section-${selected.accession._id}-${blockId}`)}
                   variant="contained"
                   onClick={() => runHistologyAction(
+                    `section-${selected.accession._id}-${blockId}`,
                     () => api.post(`/accessions/${selected.accession._id}/sectioning`, { blockId, slideCount }),
                     `${slideCount} slide(s) created from ${blockId}.`,
                   )}
@@ -640,9 +769,10 @@ export function HistologyPage() {
                   Slides become eligible here after sectioning is complete.
                 </Typography>
                 <Button
-                  disabled={!slideId}
+                  disabled={!slideId || actionLock.isPending(`stain-${selected.accession._id}-${slideId}`)}
                   variant="contained"
                   onClick={() => runHistologyAction(
+                    `stain-${selected.accession._id}-${slideId}`,
                     () => api.post(`/accessions/${selected.accession._id}/staining`, { slideId, stainType: 'H&E' }),
                     `${slideId} stained and ready for digital/review workflows.`,
                   )}
@@ -659,6 +789,8 @@ export function HistologyPage() {
 }
 
 export function IhcPage() {
+  const actionLock = useActionLock()
+  const [searchParams] = useSearchParams()
   const [accessionId, setAccessionId] = useState('')
   const [result, setResult] = useState<{ accession: Accession; slides: Slide[] } | null>(null)
   const [slideId, setSlideId] = useState('')
@@ -689,6 +821,24 @@ export function IhcPage() {
 
   const selectedSlide = result?.slides.find((slide) => slide.slideId === slideId)
 
+  useEffect(() => {
+    const requestedAccessionId = searchParams.get('accession')
+    if (!requestedAccessionId) {
+      return
+    }
+    setAccessionId(requestedAccessionId)
+    void (async () => {
+      try {
+        const response = await api.get(`/ihc/search/${requestedAccessionId}`)
+        setResult(response.data)
+        setSlideId(response.data.slides[0]?.slideId ?? '')
+        setFeedback(null)
+      } catch (searchError) {
+        setFeedback({ kind: 'error', message: errorMessage(searchError) })
+      }
+    })()
+  }, [searchParams])
+
   return (
     <Stack spacing={3}>
       <PageHeader title="IHC (Immunohistochemistry)" description="Look up an accession to see blocks and slides from Histology. Select a slide and record IHC stains (antibody, clone, antigen retrieval, detection, counterstain, QC)." />
@@ -717,16 +867,26 @@ export function IhcPage() {
             <TextField label="Counterstain" value={form.counterstain} onChange={(event) => setForm((prev) => ({ ...prev, counterstain: event.target.value }))} />
             <TextField label="QC notes" multiline minRows={3} value={form.qcNotes} onChange={(event) => setForm((prev) => ({ ...prev, qcNotes: event.target.value }))} />
             <Button
-              disabled={!slideId || !form.antibody.trim() || !form.clone.trim()}
+              disabled={!slideId || !form.antibody.trim() || !form.clone.trim() || actionLock.isPending(`ihc-${slideId}`)}
               variant="contained"
               onClick={async () => {
-                try {
-                  await api.post(`/slides/${slideId}/ihc`, form)
-                  setFeedback({ kind: 'success', message: `IHC stain recorded for ${slideId}.` })
-                  await search()
-                } catch (saveError) {
-                  setFeedback({ kind: 'error', message: errorMessage(saveError) })
-                }
+                await actionLock.runLocked(`ihc-${slideId}`, async () => {
+                  try {
+                    await api.post(`/slides/${slideId}/ihc`, form)
+                    setForm({
+                      antibody: '',
+                      clone: '',
+                      antigenRetrieval: '',
+                      detection: '',
+                      counterstain: '',
+                      qcNotes: '',
+                    })
+                    setFeedback({ kind: 'success', message: `IHC stain recorded for ${slideId}.` })
+                    await search()
+                  } catch (saveError) {
+                    setFeedback({ kind: 'error', message: errorMessage(saveError) })
+                  }
+                })
               }}
             >
               Record IHC stain
@@ -758,6 +918,8 @@ export function IhcPage() {
 }
 
 export function CytologyCasesPage() {
+  const actionLock = useActionLock()
+  const [searchParams] = useSearchParams()
   const casesState = useLoadable<CytologyCase[]>([], [], async () => {
     const response = await api.get('/cytology/cases')
     return response.data
@@ -772,22 +934,40 @@ export function CytologyCasesPage() {
   const [editing, setEditing] = useState<CytologyCase | null>(null)
   const [feedback, setFeedback] = useState<{ kind: 'success' | 'error'; message: string } | null>(null)
   const orderMap = new Map(ordersState.data.data.map((order) => [order._id, order]))
+  const cytologyOrders = ordersState.data.data.filter((order) =>
+    order.workflowPlan.stages.some((stage) => stage.module === 'cytology'),
+  )
+
+  useEffect(() => {
+    const requestedOrderId = searchParams.get('order')
+    if (!requestedOrderId) {
+      return
+    }
+    setOrderId(requestedOrderId)
+    const existing = casesState.data.find((entry) => entry.orderId === requestedOrderId)
+    if (existing) {
+      setEditing(existing)
+    }
+  }, [casesState.data, searchParams])
 
   const createCase = async () => {
     if (!orderId) {
       setFeedback({ kind: 'error', message: 'Choose an order before creating a cytology case.' })
       return
     }
-    try {
-      await api.post('/cytology/cases', { orderId, specimenType, remarks })
-      casesState.refresh()
-      setFeedback({ kind: 'success', message: 'Cytology case created successfully.' })
-      setOrderId('')
-      setSpecimenType('Cervical smear')
-      setRemarks('')
-    } catch (createError) {
-      setFeedback({ kind: 'error', message: errorMessage(createError) })
-    }
+    await actionLock.runLocked(`cytology-${orderId}`, async () => {
+      try {
+        await api.post('/cytology/cases', { orderId, specimenType, remarks })
+        casesState.refresh()
+        ordersState.refresh()
+        setFeedback({ kind: 'success', message: 'Cytology case created successfully.' })
+        setOrderId('')
+        setSpecimenType('Cervical smear')
+        setRemarks('')
+      } catch (createError) {
+        setFeedback({ kind: 'error', message: errorMessage(createError) })
+      }
+    })
   }
 
   const saveEdit = async () => {
@@ -799,10 +979,15 @@ export function CytologyCasesPage() {
         specimenType: editing.specimenType,
         status: editing.status,
         remarks: editing.remarks,
+        routeType: editing.routeType,
+        preparationType: editing.preparationType,
+        qcStatus: editing.qcStatus,
+        qcNotes: editing.qcNotes,
       })
       setFeedback({ kind: 'success', message: `${editing.caseNumber} updated.` })
       setEditing(null)
       casesState.refresh()
+      ordersState.refresh()
     } catch (saveError) {
       setFeedback({ kind: 'error', message: errorMessage(saveError) })
     }
@@ -810,21 +995,21 @@ export function CytologyCasesPage() {
 
   return (
     <Stack spacing={3}>
-      <PageHeader title="Cytology" description="Create case from order and manage cytology remarks." />
+      <PageHeader title="Cytology" description="Only cytology-routed orders appear here. Capture preparation details and QC so the case can move to review safely." />
       {feedback ? <Alert severity={feedback.kind}>{feedback.message}</Alert> : null}
       <SectionCard title="Create cytology case">
         <Stack spacing={2}>
           <FormControl>
             <InputLabel>Order</InputLabel>
             <Select label="Order" value={orderId} onChange={(event) => setOrderId(String(event.target.value))}>
-              {ordersState.data.data.map((order) => (
+              {cytologyOrders.map((order) => (
                 <MenuItem key={order._id} value={order._id}>{order.orderNumber}</MenuItem>
               ))}
             </Select>
           </FormControl>
           <TextField label="Specimen type" value={specimenType} onChange={(event) => setSpecimenType(event.target.value)} />
           <TextField label="Remarks" multiline minRows={3} value={remarks} onChange={(event) => setRemarks(event.target.value)} />
-          <Button disabled={!orderId || !specimenType.trim()} variant="contained" onClick={createCase}>
+          <Button disabled={!orderId || !specimenType.trim() || actionLock.isPending(`cytology-${orderId}`)} variant="contained" onClick={createCase}>
             Create case
           </Button>
         </Stack>
@@ -838,6 +1023,8 @@ export function CytologyCasesPage() {
                   <TableCell>Case #</TableCell>
                   <TableCell>Order</TableCell>
                   <TableCell>Specimen type</TableCell>
+                  <TableCell>Route</TableCell>
+                  <TableCell>QC</TableCell>
                   <TableCell>Status</TableCell>
                   <TableCell>Actions</TableCell>
                 </TableRow>
@@ -848,6 +1035,8 @@ export function CytologyCasesPage() {
                     <TableCell>{entry.caseNumber}</TableCell>
                     <TableCell>{orderMap.get(entry.orderId)?.orderNumber ?? '—'}</TableCell>
                     <TableCell>{entry.specimenType}</TableCell>
+                    <TableCell>{entry.routeType ?? '—'} / {entry.preparationType ?? '—'}</TableCell>
+                    <TableCell>{entry.qcStatus ?? 'pending'}</TableCell>
                     <TableCell>{entry.status}</TableCell>
                     <TableCell>
                       <Button onClick={() => setEditing(entry)}>Edit case</Button>
@@ -883,6 +1072,48 @@ export function CytologyCasesPage() {
                 <MenuItem value="complete">Complete</MenuItem>
               </Select>
             </FormControl>
+            <FormControl>
+              <InputLabel>Route type</InputLabel>
+              <Select
+                label="Route type"
+                value={editing?.routeType ?? 'non_gyn'}
+                onChange={(event) => setEditing((prev) => (prev ? { ...prev, routeType: String(event.target.value) as CytologyCase['routeType'] } : prev))}
+              >
+                <MenuItem value="gyn">GYN</MenuItem>
+                <MenuItem value="non_gyn">Non-GYN</MenuItem>
+              </Select>
+            </FormControl>
+            <FormControl>
+              <InputLabel>Preparation type</InputLabel>
+              <Select
+                label="Preparation type"
+                value={editing?.preparationType ?? 'smear'}
+                onChange={(event) => setEditing((prev) => (prev ? { ...prev, preparationType: String(event.target.value) as CytologyCase['preparationType'] } : prev))}
+              >
+                <MenuItem value="smear">Smear</MenuItem>
+                <MenuItem value="cell_block">Cell block</MenuItem>
+                <MenuItem value="liquid_based">Liquid-based</MenuItem>
+              </Select>
+            </FormControl>
+            <FormControl>
+              <InputLabel>QC status</InputLabel>
+              <Select
+                label="QC status"
+                value={editing?.qcStatus ?? 'pending'}
+                onChange={(event) => setEditing((prev) => (prev ? { ...prev, qcStatus: String(event.target.value) as CytologyCase['qcStatus'] } : prev))}
+              >
+                <MenuItem value="pending">Pending</MenuItem>
+                <MenuItem value="pass">Pass</MenuItem>
+                <MenuItem value="fail">Fail</MenuItem>
+              </Select>
+            </FormControl>
+            <TextField
+              label="QC notes"
+              multiline
+              minRows={3}
+              value={editing?.qcNotes ?? ''}
+              onChange={(event) => setEditing((prev) => (prev ? { ...prev, qcNotes: event.target.value } : prev))}
+            />
             <TextField
               label="Remarks"
               multiline

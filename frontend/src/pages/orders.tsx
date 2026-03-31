@@ -44,7 +44,7 @@ import {
   StatusChip,
 } from '../components'
 
-import { errorMessage, PageError, TablePlaceholder, useLoadable } from './shared'
+import { errorMessage, PageError, TablePlaceholder, useActionLock, useLoadable } from './shared'
 
 import type {
   Doctor,
@@ -54,7 +54,7 @@ import type {
   TestType,
 } from '../types'
 
-import { downloadPdfDocument, formatDate, formatDateTime, formatMoney, paymentMethodLabel } from '../utils'
+import { downloadPathologyReportPdf, formatDate, formatDateTime, formatMoney, paymentMethodLabel } from '../utils'
 
 export function OrdersPage() {
   const { user } = useAuth()
@@ -131,6 +131,7 @@ export function OrdersPage() {
 }
 
 export function CreateOrderPage() {
+  const actionLock = useActionLock()
   const navigate = useNavigate()
   const patientsState = useLoadable<{ data: Patient[] }>({ data: [] }, [], async () => {
     const response = await api.get('/patients')
@@ -164,31 +165,45 @@ export function CreateOrderPage() {
   const [error, setError] = useState<string | null>(null)
 
   const createPatient = async () => {
-    try {
-      const response = await api.post<Patient>('/patients', patientDraft)
-      patientsState.setData((prev) => ({ data: [response.data, ...prev.data] }))
-      setPatientId(response.data._id)
-      setOpenPatientDialog(false)
-    } catch (createError) {
-      setError(errorMessage(createError))
-    }
+    await actionLock.runLocked('create-patient', async () => {
+      try {
+        const response = await api.post<Patient>('/patients', patientDraft)
+        patientsState.setData((prev) => ({ data: [response.data, ...prev.data] }))
+        setPatientId(response.data._id)
+        setPatientDraft({
+          firstName: '',
+          lastName: '',
+          dateOfBirth: '',
+          gender: 'male',
+          phone: '',
+          email: '',
+          address: '',
+          nationalId: '',
+        })
+        setOpenPatientDialog(false)
+      } catch (createError) {
+        setError(errorMessage(createError))
+      }
+    })
   }
 
   const createOrder = async () => {
-    try {
-      const response = await api.post<HydratedOrder>('/orders', {
-        patientId,
-        testTypeIds,
-        priority,
-        referringDoctorId: doctorId || null,
-        referringDoctorName: doctorText || null,
-        orderSource: 'walk_in',
-        notes,
-      })
-      navigate(`/orders/${response.data._id}`)
-    } catch (createError) {
-      setError(errorMessage(createError))
-    }
+    await actionLock.runLocked('create-order', async () => {
+      try {
+        const response = await api.post<HydratedOrder>('/orders', {
+          patientId,
+          testTypeIds,
+          priority,
+          referringDoctorId: doctorId || null,
+          referringDoctorName: doctorText || null,
+          orderSource: 'walk_in',
+          notes,
+        })
+        navigate(`/orders/${response.data._id}`)
+      } catch (createError) {
+        setError(errorMessage(createError))
+      }
+    })
   }
 
   if (patientsState.loading || testTypesState.loading || doctorsState.loading) {
@@ -248,7 +263,7 @@ export function CreateOrderPage() {
           <TextField label="Referring doctor (free text if not in list)" value={doctorText} onChange={(event) => setDoctorText(event.target.value)} />
           <TextField label="Notes" multiline minRows={3} value={notes} onChange={(event) => setNotes(event.target.value)} />
           <Stack direction="row" spacing={2}>
-            <Button variant="contained" onClick={createOrder}>
+            <Button variant="contained" disabled={actionLock.isPending('create-order')} onClick={createOrder}>
               Create order
             </Button>
             <Button component={RouterLink} to="/orders" variant="outlined">
@@ -283,7 +298,7 @@ export function CreateOrderPage() {
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setOpenPatientDialog(false)}>Cancel</Button>
-          <Button variant="contained" onClick={createPatient}>
+          <Button variant="contained" disabled={actionLock.isPending('create-patient')} onClick={createPatient}>
             Save patient
           </Button>
         </DialogActions>
@@ -293,6 +308,7 @@ export function CreateOrderPage() {
 }
 
 export function OrderDetailPage() {
+  const actionLock = useActionLock()
   const { user } = useAuth()
   const { orderId = '' } = useParams()
   const detailState = useLoadable<any>(null, [orderId], async () => {
@@ -343,17 +359,19 @@ export function OrderDetailPage() {
   }, [detailState.data])
 
   const save = async () => {
-    try {
-      await api.put(`/orders/${orderId}`, {
-        priority: editPriority,
-        notes: editNotes,
-      })
-      setEditOpen(false)
-      setFeedback({ kind: 'success', message: 'Order details updated.' })
-      detailState.refresh()
-    } catch (saveError) {
-      setFeedback({ kind: 'error', message: errorMessage(saveError) })
-    }
+    await actionLock.runLocked('save-order', async () => {
+      try {
+        await api.put(`/orders/${orderId}`, {
+          priority: editPriority,
+          notes: editNotes,
+        })
+        setEditOpen(false)
+        setFeedback({ kind: 'success', message: 'Order details updated.' })
+        detailState.refresh()
+      } catch (saveError) {
+        setFeedback({ kind: 'error', message: errorMessage(saveError) })
+      }
+    })
   }
 
   if (detailState.loading) return <LoadingPanel label="Loading order…" />
@@ -373,35 +391,47 @@ export function OrderDetailPage() {
             : '/orders'
 
   const saveReportDraft = async () => {
-    try {
-      await api.post(`/reports/${orderId}/save`, reportForm)
-      setFeedback({ kind: 'success', message: 'Report draft saved.' })
-      detailState.refresh()
-    } catch (saveError) {
-      setFeedback({ kind: 'error', message: errorMessage(saveError) })
-    }
+    await actionLock.runLocked('save-report', async () => {
+      try {
+        await api.post(`/reports/${orderId}/save`, reportForm)
+        setFeedback({ kind: 'success', message: 'Report draft saved.' })
+        detailState.refresh()
+      } catch (saveError) {
+        setFeedback({ kind: 'error', message: errorMessage(saveError) })
+      }
+    })
   }
 
   const completeReport = async () => {
-    try {
-      await api.post(`/reports/${orderId}/save`, reportForm)
-      await api.post(`/reports/${orderId}/lock`)
-      await api.post(`/reports/${orderId}/sign`)
-      setFeedback({ kind: 'success', message: 'Report completed and digitally signed.' })
-      detailState.refresh()
-    } catch (completeError) {
-      setFeedback({ kind: 'error', message: errorMessage(completeError) })
+    if (!window.confirm('Complete sign-out for this case?')) {
+      return
     }
+    await actionLock.runLocked('complete-report', async () => {
+      try {
+        await api.post(`/reports/${orderId}/save`, reportForm)
+        await api.post(`/reports/${orderId}/lock`)
+        await api.post(`/reports/${orderId}/sign`)
+        setFeedback({ kind: 'success', message: 'Report completed and digitally signed.' })
+        detailState.refresh()
+      } catch (completeError) {
+        setFeedback({ kind: 'error', message: errorMessage(completeError) })
+      }
+    })
   }
 
   const releaseReport = async () => {
-    try {
-      await api.post(`/reports/${orderId}/email`)
-      setFeedback({ kind: 'success', message: 'Result released and queued for delivery.' })
-      detailState.refresh()
-    } catch (releaseError) {
-      setFeedback({ kind: 'error', message: errorMessage(releaseError) })
+    if (!window.confirm('Release this final result to the client and portals?')) {
+      return
     }
+    await actionLock.runLocked('release-report', async () => {
+      try {
+        await api.post(`/reports/${orderId}/email`)
+        setFeedback({ kind: 'success', message: 'Result released and queued for delivery.' })
+        detailState.refresh()
+      } catch (releaseError) {
+        setFeedback({ kind: 'error', message: errorMessage(releaseError) })
+      }
+    })
   }
 
   const addReportAddendum = async () => {
@@ -409,25 +439,33 @@ export function OrderDetailPage() {
       setFeedback({ kind: 'error', message: 'Enter an addendum note before saving.' })
       return
     }
-    try {
-      await api.post(`/reports/${orderId}/addendum`, { note: addendum })
-      setAddendum('')
-      setFeedback({ kind: 'success', message: 'Addendum added to the report.' })
-      detailState.refresh()
-    } catch (addendumError) {
-      setFeedback({ kind: 'error', message: errorMessage(addendumError) })
-    }
+    await actionLock.runLocked('addendum', async () => {
+      try {
+        await api.post(`/reports/${orderId}/addendum`, { note: addendum })
+        setAddendum('')
+        setFeedback({ kind: 'success', message: 'Addendum added to the report.' })
+        detailState.refresh()
+      } catch (addendumError) {
+        setFeedback({ kind: 'error', message: errorMessage(addendumError) })
+      }
+    })
   }
 
   const savePayment = async () => {
-    try {
-      await api.post(`/orders/${orderId}/payment`, paymentForm)
-      setPaymentOpen(false)
-      setFeedback({ kind: 'success', message: 'Payment recorded for this order.' })
-      detailState.refresh()
-    } catch (paymentError) {
-      setFeedback({ kind: 'error', message: errorMessage(paymentError) })
+    if (!window.confirm('Record this payment for the order?')) {
+      return
     }
+    await actionLock.runLocked('save-payment', async () => {
+      try {
+        await api.post(`/orders/${orderId}/payment`, paymentForm)
+        setPaymentOpen(false)
+        setPaymentForm((prev) => ({ ...prev, amount: 0 }))
+        setFeedback({ kind: 'success', message: 'Payment recorded for this order.' })
+        detailState.refresh()
+      } catch (paymentError) {
+        setFeedback({ kind: 'error', message: errorMessage(paymentError) })
+      }
+    })
   }
 
   return (
@@ -440,44 +478,7 @@ export function OrderDetailPage() {
             <Button
               startIcon={<DownloadRoundedIcon />}
               onClick={() => {
-                void downloadPdfDocument(`report-${detail.orderNumber}.pdf`, 'Pathology Report', [], {
-                  metadata: [
-                    { label: 'Order number', value: detail.orderNumber },
-                    { label: 'Report date', value: formatDate(new Date().toISOString()) },
-                  ],
-                  note:
-                    detail.report?.status === 'complete'
-                      ? undefined
-                      : 'DRAFT - Not final. Do not use for clinical decisions.',
-                  sections: [
-                    {
-                      heading: 'Patient',
-                      lines: [
-                        `${detail.patient.firstName} ${detail.patient.lastName}`,
-                        `Status: ${detail.status}`,
-                      ],
-                    },
-                    {
-                      heading: 'Tests',
-                      lines: [detail.testTypes.map((item: TestType) => `${item.code} — ${item.name}`).join(', ')],
-                    },
-                    {
-                      heading: 'Result summary',
-                      lines: [detail.report?.comment || 'Result pending final pathologist sign-out.'],
-                    },
-                    {
-                      heading: 'Pathologist diagnosis',
-                      lines: [
-                        detail.report?.diagnosis || 'Pending',
-                        detail.report?.microscopicDescription || 'Microscopic description pending.',
-                      ],
-                    },
-                    {
-                      heading: 'Referring physician',
-                      lines: [detail.referringDoctor ?? '—'],
-                    },
-                  ],
-                })
+                void downloadPathologyReportPdf(`report-${detail.orderNumber}.pdf`, detail)
               }}
             >
               Download report PDF
@@ -517,6 +518,21 @@ export function OrderDetailPage() {
         <Stack spacing={1}>
           {detail.testTypes.map((test: TestType) => (
             <Typography key={test._id}>{test.code} — {test.name}</Typography>
+          ))}
+        </Stack>
+      </SectionCard>
+      <SectionCard title="Workflow route">
+        <Typography color="text.secondary">{detail.workflowPlan.summary}</Typography>
+        <Stack spacing={1.25} sx={{ mt: 2 }}>
+          {detail.workflowPlan.stages.map((stage: any) => (
+            <Paper key={stage.id} sx={{ p: 2 }}>
+              <Typography fontWeight={700}>
+                {stage.label} {stage.status === 'current' ? '• Current' : stage.status === 'complete' ? '• Done' : '• Pending'}
+              </Typography>
+              <Typography color="text.secondary" sx={{ mt: 0.5 }}>
+                {stage.description}
+              </Typography>
+            </Paper>
           ))}
         </Stack>
       </SectionCard>
@@ -572,13 +588,13 @@ export function OrderDetailPage() {
               onChange={(event) => setReportForm((prev) => ({ ...prev, comment: event.target.value }))}
             />
             <Stack direction={{ xs: 'column', md: 'row' }} spacing={2}>
-              <Button variant="contained" onClick={saveReportDraft}>
+              <Button variant="contained" disabled={actionLock.isPending('save-report')} onClick={saveReportDraft}>
                 Save draft
               </Button>
-              <Button onClick={completeReport}>
+              <Button disabled={actionLock.isPending('complete-report')} onClick={completeReport}>
                 Complete sign-out
               </Button>
-              <Button disabled={detail.report?.status !== 'complete'} onClick={releaseReport}>
+              <Button disabled={detail.report?.status !== 'complete' || actionLock.isPending('release-report')} onClick={releaseReport}>
                 Release result
               </Button>
             </Stack>
@@ -594,7 +610,7 @@ export function OrderDetailPage() {
                   value={addendum}
                   onChange={(event) => setAddendum(event.target.value)}
                 />
-                <Button onClick={addReportAddendum}>Add addendum</Button>
+                <Button disabled={actionLock.isPending('addendum')} onClick={addReportAddendum}>Add addendum</Button>
               </Stack>
             ) : null}
           </Stack>
@@ -669,7 +685,7 @@ export function OrderDetailPage() {
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setEditOpen(false)}>Cancel</Button>
-          <Button variant="contained" onClick={save}>
+          <Button variant="contained" disabled={actionLock.isPending('save-order')} onClick={save}>
             Save
           </Button>
         </DialogActions>
@@ -717,7 +733,7 @@ export function OrderDetailPage() {
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setPaymentOpen(false)}>Cancel</Button>
-          <Button disabled={paymentForm.amount <= 0} variant="contained" onClick={savePayment}>
+          <Button disabled={paymentForm.amount <= 0 || actionLock.isPending('save-payment')} variant="contained" onClick={savePayment}>
             Save payment
           </Button>
         </DialogActions>

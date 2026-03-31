@@ -29,6 +29,7 @@ import {
   createOrderNumber,
   createWorkflowHistoryEntry,
   ensureUser,
+  occurredWithinWindow,
   findAccession,
   findDoctor,
   findOrder,
@@ -50,7 +51,9 @@ import {
   normalizeCourierStatus,
   normalizePaymentMethod,
   now,
+  sameTrimmedText,
   scopeDbForUser,
+  trimText,
   userCanAccessDoctor,
   userCanAccessOrder,
   userCanAccessSample,
@@ -58,6 +61,16 @@ import {
   userCanCreateRole,
   userCanManageUser,
 } from "./server/helpers.js";
+import {
+  getOrderWorkflowPlan,
+  inferAnalyzerRunType,
+  inferCytologyCaseDefaults,
+  inferMolecularRunType,
+  orderHasCytologyWorkflow,
+  orderHasHistologyWorkflow,
+  orderRequiresIhcWorkflow,
+  orderRequiresTechnicianWorkflow,
+} from "./server/workflowPlans.js";
 import {
   doctorSchema,
   loginSchema,
@@ -97,6 +110,8 @@ import type {
 } from "./types.js";
 
 const app = express();
+const DOUBLE_CLICK_WINDOW_MS = 15_000;
+const NOTE_DUPLICATE_WINDOW_MS = 30_000;
 
 app.use(
   cors({
@@ -118,6 +133,10 @@ app.use(
 app.get("/api/health", (_req, res) => {
   res.json({ ok: true });
 });
+
+function sameTestTypeSelection(left: string[], right: string[]) {
+  return left.slice().sort().join("|") === right.slice().sort().join("|");
+}
 
 function getScopedDb(req: AuthRequest, db: Database) {
   return scopeDbForUser(db, ensureUser(req));
@@ -248,10 +267,15 @@ function parsePublicOrderBody(body: unknown): PublicOrderRequestInput | null {
 
   if (body && typeof body === "object" && "patient" in body) {
     const nested = body as {
+      reservationId?: unknown;
+      orderNumber?: unknown;
       patient?: unknown;
       testTypeIds?: unknown;
       notes?: unknown;
       clinicalHistory?: unknown;
+      requisition?: {
+        billingMode?: unknown;
+      };
       siteId?: unknown;
     };
     const patientParsed = patientSchema.safeParse(nested.patient);
@@ -260,8 +284,8 @@ function parsePublicOrderBody(body: unknown): PublicOrderRequestInput | null {
       return null;
     }
     return {
-      reservationId: undefined,
-      orderNumber: undefined,
+      reservationId: typeof nested.reservationId === "string" ? nested.reservationId : undefined,
+      orderNumber: typeof nested.orderNumber === "string" ? nested.orderNumber : undefined,
       patient: {
         ...patientParsed.data,
         ethnicity: undefined,
@@ -274,7 +298,12 @@ function parsePublicOrderBody(body: unknown): PublicOrderRequestInput | null {
       requisition: {
         language: "en" as FormLanguage,
         referringPhysicianName: undefined,
-        billingMode: "self_pay" as const,
+        billingMode:
+          nested.requisition?.billingMode === "insurance_employer"
+            ? "insurance_employer"
+            : nested.requisition?.billingMode === "guarantor"
+              ? "guarantor"
+              : "self_pay",
         clinicalHistory: typeof nested.clinicalHistory === "string" ? nested.clinicalHistory : "",
         additionalRequests: typeof nested.notes === "string" ? nested.notes : "",
       },
@@ -629,12 +658,29 @@ app.post("/api/patient-portal/order/:orderId/payment-request", async (req, res) 
     if (!portalIdentityMatches(mutableOrder, mutablePatient, identity.data)) {
       throw new Error("Order not found");
     }
+    const normalizedMethod = normalizePaymentMethod(parsed.data.method);
+    const trimmedReference = trimText(parsed.data.reference);
+    const existing = [...mutableDb.payments]
+      .reverse()
+      .find(
+        (entry) =>
+          entry.orderId === mutableOrder._id &&
+          entry.provider === "manual" &&
+          entry.status === "pending" &&
+          entry.amount === parsed.data.amount &&
+          entry.method === normalizedMethod &&
+          sameTrimmedText(entry.gatewayReference, trimmedReference) &&
+          occurredWithinWindow(entry.createdAt, DOUBLE_CLICK_WINDOW_MS),
+      );
+    if (existing) {
+      return existing;
+    }
     const timestamp = now();
     const created: Payment = {
       _id: createId(),
       orderId: mutableOrder._id,
       amount: parsed.data.amount,
-      method: normalizePaymentMethod(parsed.data.method),
+      method: normalizedMethod,
       status: "pending",
       provider: "manual",
       providerChannel: null,
@@ -642,7 +688,7 @@ app.post("/api/patient-portal/order/:orderId/payment-request", async (req, res) 
       providerErrorCode: null,
       providerTransactionNumber: null,
       providerTransactionReference: null,
-      gatewayReference: parsed.data.reference ?? null,
+      gatewayReference: trimmedReference || null,
       receiptNumber: null,
       verificationCode: null,
       createdAt: timestamp,
@@ -817,6 +863,13 @@ app.post("/api/public/order-request", async (req, res) => {
               !reservationExpired(entry.expiresAt),
           ) ?? null
         : null;
+    const existingReservedOrder =
+      parsed.orderNumber
+        ? db.orders.find((entry) => entry.orderNumber === parsed.orderNumber) ?? null
+        : null;
+    if (existingReservedOrder) {
+      return hydrateOrder(db, existingReservedOrder);
+    }
     const assignedOrderNumber = reservation?.orderNumber ?? createOrderNumber(db);
     const patientId = createId();
     db.patients.push({
@@ -1388,6 +1441,22 @@ app.post("/api/orders", requireRoles("admin", "receptionist"), async (req: AuthR
     ? normalizeSiteId(parsed.data.siteId)
     : normalizeSiteId(currentUser.siteId);
   const created = await updateDb((db) => {
+    const existing = [...db.orders]
+      .reverse()
+      .find(
+        (entry) =>
+          entry.createdBy === currentUser._id &&
+          entry.patientId === parsed.data.patientId &&
+          entry.orderSource === parsed.data.orderSource &&
+          entry.priority === parsed.data.priority &&
+          sameTestTypeSelection(entry.testTypeIds, parsed.data.testTypeIds) &&
+          sameTrimmedText(entry.notes, parsed.data.notes ?? "") &&
+          sameTrimmedText(entry.clinicalHistory, parsed.data.clinicalHistory ?? "") &&
+          occurredWithinWindow(entry.createdAt, DOUBLE_CLICK_WINDOW_MS),
+      );
+    if (existing) {
+      return existing;
+    }
     const timestamp = now();
     const order: Order = {
       _id: createId(),
@@ -1520,6 +1589,9 @@ app.post(
     if (order.status === "cancelled") {
       throw new Error("Cancelled orders cannot be received");
     }
+    if (order.receivedAt || ["received", "in_progress", "review", "completed", "released"].includes(order.status)) {
+      return order;
+    }
     order.status = "received";
     order.receivedAt = order.receivedAt ?? now();
     order.updatedAt = now();
@@ -1561,12 +1633,29 @@ app.post("/api/orders/:id/payment", requireRoles("admin", "finance"), async (req
 
   const payment = await updateDb((db) => {
     const order = getAccessibleOrderOrThrow(db, req, req.params.id);
+    const normalizedMethod = normalizePaymentMethod(parsed.data.method);
+    const trimmedReference = trimText(parsed.data.gatewayReference);
+    const existing = [...db.payments]
+      .reverse()
+      .find(
+        (entry) =>
+          entry.orderId === order._id &&
+          entry.provider === "manual" &&
+          entry.amount === parsed.data.amount &&
+          entry.method === normalizedMethod &&
+          entry.status === parsed.data.status &&
+          sameTrimmedText(entry.gatewayReference, trimmedReference) &&
+          occurredWithinWindow(entry.createdAt, DOUBLE_CLICK_WINDOW_MS),
+      );
+    if (existing) {
+      return existing;
+    }
     const timestamp = now();
     const created: Payment = {
       _id: createId(),
       orderId: order._id,
       amount: parsed.data.amount,
-      method: normalizePaymentMethod(parsed.data.method),
+      method: normalizedMethod,
       status: parsed.data.status,
       provider: "manual",
       providerChannel: null,
@@ -1574,7 +1663,7 @@ app.post("/api/orders/:id/payment", requireRoles("admin", "finance"), async (req
       providerErrorCode: null,
       providerTransactionNumber: null,
       providerTransactionReference: null,
-      gatewayReference: parsed.data.gatewayReference ?? null,
+      gatewayReference: trimmedReference || null,
       receiptNumber: null,
       verificationCode: null,
       createdAt: timestamp,
@@ -1614,6 +1703,9 @@ app.post(
     if (!payment) {
       throw new Error("No completed payment found for this order");
     }
+    if (payment.confirmedWithPatientAt) {
+      return payment;
+    }
     payment.confirmedWithPatientAt = now();
     payment.updatedAt = now();
     return payment;
@@ -1635,6 +1727,9 @@ app.post(
   async (req: AuthRequest, res) => {
   const updated = await updateDb((db) => {
     const order = getAccessibleOrderOrThrow(db, req, req.params.id);
+    if (order.courierStatus) {
+      return order;
+    }
     const timestamp = now();
     order.courierStatus = "ready_for_pickup";
     order.courierCheckedInAt = order.courierCheckedInAt ?? timestamp;
@@ -1677,6 +1772,9 @@ app.post(
 
   const updated = await updateDb((db) => {
     const order = getAccessibleOrderOrThrow(db, req, req.params.id);
+    if (order.courierStatus === parsed.data.courierStatus) {
+      return order;
+    }
     order.courierStatus = parsed.data.courierStatus;
     if (parsed.data.courierStatus === "received_at_lab") {
       const timestamp = now();
@@ -1717,6 +1815,14 @@ app.post(
     if (order.status === "cancelled") {
       throw new Error("Cancelled orders cannot be assigned");
     }
+    if (!orderRequiresTechnicianWorkflow(order)) {
+      throw new Error(
+        "This order routes directly to pathologist review and does not require technician assignment",
+      );
+    }
+    if (order.assignedTechnicianId === parsed.data.technicianId) {
+      return order;
+    }
     order.assignedTechnicianId = parsed.data.technicianId;
     if (order.status === "draft") {
       order.status = "received";
@@ -1750,41 +1856,86 @@ app.post(
     if (order.status === "draft" && !order.receivedAt && order.courierStatus !== "received_at_lab") {
       throw new Error("Receive the order before starting processing");
     }
-    const existing = getAccessionByOrder(db, order._id);
-    if (existing) {
-      return { order, accession: existing, sample: getSampleByOrder(db, order._id) };
-    }
+    const workflowPlan = getOrderWorkflowPlan(db, order);
     const timestamp = now();
-    const accessionId = createAccessionLabel(db);
-    const accession: Accession = {
-      _id: createId(),
-      accessionId,
-      orderId: order._id,
-      receivedAt: timestamp,
-      receivedBy: currentUser._id,
-      numberOfBlocks: 0,
-      blocks: [],
-      createdAt: timestamp,
-      updatedAt: timestamp,
-    };
-    const sample: Sample = {
-      _id: createId(),
-      accessionId: accession._id,
-      orderId: order._id,
-      label: accessionId,
-      type: "tissue",
-      status: "received",
-      receivedAt: timestamp,
-      createdAt: timestamp,
-      updatedAt: timestamp,
-    };
-    db.accessions.push(accession);
-    db.samples.push(sample);
-    order.status = "in_progress";
+
+    if (!workflowPlan.nextStageId) {
+      return { order, accession: getAccessionByOrder(db, order._id), sample: getSampleByOrder(db, order._id) };
+    }
+
+    order.status = order.status === "review" ? order.status : "in_progress";
     order.receivedAt = order.receivedAt ?? timestamp;
     order.updatedAt = timestamp;
     order.assignedTechnicianId = order.assignedTechnicianId ?? currentUser._id;
-    return { order, accession, sample };
+
+    if (workflowPlan.nextStageId === "accessioning") {
+      const existing = getAccessionByOrder(db, order._id);
+      if (existing) {
+        return { order, accession: existing, sample: getSampleByOrder(db, order._id) };
+      }
+      const accessionId = createAccessionLabel(db);
+      const accession: Accession = {
+        _id: createId(),
+        accessionId,
+        orderId: order._id,
+        receivedAt: timestamp,
+        receivedBy: currentUser._id,
+        numberOfBlocks: 0,
+        blocks: [],
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      };
+      const sample: Sample = {
+        _id: createId(),
+        accessionId: accession._id,
+        orderId: order._id,
+        label: accessionId,
+        type:
+          order.testTypeIds.includes("test-bone-marrow-histology") ||
+          order.testTypeIds.includes("test-bone-marrow-complete")
+            ? "bone marrow"
+            : "tissue",
+        status: "received",
+        receivedAt: timestamp,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      };
+      db.accessions.push(accession);
+      db.samples.push(sample);
+      return { order, accession, sample };
+    }
+
+    if (workflowPlan.nextStageId === "cytology_case") {
+      const existingCase = db.cytologyCases.find((entry) => entry.orderId === order._id);
+      if (existingCase) {
+        return { order, cytologyCase: existingCase };
+      }
+      const defaults = inferCytologyCaseDefaults(db, order);
+      const cytologyCase = {
+        _id: createId(),
+        orderId: order._id,
+        caseNumber: `CY-${new Date().getUTCFullYear().toString().slice(-2)}-${String(
+          db.cytologyCases.length + 1,
+        ).padStart(4, "0")}`,
+        specimenType: defaults.specimenType,
+        status: "open" as const,
+        remarks: defaults.remarks,
+        routeType: defaults.routeType,
+        preparationType: defaults.preparationType,
+        qcStatus: "pending" as const,
+        qcNotes: "",
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      };
+      db.cytologyCases.push(cytologyCase);
+      return { order, cytologyCase };
+    }
+
+    if (!["analyzer_run", "molecular_sendout"].includes(workflowPlan.nextStageId)) {
+      throw new Error(`This order is currently awaiting ${workflowPlan.nextStageLabel ?? "the next workflow step"}`);
+    }
+
+    return { order, pendingStage: workflowPlan.nextStageId };
   }).catch((error: Error) => {
     res.status(404).json({ message: error.message });
     return null;
@@ -1798,8 +1949,83 @@ app.post(
 });
 
 app.post(
-  "/api/orders/:id/ready-for-review",
+  "/api/orders/:id/complete-technical-step",
   requireRoles("admin", "technician"),
+  async (req: AuthRequest, res) => {
+  const parsed = z
+    .object({
+      stageId: z.enum(["analyzer_run", "molecular_sendout"]),
+      notes: z.string().trim().optional(),
+    })
+    .safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ message: "Invalid technical workflow payload" });
+  }
+
+  const currentUser = ensureUser(req);
+  const created = await updateDb((db) => {
+    const order = getAccessibleOrderOrThrow(db, req, String(req.params.id));
+    const workflowPlan = getOrderWorkflowPlan(db, order);
+    if (workflowPlan.nextStageId !== parsed.data.stageId) {
+      throw new Error(`This order is currently awaiting ${workflowPlan.nextStageLabel ?? "another workflow step"}`);
+    }
+
+    const timestamp = now();
+    const runType =
+      parsed.data.stageId === "analyzer_run"
+        ? inferAnalyzerRunType(order)
+        : inferMolecularRunType(order);
+    const existing = [...db.instrumentRuns]
+      .reverse()
+      .find(
+        (entry) =>
+          entry.orderId === order._id &&
+          entry.runType === runType &&
+          entry.qcStatus !== "fail",
+      );
+    if (existing) {
+      return existing;
+    }
+
+    const run = {
+      _id: createId(),
+      instrumentId:
+        parsed.data.stageId === "analyzer_run"
+          ? "instrument-workflow-analyzer"
+          : "instrument-workflow-molecular",
+      runType,
+      qcStatus: "pass" as const,
+      downtimeMinutes: 0,
+      orderId: order._id,
+      accessionId: getAccessionByOrder(db, order._id)?._id ?? null,
+      sampleId: getSampleByOrder(db, order._id)?._id ?? null,
+      slideId: null,
+      externalRunId: null,
+      errorMessage: parsed.data.notes || undefined,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    };
+    db.instrumentRuns.unshift(run);
+    order.status = "in_progress";
+    order.receivedAt = order.receivedAt ?? timestamp;
+    order.assignedTechnicianId = order.assignedTechnicianId ?? currentUser._id;
+    order.updatedAt = timestamp;
+    return run;
+  }).catch((error: Error) => {
+    res.status(error.message.includes("access") ? 403 : 400).json({ message: error.message });
+    return null;
+  });
+
+  if (!created) {
+    return;
+  }
+
+  res.status(201).json(created);
+});
+
+app.post(
+  "/api/orders/:id/ready-for-review",
+  requireRoles("admin", "receptionist", "technician"),
   async (req: AuthRequest, res) => {
   const parsed = z
     .object({
@@ -1812,9 +2038,15 @@ app.post(
 
   const updated = await updateDb((db) => {
     const order = getAccessibleOrderOrThrow(db, req, req.params.id);
-    const accession = getAccessionByOrder(db, order._id);
-    if (!accession?.stainedAt) {
-      throw new Error("Complete staining before sending the case for review");
+    const workflowPlan = getOrderWorkflowPlan(db, order);
+    if (workflowPlan.nextStageId && workflowPlan.nextStageId !== "pathologist_review") {
+      throw new Error(`Complete ${workflowPlan.nextStageLabel ?? "the required workflow step"} before review`);
+    }
+    if (
+      ["review", "completed", "released"].includes(order.status) &&
+      (parsed.data.pathologistId ?? order.assignedPathologistId ?? null) === (order.assignedPathologistId ?? null)
+    ) {
+      return order;
     }
     order.status = "review";
     order.assignedPathologistId = parsed.data.pathologistId ?? order.assignedPathologistId ?? null;
@@ -1916,8 +2148,15 @@ app.post("/api/accessions/:id/grossing", requireRoles("admin", "technician"), as
 
   const accession = await updateDb((db) => {
     const target = findAccession(db, String(req.params.id));
-    if (!userCanAccessOrder(db, currentUser, findOrder(db, target.orderId))) {
+    const order = findOrder(db, target.orderId);
+    if (!userCanAccessOrder(db, currentUser, order)) {
       throw new Error("You do not have access to this accession");
+    }
+    if (!orderHasHistologyWorkflow(order)) {
+      throw new Error("This order is not routed through histology");
+    }
+    if (target.grossedAt && target.blocks.length) {
+      return target;
     }
     target.grossDescription = parsed.data.grossDescription;
     target.numberOfBlocks = parsed.data.numberOfBlocks;
@@ -1937,7 +2176,6 @@ app.post("/api/accessions/:id/grossing", requireRoles("admin", "technician"), as
       sample.status = "grossed";
       sample.updatedAt = now();
     }
-    const order = findOrder(db, target.orderId);
     order.status = "in_progress";
     order.updatedAt = now();
 
@@ -1968,11 +2206,22 @@ app.post("/api/accessions/:id/processing", requireRoles("admin", "technician"), 
 
   const accession = await updateDb((db) => {
     const target = findAccession(db, String(req.params.id));
-    if (!userCanAccessOrder(db, ensureUser(req), findOrder(db, target.orderId))) {
+    const order = findOrder(db, target.orderId);
+    if (!userCanAccessOrder(db, ensureUser(req), order)) {
       throw new Error("You do not have access to this accession");
+    }
+    if (!orderHasHistologyWorkflow(order)) {
+      throw new Error("This order is not routed through histology");
     }
     if (!target.grossedAt) {
       throw new Error("Complete grossing before processing");
+    }
+    if (target.processedAt) {
+      if (!sameTrimmedText(target.processingNotes, parsed.data.processingNotes ?? target.processingNotes ?? "")) {
+        target.processingNotes = parsed.data.processingNotes ?? target.processingNotes;
+        target.updatedAt = now();
+      }
+      return target;
     }
     target.processingNotes = parsed.data.processingNotes ?? target.processingNotes;
     target.processedAt = now();
@@ -2005,8 +2254,12 @@ app.post("/api/accessions/:id/embedding", requireRoles("admin", "technician"), a
 
   const accession = await updateDb((db) => {
     const target = findAccession(db, String(req.params.id));
-    if (!userCanAccessOrder(db, ensureUser(req), findOrder(db, target.orderId))) {
+    const order = findOrder(db, target.orderId);
+    if (!userCanAccessOrder(db, ensureUser(req), order)) {
       throw new Error("You do not have access to this accession");
+    }
+    if (!orderHasHistologyWorkflow(order)) {
+      throw new Error("This order is not routed through histology");
     }
     const block = target.blocks.find((entry) => entry.blockId === parsed.data.blockId);
     if (!block) {
@@ -2014,6 +2267,9 @@ app.post("/api/accessions/:id/embedding", requireRoles("admin", "technician"), a
     }
     if (!target.processedAt) {
       throw new Error("Complete processing before embedding");
+    }
+    if (block.embeddedAt) {
+      return target;
     }
     block.embeddedAt = now();
     target.embeddedAt = now();
@@ -2051,8 +2307,12 @@ app.post("/api/accessions/:id/sectioning", requireRoles("admin", "technician"), 
 
   const accession = await updateDb((db) => {
     const target = findAccession(db, String(req.params.id));
-    if (!userCanAccessOrder(db, ensureUser(req), findOrder(db, target.orderId))) {
+    const order = findOrder(db, target.orderId);
+    if (!userCanAccessOrder(db, ensureUser(req), order)) {
       throw new Error("You do not have access to this accession");
+    }
+    if (!orderHasHistologyWorkflow(order)) {
+      throw new Error("This order is not routed through histology");
     }
     const block = target.blocks.find((entry) => entry.blockId === parsed.data.blockId);
     if (!block) {
@@ -2060,6 +2320,9 @@ app.post("/api/accessions/:id/sectioning", requireRoles("admin", "technician"), 
     }
     if (!block.embeddedAt) {
       throw new Error("Embed the block before sectioning");
+    }
+    if (block.sectionedAt && block.slides.length) {
+      return target;
     }
     block.sectionedAt = now();
     block.slides = Array.from({ length: parsed.data.slideCount }, (_, index) => ({
@@ -2106,8 +2369,12 @@ app.post("/api/accessions/:id/staining", requireRoles("admin", "technician"), as
 
   const accession = await updateDb((db) => {
     const target = findAccession(db, String(req.params.id));
-    if (!userCanAccessOrder(db, ensureUser(req), findOrder(db, target.orderId))) {
+    const order = findOrder(db, target.orderId);
+    if (!userCanAccessOrder(db, ensureUser(req), order)) {
       throw new Error("You do not have access to this accession");
+    }
+    if (!orderHasHistologyWorkflow(order)) {
+      throw new Error("This order is not routed through histology");
     }
     const slide = target.blocks.flatMap((block) => block.slides).find(
       (entry) => entry.slideId === parsed.data.slideId,
@@ -2117,6 +2384,9 @@ app.post("/api/accessions/:id/staining", requireRoles("admin", "technician"), as
     }
     if (!target.sectionedAt) {
       throw new Error("Complete sectioning before staining");
+    }
+    if (slide.stainedAt) {
+      return target;
     }
     slide.stainStatus = "stained";
     slide.stainType = parsed.data.stainType;
@@ -2211,6 +2481,25 @@ app.post("/api/slides/:slideId/ihc", requireRoles("admin", "technician"), async 
       for (const block of accession.blocks) {
         const slide = block.slides.find((entry) => entry.slideId === req.params.slideId);
         if (slide) {
+          const order = findOrder(db, accession.orderId);
+          if (!orderRequiresIhcWorkflow(order)) {
+            throw new Error("This order does not include an IHC workflow");
+          }
+          const duplicate = [...slide.ihcEntries]
+            .reverse()
+            .find(
+              (entry) =>
+                sameTrimmedText(entry.antibody, parsed.data.antibody) &&
+                sameTrimmedText(entry.clone, parsed.data.clone) &&
+                sameTrimmedText(entry.antigenRetrieval, parsed.data.antigenRetrieval) &&
+                sameTrimmedText(entry.detection, parsed.data.detection) &&
+                sameTrimmedText(entry.counterstain, parsed.data.counterstain) &&
+                sameTrimmedText(entry.qcNotes, parsed.data.qcNotes ?? "") &&
+                occurredWithinWindow(entry.createdAt, NOTE_DUPLICATE_WINDOW_MS),
+            );
+          if (duplicate) {
+            return slide;
+          }
           slide.ihcEntries.push({
             _id: createId(),
             ...parsed.data,
@@ -2264,6 +2553,16 @@ app.post("/api/slide-images/simulate", requireRoles("admin", "technician"), asyn
       for (const block of accession.blocks) {
         const slide = block.slides.find((entry) => entry.slideId === parsed.data.slideId);
         if (slide) {
+          const order = findOrder(db, accession.orderId);
+          if (!orderHasHistologyWorkflow(order)) {
+            throw new Error("Only histology-based orders can generate digital slide images");
+          }
+          if (
+            slide.imageUrls.length &&
+            slide.imageUrls.every((imageUrl) => imageUrl.startsWith(`generated:${slide.slideId}:`))
+          ) {
+            return slide;
+          }
           slide.imageUrls = [
             `generated:${slide.slideId}:overview`,
             `generated:${slide.slideId}:detail`,
@@ -2334,6 +2633,12 @@ app.post("/api/reports/:orderId/save", requireRoles("admin", "pathologist"), asy
       target = buildReport(db, order);
       db.reports.push(target);
     }
+    const hasChanges =
+      !sameTrimmedText(target.diagnosis, parsed.data.diagnosis) ||
+      !sameTrimmedText(target.microscopicDescription, parsed.data.microscopicDescription) ||
+      !sameTrimmedText(target.grossDescription, parsed.data.grossDescription) ||
+      !sameTrimmedText(target.comment, parsed.data.comment) ||
+      (parsed.data.templateId ?? null) !== (target.templateId ?? null);
     target.diagnosis = parsed.data.diagnosis;
     target.microscopicDescription = parsed.data.microscopicDescription;
     target.grossDescription = parsed.data.grossDescription;
@@ -2341,14 +2646,16 @@ app.post("/api/reports/:orderId/save", requireRoles("admin", "pathologist"), asy
     target.templateId = parsed.data.templateId ?? target.templateId ?? null;
     target.authorId = currentUser._id;
     target.versions ??= [];
-    target.versions.unshift({
-      version: target.versions.length + 1,
-      diagnosis: target.diagnosis,
-      microscopicDescription: target.microscopicDescription,
-      comment: target.comment,
-      createdAt: now(),
-    });
-    target.updatedAt = now();
+    if (hasChanges || !target.versions.length) {
+      target.versions.unshift({
+        version: target.versions.length + 1,
+        diagnosis: target.diagnosis,
+        microscopicDescription: target.microscopicDescription,
+        comment: target.comment,
+        createdAt: now(),
+      });
+      target.updatedAt = now();
+    }
     return target;
   }).catch((error: Error) => {
     res.status(404).json({ message: error.message });
@@ -2369,6 +2676,11 @@ app.post("/api/reports/:orderId/lock", requireRoles("admin", "pathologist"), asy
     if (!target) {
       target = buildReport(db, order);
       db.reports.push(target);
+    }
+    if (target.status === "complete" && target.lockedAt) {
+      order.status = order.status === "released" ? order.status : "completed";
+      order.completedAt = order.completedAt ?? target.lockedAt;
+      return target;
     }
     target.status = "complete";
     target.lockedAt = now();
@@ -2397,6 +2709,9 @@ app.post("/api/reports/:orderId/email", requireRoles("admin", "pathologist"), as
     if (!target) {
       target = buildReport(db, order);
       db.reports.push(target);
+    }
+    if (target.releaseRuleStatus === "released" && target.emailedAt && order.status === "released") {
+      return target;
     }
     if (target.status !== "complete") {
       target.status = "complete";
@@ -2445,6 +2760,8 @@ app.post("/api/cytology/cases", requireRoles("admin", "technician"), async (req:
       orderId: z.string().min(1),
       specimenType: z.string().min(1),
       remarks: z.string().default(""),
+      routeType: z.enum(["gyn", "non_gyn"]).optional(),
+      preparationType: z.enum(["smear", "cell_block", "liquid_based"]).optional(),
     })
     .safeParse(req.body);
   if (!parsed.success) {
@@ -2452,8 +2769,16 @@ app.post("/api/cytology/cases", requireRoles("admin", "technician"), async (req:
   }
 
   const created = await updateDb((db) => {
-    getAccessibleOrderOrThrow(db, req, parsed.data.orderId);
+    const order = getAccessibleOrderOrThrow(db, req, parsed.data.orderId);
+    if (!orderHasCytologyWorkflow(order)) {
+      throw new Error("This order is not routed through cytology");
+    }
+    const existing = db.cytologyCases.find((entry) => entry.orderId === parsed.data.orderId);
+    if (existing) {
+      return existing;
+    }
     const timestamp = now();
+    const defaults = inferCytologyCaseDefaults(db, order);
     const caseNumber = `CY-${new Date().getUTCFullYear().toString().slice(-2)}-${String(
       db.cytologyCases.length + 1,
     ).padStart(4, "0")}`;
@@ -2464,6 +2789,10 @@ app.post("/api/cytology/cases", requireRoles("admin", "technician"), async (req:
       specimenType: parsed.data.specimenType,
       status: "open" as const,
       remarks: parsed.data.remarks,
+      routeType: parsed.data.routeType ?? defaults.routeType,
+      preparationType: parsed.data.preparationType ?? defaults.preparationType,
+      qcStatus: "pending" as const,
+      qcNotes: "",
       createdAt: timestamp,
       updatedAt: timestamp,
     };
@@ -2480,6 +2809,10 @@ app.put("/api/cytology/cases/:id", requireRoles("admin", "technician", "patholog
       specimenType: z.string().optional(),
       status: z.enum(["open", "review", "complete"]).optional(),
       remarks: z.string().optional(),
+      routeType: z.enum(["gyn", "non_gyn"]).optional(),
+      preparationType: z.enum(["smear", "cell_block", "liquid_based"]).optional(),
+      qcStatus: z.enum(["pending", "pass", "fail"]).optional(),
+      qcNotes: z.string().optional(),
     })
     .safeParse(req.body);
   if (!parsed.success) {
@@ -2491,9 +2824,34 @@ app.put("/api/cytology/cases/:id", requireRoles("admin", "technician", "patholog
     if (!entry) {
       throw new Error("Case not found");
     }
-    getAccessibleOrderOrThrow(db, req, entry.orderId);
+    const order = getAccessibleOrderOrThrow(db, req, entry.orderId);
+    if (!orderHasCytologyWorkflow(order)) {
+      throw new Error("This order is not routed through cytology");
+    }
     Object.assign(entry, parsed.data);
     entry.updatedAt = now();
+    if (parsed.data.qcStatus !== undefined || parsed.data.qcNotes !== undefined) {
+      const existingQc = db.cytologyQualityRecords.find((record) => record.cytologyCaseId === entry._id);
+      if (existingQc) {
+        existingQc.routeType = parsed.data.routeType ?? entry.routeType ?? existingQc.routeType;
+        existingQc.preparationType =
+          parsed.data.preparationType ?? entry.preparationType ?? existingQc.preparationType;
+        existingQc.qcStatus = parsed.data.qcStatus ?? existingQc.qcStatus;
+        existingQc.qcNotes = parsed.data.qcNotes ?? existingQc.qcNotes;
+        existingQc.updatedAt = entry.updatedAt;
+      } else {
+        db.cytologyQualityRecords.unshift({
+          _id: createId(),
+          cytologyCaseId: entry._id,
+          routeType: parsed.data.routeType ?? entry.routeType ?? "non_gyn",
+          preparationType: parsed.data.preparationType ?? entry.preparationType ?? "smear",
+          qcStatus: parsed.data.qcStatus ?? "pending",
+          qcNotes: parsed.data.qcNotes ?? "",
+          createdAt: entry.updatedAt,
+          updatedAt: entry.updatedAt,
+        });
+      }
+    }
     return entry;
   }).catch((error: Error) => {
     res.status(

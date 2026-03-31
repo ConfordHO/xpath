@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 
 import type { AuthRequest } from "../auth.js";
 import { isSuperAdmin, normalizeSiteId } from "../auth.js";
+import { getOrderWorkflowPlan } from "./workflowPlans.js";
 import type {
   Accession,
   CourierStatus,
@@ -22,6 +23,25 @@ export function now() {
 
 export function createId() {
   return randomBytes(12).toString("hex");
+}
+
+export function trimText(value?: string | null) {
+  return String(value ?? "").trim();
+}
+
+export function sameTrimmedText(left?: string | null, right?: string | null) {
+  return trimText(left) === trimText(right);
+}
+
+export function occurredWithinWindow(timestamp?: string | null, windowMs = 15_000) {
+  if (!timestamp) {
+    return false;
+  }
+  const parsed = new Date(timestamp).getTime();
+  if (!Number.isFinite(parsed)) {
+    return false;
+  }
+  return Math.abs(Date.now() - parsed) <= windowMs;
 }
 
 export function createOrderNumber(db: Database) {
@@ -445,6 +465,33 @@ export function buildTimeline(db: Database, order: Order) {
     timeline.push({ label: "Staining completed", at: accession.stainedAt });
   }
 
+  const cytologyCase = db.cytologyCases.find((entry) => entry.orderId === order._id) ?? null;
+  if (cytologyCase) {
+    timeline.push({
+      label: "Cytology case created",
+      at: cytologyCase.createdAt,
+      value: cytologyCase.caseNumber,
+    });
+  }
+  if (cytologyCase?.qcStatus === "pass" || cytologyCase?.status === "complete") {
+    timeline.push({
+      label: "Cytology QC completed",
+      at: cytologyCase.updatedAt,
+      value: cytologyCase.qcStatus ?? "complete",
+    });
+  }
+
+  const instrumentRuns = db.instrumentRuns
+    .filter((entry) => entry.orderId === order._id)
+    .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  for (const run of instrumentRuns) {
+    timeline.push({
+      label: `Technical run completed`,
+      at: run.updatedAt,
+      value: run.runType,
+    });
+  }
+
   const report = getReportByOrder(db, order._id);
   if (report?.lockedAt) {
     timeline.push({ label: "Report completed", at: report.lockedAt });
@@ -476,11 +523,13 @@ export function hydrateOrder(db: Database, order: Order) {
   const assignedTechnician = findUser(db, order.assignedTechnicianId);
   const assignedPathologist = findUser(db, order.assignedPathologistId);
   const report = getReportByOrder(db, order._id);
+  const workflowPlan = getOrderWorkflowPlan(db, order);
   return {
     ...order,
     courierStatus: normalizeCourierStatus(order.courierStatus),
     patient,
     testTypes: getOrderTestTypes(db, order),
+    workflowPlan,
     referringDoctor: doctor?.name ?? order.referringDoctorName ?? null,
     referringDoctorId: doctor
       ? {
