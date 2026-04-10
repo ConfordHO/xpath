@@ -335,6 +335,14 @@ export function scopeDbForUser(db: Database, actor: User): Database {
         accessionIds.has(entry.entityId) ||
         slideIds.has(entry.entityId),
     ),
+    documents: db.documents,
+    auditEvents: db.auditEvents.filter(
+      (entry) =>
+        !entry.siteId ||
+        normalizeSiteId(entry.siteId) === actorSiteId ||
+        orderIds.has(entry.orderId ?? "") ||
+        visibleUserIds.has(entry.actorUserId ?? ""),
+    ),
     sessionRecords: db.sessionRecords.filter(
       (entry) => entry.userId === actor._id || visibleUserIds.has(entry.userId),
     ),

@@ -656,7 +656,11 @@ export function HistologyPage() {
               variant="contained"
               onClick={() => runHistologyAction(
                 `grossing-${selected.accession._id}`,
-                () => api.post(`/accessions/${selected.accession._id}/grossing`, { grossDescription, numberOfBlocks: blockCount }),
+                () => api.post(`/accessions/${selected.accession._id}/grossing`, {
+                  grossDescription,
+                  numberOfBlocks: blockCount,
+                  scannedCode: accessionId,
+                }),
                 'Grossing saved and case moved to processing.',
               )}
             >
@@ -702,7 +706,10 @@ export function HistologyPage() {
                   variant="contained"
                   onClick={() => runHistologyAction(
                     `processing-${selected.accession._id}`,
-                    () => api.post(`/accessions/${selected.accession._id}/processing`, { processingNotes }),
+                    () => api.post(`/accessions/${selected.accession._id}/processing`, {
+                      processingNotes,
+                      scannedCode: accessionId,
+                    }),
                     'Processing notes saved.',
                   )}
                 >
@@ -728,7 +735,10 @@ export function HistologyPage() {
                   variant="contained"
                   onClick={() => runHistologyAction(
                     `embedding-${selected.accession._id}-${blockId}`,
-                    () => api.post(`/accessions/${selected.accession._id}/embedding`, { blockId }),
+                    () => api.post(`/accessions/${selected.accession._id}/embedding`, {
+                      blockId,
+                      scannedCode: blockId,
+                    }),
                     `${blockId} embedded successfully.`,
                   )}
                 >
@@ -747,7 +757,11 @@ export function HistologyPage() {
                   variant="contained"
                   onClick={() => runHistologyAction(
                     `section-${selected.accession._id}-${blockId}`,
-                    () => api.post(`/accessions/${selected.accession._id}/sectioning`, { blockId, slideCount }),
+                    () => api.post(`/accessions/${selected.accession._id}/sectioning`, {
+                      blockId,
+                      slideCount,
+                      scannedCode: blockId,
+                    }),
                     `${slideCount} slide(s) created from ${blockId}.`,
                   )}
                 >
@@ -773,7 +787,11 @@ export function HistologyPage() {
                   variant="contained"
                   onClick={() => runHistologyAction(
                     `stain-${selected.accession._id}-${slideId}`,
-                    () => api.post(`/accessions/${selected.accession._id}/staining`, { slideId, stainType: 'H&E' }),
+                    () => api.post(`/accessions/${selected.accession._id}/staining`, {
+                      slideId,
+                      stainType: 'H&E',
+                      scannedCode: slideId,
+                    }),
                     `${slideId} stained and ready for digital/review workflows.`,
                   )}
                 >
@@ -872,7 +890,10 @@ export function IhcPage() {
               onClick={async () => {
                 await actionLock.runLocked(`ihc-${slideId}`, async () => {
                   try {
-                    await api.post(`/slides/${slideId}/ihc`, form)
+                    await api.post(`/slides/${slideId}/ihc`, {
+                      ...form,
+                      scannedCode: slideId,
+                    })
                     setForm({
                       antibody: '',
                       clone: '',

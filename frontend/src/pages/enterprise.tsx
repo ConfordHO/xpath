@@ -115,6 +115,54 @@ type GenericRecord = {
   _id: string
 }
 
+type TatDashboardResponse = {
+  range: string
+  from: string | null
+  to: string | null
+  averages: {
+    totalMinutes: number
+    preAnalyticalMinutes: number
+  }
+  counts: {
+    onTrack: number
+    risk: number
+    breach: number
+    complete: number
+  }
+  phaseBreakdown: Record<string, { count: number; averageMinutes: number }>
+  entries: Array<{
+    orderId: string
+    orderNumber: string
+    siteId: string | null
+    status: string
+    totalMinutes: number
+    targetMinutes: number
+    totalStatus: 'on_track' | 'risk' | 'breach' | 'complete'
+    createdAt: string
+    releasedAt: string | null
+    clocks: Array<{
+      phase: string
+      startedAt: string | null
+      endedAt: string | null
+      durationMinutes: number | null
+      targetMinutes: number
+      status: 'on_track' | 'risk' | 'breach' | 'complete'
+    }>
+  }>
+}
+
+type AuditVerificationResponse = {
+  valid: boolean
+  checked: number
+  latestHash: string | null
+  latestSequence: number
+  failures: Array<{
+    eventId: string
+    sequence: number
+    reason: string
+  }>
+}
+
 function formatFieldValue(value: unknown, field: FieldConfig): string | number | boolean {
   if (field.type === 'checkbox') {
     return Boolean(value)
@@ -1529,23 +1577,7 @@ export function ResultsQualityPage() {
         ]}
       />
 
-      <SectionCard title="15. TAT and KPI monitoring" description="Track pre-analytical TAT averages and phase-level alerting.">
-        {tatSummaryState.error ? <PageError message={tatSummaryState.error} /> : null}
-        <Box sx={{ display: 'grid', gap: 2, gridTemplateColumns: { xs: '1fr', md: 'repeat(3, 1fr)' }, mb: 2 }}>
-          <Paper sx={{ p: 2 }}>
-            <Typography variant="overline">Average pre-analytical TAT</Typography>
-            <Typography variant="h4">{tatSummaryState.data?.averagePreAnalyticsMinutes ?? 0} min</Typography>
-          </Paper>
-          <Paper sx={{ p: 2 }}>
-            <Typography variant="overline">At risk</Typography>
-            <Typography variant="h4">{tatSummaryState.data?.riskCount ?? 0}</Typography>
-          </Paper>
-          <Paper sx={{ p: 2 }}>
-            <Typography variant="overline">Breached</Typography>
-            <Typography variant="h4">{tatSummaryState.data?.breachCount ?? 0}</Typography>
-          </Paper>
-        </Box>
-      </SectionCard>
+      <TatDashboardPanel summary={tatSummaryState.data} summaryError={tatSummaryState.error} />
 
       <ResourceSection<TatAlert>
         title="15. TAT alerts"
@@ -1693,42 +1725,7 @@ export function GovernanceOperationsPage() {
         ]}
       />
 
-      <ResourceSection<DocumentRecord>
-        title="17. Document management"
-        description="Maintain SOPs, accreditation documents, policy versions, and controlled access."
-        endpoint="/documents"
-        initialValues={{
-          title: '',
-          category: '',
-          version: '',
-          owner: '',
-          accessLevel: 'controlled',
-          trainingDueAt: '2026-06-30',
-        }}
-        fields={[
-          { key: 'title', label: 'Title', type: 'text' },
-          { key: 'category', label: 'Category', type: 'text' },
-          { key: 'version', label: 'Version', type: 'text' },
-          { key: 'owner', label: 'Owner', type: 'text' },
-          {
-            key: 'accessLevel',
-            label: 'Access level',
-            type: 'select',
-            options: [
-              { label: 'Controlled', value: 'controlled' },
-              { label: 'Training', value: 'training' },
-              { label: 'Public', value: 'public' },
-            ],
-          },
-          { key: 'trainingDueAt', label: 'Training due', type: 'date' },
-        ]}
-        columns={[
-          { label: 'Document', render: (row) => row.title },
-          { label: 'Version', render: (row) => row.version },
-          { label: 'Owner', render: (row) => row.owner },
-          { label: 'Access', render: (row) => row.accessLevel },
-        ]}
-      />
+      <DocumentManagementSection />
 
       <SectionCard title="18. Audit trail" description="Immutable-style event log for significant platform actions.">
         <AuditTable />
@@ -1798,35 +1795,385 @@ function AuditTable() {
     const response = await api.get<AuditEvent[]>('/audit/events')
     return response.data
   })
+  const verifyState = useLoadable<AuditVerificationResponse | null>(null, [], async () => {
+    const response = await api.get<AuditVerificationResponse>('/audit/verify')
+    return response.data
+  })
 
   if (auditState.loading) return <Typography>Loading audit trail…</Typography>
   if (auditState.error) return <PageError message={auditState.error} />
 
   return (
-    <TableContainer>
-      <Table>
+    <Stack spacing={2}>
+      {verifyState.data ? (
+        <Alert severity={verifyState.data.valid ? 'success' : 'error'}>
+          {verifyState.data.valid
+            ? `Audit chain verified successfully. ${verifyState.data.checked} events checked through sequence ${verifyState.data.latestSequence}.`
+            : `Audit verification failed for ${verifyState.data.failures.length} event(s).`}
+        </Alert>
+      ) : null}
+      {verifyState.error ? <PageError message={verifyState.error} /> : null}
+      <TableContainer sx={{ maxHeight: 420 }}>
+        <Table stickyHeader>
         <TableHead>
           <TableRow>
+            <TableCell>#</TableCell>
             <TableCell>At</TableCell>
             <TableCell>Module</TableCell>
             <TableCell>Action</TableCell>
             <TableCell>Actor</TableCell>
+            <TableCell>Order</TableCell>
             <TableCell>Summary</TableCell>
+            <TableCell>Hash</TableCell>
           </TableRow>
         </TableHead>
         <TableBody>
           {auditState.data.map((entry) => (
             <TableRow key={entry._id}>
+              <TableCell>{entry.sequence}</TableCell>
               <TableCell>{formatDateTime(entry.createdAt)}</TableCell>
               <TableCell>{entry.module}</TableCell>
               <TableCell>{entry.action}</TableCell>
               <TableCell>{entry.actor}</TableCell>
+              <TableCell>{entry.orderId ?? '—'}</TableCell>
               <TableCell>{entry.summary}</TableCell>
+              <TableCell sx={{ fontFamily: 'monospace', fontSize: 12 }}>{entry.hash.slice(0, 12)}…</TableCell>
             </TableRow>
           ))}
         </TableBody>
       </Table>
-    </TableContainer>
+      </TableContainer>
+    </Stack>
+  )
+}
+
+function TatDashboardPanel({
+  summary,
+  summaryError,
+}: {
+  summary: TatSummary | null
+  summaryError: string | null
+}) {
+  const [range, setRange] = useState<'daily' | 'weekly' | 'monthly' | 'custom'>('monthly')
+  const [from, setFrom] = useState('')
+  const [to, setTo] = useState('')
+  const dashboardState = useLoadable<TatDashboardResponse | null>(null, [range, from, to], async () => {
+    const response = await api.get<TatDashboardResponse>('/tat/dashboard', {
+      params: {
+        range,
+        from: range === 'custom' ? from : undefined,
+        to: range === 'custom' ? to : undefined,
+      },
+    })
+    return response.data
+  })
+
+  return (
+    <SectionCard title="15. TAT and KPI monitoring" description="Track phase clocks, identify risk/breach cases, and review current turnaround performance.">
+      {summaryError ? <PageError message={summaryError} /> : null}
+      {dashboardState.error ? <PageError message={dashboardState.error} /> : null}
+      <Stack spacing={2.5}>
+        <Stack direction={{ xs: 'column', md: 'row' }} spacing={2}>
+          <FormControl sx={{ minWidth: 180 }}>
+            <InputLabel>Range</InputLabel>
+            <Select label="Range" value={range} onChange={(event) => setRange(event.target.value as typeof range)}>
+              <MenuItem value="daily">Daily</MenuItem>
+              <MenuItem value="weekly">Weekly</MenuItem>
+              <MenuItem value="monthly">Monthly</MenuItem>
+              <MenuItem value="custom">Custom</MenuItem>
+            </Select>
+          </FormControl>
+          {range === 'custom' ? (
+            <>
+              <TextField
+                label="From"
+                type="date"
+                value={from}
+                onChange={(event) => setFrom(event.target.value)}
+                InputLabelProps={{ shrink: true }}
+              />
+              <TextField
+                label="To"
+                type="date"
+                value={to}
+                onChange={(event) => setTo(event.target.value)}
+                InputLabelProps={{ shrink: true }}
+              />
+            </>
+          ) : null}
+        </Stack>
+
+        <Box sx={{ display: 'grid', gap: 2, gridTemplateColumns: { xs: '1fr', md: 'repeat(4, 1fr)' } }}>
+          <Paper sx={{ p: 2 }}>
+            <Typography variant="overline">Average pre-analytical TAT</Typography>
+            <Typography variant="h4">{summary?.averagePreAnalyticsMinutes ?? dashboardState.data?.averages.preAnalyticalMinutes ?? 0} min</Typography>
+          </Paper>
+          <Paper sx={{ p: 2 }}>
+            <Typography variant="overline">Average total TAT</Typography>
+            <Typography variant="h4">{dashboardState.data?.averages.totalMinutes ?? 0} min</Typography>
+          </Paper>
+          <Paper sx={{ p: 2 }}>
+            <Typography variant="overline">At risk</Typography>
+            <Typography variant="h4">{summary?.riskCount ?? dashboardState.data?.counts.risk ?? 0}</Typography>
+          </Paper>
+          <Paper sx={{ p: 2 }}>
+            <Typography variant="overline">Breached</Typography>
+            <Typography variant="h4">{summary?.breachCount ?? dashboardState.data?.counts.breach ?? 0}</Typography>
+          </Paper>
+        </Box>
+
+        <TableContainer sx={{ maxHeight: 360 }}>
+          <Table stickyHeader>
+            <TableHead>
+              <TableRow>
+                <TableCell>Phase</TableCell>
+                <TableCell>Average</TableCell>
+                <TableCell>Cases</TableCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {Object.entries(dashboardState.data?.phaseBreakdown ?? {}).map(([phase, detail]) => (
+                <TableRow key={phase}>
+                  <TableCell>{phase.replace(/_/g, ' ')}</TableCell>
+                  <TableCell>{detail.averageMinutes} min</TableCell>
+                  <TableCell>{detail.count}</TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </TableContainer>
+
+        <TableContainer sx={{ maxHeight: 420 }}>
+          <Table stickyHeader>
+            <TableHead>
+              <TableRow>
+                <TableCell>Order</TableCell>
+                <TableCell>Total TAT</TableCell>
+                <TableCell>Target</TableCell>
+                <TableCell>Status</TableCell>
+                <TableCell>Created</TableCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {(dashboardState.data?.entries ?? []).slice(0, 20).map((entry) => (
+                <TableRow key={entry.orderId}>
+                  <TableCell>{entry.orderNumber}</TableCell>
+                  <TableCell>{entry.totalMinutes} min</TableCell>
+                  <TableCell>{entry.targetMinutes} min</TableCell>
+                  <TableCell>{entry.totalStatus}</TableCell>
+                  <TableCell>{formatDateTime(entry.createdAt)}</TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </TableContainer>
+      </Stack>
+    </SectionCard>
+  )
+}
+
+function DocumentManagementSection() {
+  const documentsState = useLoadable<DocumentRecord[]>([], [], async () => {
+    const response = await api.get<DocumentRecord[]>('/documents')
+    return response.data
+  })
+  const [form, setForm] = useState({
+    title: '',
+    category: '',
+    version: '1.0',
+    owner: '',
+    accessLevel: 'controlled' as DocumentRecord['accessLevel'],
+    trainingDueAt: '',
+  })
+  const [file, setFile] = useState<File | null>(null)
+  const [feedback, setFeedback] = useState<{ kind: 'success' | 'error'; message: string } | null>(null)
+  const [submitting, setSubmitting] = useState(false)
+  const [replaceTarget, setReplaceTarget] = useState<DocumentRecord | null>(null)
+  const [replaceVersion, setReplaceVersion] = useState('')
+  const [replaceFile, setReplaceFile] = useState<File | null>(null)
+
+  const uploadDocument = async () => {
+    if (!file) {
+      setFeedback({ kind: 'error', message: 'Choose a file before uploading.' })
+      return
+    }
+    setSubmitting(true)
+    setFeedback(null)
+    try {
+      const payload = new FormData()
+      payload.append('title', form.title)
+      payload.append('category', form.category)
+      payload.append('version', form.version)
+      payload.append('owner', form.owner)
+      payload.append('accessLevel', form.accessLevel)
+      payload.append('trainingDueAt', form.trainingDueAt || '')
+      payload.append('file', file)
+      await api.post('/documents/upload', payload, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      })
+      setForm({
+        title: '',
+        category: '',
+        version: '1.0',
+        owner: '',
+        accessLevel: 'controlled',
+        trainingDueAt: '',
+      })
+      setFile(null)
+      setFeedback({ kind: 'success', message: 'Document uploaded successfully.' })
+      documentsState.refresh()
+    } catch (uploadError) {
+      setFeedback({ kind: 'error', message: errorMessage(uploadError) })
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  const downloadDocument = async (record: DocumentRecord) => {
+    const response = await api.get(`/documents/${record._id}/file`, {
+      responseType: 'blob',
+    })
+    const blobUrl = window.URL.createObjectURL(response.data)
+    const anchor = window.document.createElement('a')
+    anchor.href = blobUrl
+    anchor.download = record.originalFilename ?? `${record.title}.bin`
+    window.document.body.appendChild(anchor)
+    anchor.click()
+    anchor.remove()
+    window.URL.revokeObjectURL(blobUrl)
+  }
+
+  const replaceDocumentFile = async () => {
+    if (!replaceTarget || !replaceFile) {
+      setFeedback({ kind: 'error', message: 'Choose a replacement file first.' })
+      return
+    }
+    try {
+      const payload = new FormData()
+      payload.append('version', replaceVersion || replaceTarget.version)
+      payload.append('file', replaceFile)
+      await api.post(`/documents/${replaceTarget._id}/file`, payload, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      })
+      setFeedback({ kind: 'success', message: 'Document file replaced successfully.' })
+      setReplaceTarget(null)
+      setReplaceVersion('')
+      setReplaceFile(null)
+      documentsState.refresh()
+    } catch (replaceError) {
+      setFeedback({ kind: 'error', message: errorMessage(replaceError) })
+    }
+  }
+
+  return (
+    <>
+      <SectionCard title="17. Document management" description="Store SOPs, accreditation records, policies, and training files with versioned binaries.">
+        {feedback ? <Alert severity={feedback.kind} sx={{ mb: 2 }}>{feedback.message}</Alert> : null}
+        <Stack spacing={2}>
+          <Box sx={{ display: 'grid', gap: 2, gridTemplateColumns: { xs: '1fr', md: 'repeat(3, 1fr)' } }}>
+            <TextField label="Title" value={form.title} onChange={(event) => setForm((prev) => ({ ...prev, title: event.target.value }))} />
+            <TextField label="Category" value={form.category} onChange={(event) => setForm((prev) => ({ ...prev, category: event.target.value }))} />
+            <TextField label="Owner" value={form.owner} onChange={(event) => setForm((prev) => ({ ...prev, owner: event.target.value }))} />
+            <TextField label="Version" value={form.version} onChange={(event) => setForm((prev) => ({ ...prev, version: event.target.value }))} />
+            <FormControl>
+              <InputLabel>Access level</InputLabel>
+              <Select
+                label="Access level"
+                value={form.accessLevel}
+                onChange={(event) => setForm((prev) => ({ ...prev, accessLevel: event.target.value as DocumentRecord['accessLevel'] }))}
+              >
+                <MenuItem value="controlled">Controlled</MenuItem>
+                <MenuItem value="training">Training</MenuItem>
+                <MenuItem value="public">Public</MenuItem>
+              </Select>
+            </FormControl>
+            <TextField
+              label="Training due"
+              type="date"
+              value={form.trainingDueAt}
+              onChange={(event) => setForm((prev) => ({ ...prev, trainingDueAt: event.target.value }))}
+              InputLabelProps={{ shrink: true }}
+            />
+          </Box>
+          <Button component="label" variant="outlined">
+            {file ? `Selected: ${file.name}` : 'Choose file'}
+            <input hidden type="file" onChange={(event) => setFile(event.target.files?.[0] ?? null)} />
+          </Button>
+          <Stack direction={{ xs: 'column', md: 'row' }} spacing={2}>
+            <Button
+              variant="contained"
+              disabled={submitting || !form.title.trim() || !form.category.trim() || !form.owner.trim() || !file}
+              onClick={() => void uploadDocument()}
+            >
+              Upload document
+            </Button>
+            <Typography color="text.secondary" variant="body2">
+              Supported uploads include PDF, DOCX, DOC, TXT, PNG, and JPG.
+            </Typography>
+          </Stack>
+
+          <TableContainer sx={{ maxHeight: 420 }}>
+            <Table stickyHeader>
+              <TableHead>
+                <TableRow>
+                  <TableCell>Document</TableCell>
+                  <TableCell>Version</TableCell>
+                  <TableCell>File</TableCell>
+                  <TableCell>Checksum</TableCell>
+                  <TableCell>Updated</TableCell>
+                  <TableCell>Actions</TableCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {documentsState.data.map((row) => (
+                  <TableRow key={row._id}>
+                    <TableCell>
+                      <Typography fontWeight={700}>{row.title}</Typography>
+                      <Typography variant="body2" color="text.secondary">{row.category} · {row.accessLevel}</Typography>
+                    </TableCell>
+                    <TableCell>{row.version}</TableCell>
+                    <TableCell>{row.originalFilename ?? 'Metadata only'}</TableCell>
+                    <TableCell sx={{ fontFamily: 'monospace', fontSize: 12 }}>
+                      {row.checksumSha256 ? `${row.checksumSha256.slice(0, 12)}…` : '—'}
+                    </TableCell>
+                    <TableCell>{formatDateTime(row.updatedAt)}</TableCell>
+                    <TableCell>
+                      <Stack direction="row" spacing={1}>
+                        <Button size="small" disabled={!row.storagePath} onClick={() => void downloadDocument(row)}>
+                          Download
+                        </Button>
+                        <Button size="small" onClick={() => { setReplaceTarget(row); setReplaceVersion(row.version) }}>
+                          Replace file
+                        </Button>
+                      </Stack>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </TableContainer>
+        </Stack>
+      </SectionCard>
+
+      <Dialog open={Boolean(replaceTarget)} onClose={() => setReplaceTarget(null)} fullWidth maxWidth="sm">
+        <DialogTitle>Replace document file</DialogTitle>
+        <DialogContent>
+          <Stack spacing={2} sx={{ mt: 1 }}>
+            <TextField label="Version" value={replaceVersion} onChange={(event) => setReplaceVersion(event.target.value)} />
+            <Button component="label" variant="outlined">
+              {replaceFile ? `Selected: ${replaceFile.name}` : 'Choose replacement file'}
+              <input hidden type="file" onChange={(event) => setReplaceFile(event.target.files?.[0] ?? null)} />
+            </Button>
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setReplaceTarget(null)}>Cancel</Button>
+          <Button variant="contained" onClick={() => void replaceDocumentFile()} disabled={!replaceFile}>
+            Replace
+          </Button>
+        </DialogActions>
+      </Dialog>
+    </>
   )
 }
 

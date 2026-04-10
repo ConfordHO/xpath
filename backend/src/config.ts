@@ -40,13 +40,31 @@ function inferMongoDbName(uri: string) {
 }
 
 export const PORT = Number(process.env.PORT ?? 4000);
+export const NODE_ENV = process.env.NODE_ENV?.trim() || "development";
 export const JWT_SECRET = readRequiredEnv("JWT_SECRET");
+export const JWT_ISSUER = process.env.JWT_ISSUER?.trim() || "xpath-backend";
+export const JWT_AUDIENCE = process.env.JWT_AUDIENCE?.trim() || "xpath-clients";
+export const JWT_EXPIRY = process.env.JWT_EXPIRY?.trim() || "7d";
 export const MONGODB_URI = readRequiredEnv("MONGODB_URI");
 export const MONGODB_DB_NAME =
   process.env.MONGODB_DB_NAME?.trim() || inferMongoDbName(MONGODB_URI) || "xpath_lims";
 export const MONGODB_COLLECTION = process.env.MONGODB_COLLECTION?.trim() || "app_state";
 export const MONGODB_STATE_ID = "primary";
 export const CORS_ORIGINS = readOrigins();
+export const TRUST_PROXY =
+  process.env.TRUST_PROXY?.trim() === "true"
+    ? true
+    : Number.isFinite(Number(process.env.TRUST_PROXY))
+      ? Number(process.env.TRUST_PROXY)
+      : false;
+export const GENERAL_RATE_LIMIT_WINDOW_MS = Number(
+  process.env.GENERAL_RATE_LIMIT_WINDOW_MS ?? 60_000,
+);
+export const GENERAL_RATE_LIMIT_MAX = Number(process.env.GENERAL_RATE_LIMIT_MAX ?? 400);
+export const AUTH_RATE_LIMIT_WINDOW_MS = Number(
+  process.env.AUTH_RATE_LIMIT_WINDOW_MS ?? 15 * 60_000,
+);
+export const AUTH_RATE_LIMIT_MAX = Number(process.env.AUTH_RATE_LIMIT_MAX ?? 20);
 export const HL7_MLLP_ENABLED = process.env.HL7_MLLP_ENABLED?.trim() !== "false";
 export const HL7_MLLP_HOST = process.env.HL7_MLLP_HOST?.trim() || "0.0.0.0";
 export const HL7_MLLP_PORT = Number(process.env.HL7_MLLP_PORT ?? 2575);
@@ -84,6 +102,28 @@ export const MAVIANCE_ORANGE_SERVICE_ID =
   process.env.MAVIANCE_ORANGE_SERVICE_ID?.trim() || "";
 export const MAVIANCE_ORANGE_PAYITEM_ID =
   process.env.MAVIANCE_ORANGE_PAYITEM_ID?.trim() || "";
+export const DMS_STORAGE_PROVIDER =
+  process.env.DMS_STORAGE_PROVIDER?.trim().toLowerCase() === "s3" ? "s3" : "local";
+export const DMS_LOCAL_STORAGE_PATH =
+  process.env.DMS_LOCAL_STORAGE_PATH?.trim() || "";
+export const DMS_MAX_FILE_BYTES = Number(process.env.DMS_MAX_FILE_BYTES ?? 10 * 1024 * 1024);
+export const DMS_ALLOWED_MIME_TYPES = (process.env.DMS_ALLOWED_MIME_TYPES ??
+  [
+    "application/pdf",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "application/msword",
+    "image/png",
+    "image/jpeg",
+    "text/plain",
+  ].join(","))
+  .split(",")
+  .map((value) => value.trim())
+  .filter(Boolean);
+export const S3_BUCKET_NAME = process.env.S3_BUCKET_NAME?.trim() || "";
+export const S3_REGION = process.env.S3_REGION?.trim() || "";
+export const S3_ENDPOINT = process.env.S3_ENDPOINT?.trim() || "";
+export const S3_ACCESS_KEY_ID = process.env.S3_ACCESS_KEY_ID?.trim() || "";
+export const S3_SECRET_ACCESS_KEY = process.env.S3_SECRET_ACCESS_KEY?.trim() || "";
 
 export function isAllowedOrigin(origin?: string | null) {
   if (!origin || CORS_ORIGINS.length === 0 || CORS_ORIGINS.includes("*")) {

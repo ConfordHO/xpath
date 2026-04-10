@@ -1,0 +1,62 @@
+services:
+  - type: web
+    name: xpath-backend
+    env: node
+    rootDir: backend
+    buildCommand: npm install && npm run build
+    startCommand: npm run start
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 10000
+      - key: TRUST_PROXY
+        value: true
+      - key: JWT_ISSUER
+        value: xpath-backend
+      - key: JWT_AUDIENCE
+        value: xpath-clients
+      - key: JWT_EXPIRY
+        value: 7d
+      - key: HL7_MLLP_ENABLED
+        value: false
+      - key: MONGODB_URI
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      - key: CORS_ORIGIN
+        sync: false
+      - key: DMS_STORAGE_PROVIDER
+        sync: false
+      - key: DMS_LOCAL_STORAGE_PATH
+        sync: false
+      - key: S3_BUCKET_NAME
+        sync: false
+      - key: S3_REGION
+        sync: false
+      - key: S3_ENDPOINT
+        sync: false
+      - key: S3_ACCESS_KEY_ID
+        sync: false
+      - key: S3_SECRET_ACCESS_KEY
+        sync: false
+      - key: MAVIANCE_ACCESS_TOKEN
+        sync: false
+      - key: MAVIANCE_ACCESS_SECRET
+        sync: false
+      - key: MAVIANCE_WEBHOOK_SECRET
+        sync: false
+      - key: LEICA_PROCESSOR_API_TOKEN
+        sync: false
+      - key: LEICA_PROCESSOR_WEBHOOK_SECRET
+        sync: false
+      - key: LEICA_STAINER_API_TOKEN
+        sync: false
+      - key: LEICA_STAINER_WEBHOOK_SECRET
+        sync: false
+      - key: ROCHE_SCANNER_API_TOKEN
+        sync: false
+      - key: ROCHE_SCANNER_WEBHOOK_SECRET
+        sync: false

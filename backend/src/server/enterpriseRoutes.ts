@@ -2,8 +2,20 @@ import type express from "express";
 import { z } from "zod";
 
 import { requireRoles, type AuthRequest } from "../auth.js";
+import {
+  DMS_STORAGE_PROVIDER,
+  HL7_MLLP_ENABLED,
+  HL7_MLLP_HOST,
+  HL7_MLLP_PORT,
+  MAVIANCE_ACCESS_SECRET,
+  MAVIANCE_ACCESS_TOKEN,
+  MAVIANCE_ENABLED,
+  MAVIANCE_WEBHOOK_SECRET,
+  NODE_ENV,
+} from "../config.js";
 import { loadDb, updateDb } from "../store.js";
 import type { Database, Order, Report, UserRole } from "../types.js";
+import { appendAuditEvent, verifyAuditTrail } from "./audit.js";
 import {
   createId,
   occurredWithinWindow,
@@ -17,6 +29,14 @@ import {
   sameTrimmedText,
   scopeDbForUser,
 } from "./helpers.js";
+import {
+  documentUpload,
+  documentFileExists,
+  readDocumentBinary,
+  removeDocumentBinary,
+  saveDocumentBinary,
+} from "./storage.js";
+import { buildTatDashboard } from "./tat.js";
 import { registerVendorIntegrationRoutes } from "./vendorIntegrations.js";
 
 type CollectionName =
@@ -67,14 +87,15 @@ function logAudit(
   actor: string,
   summary: string,
 ) {
-  db.auditEvents.unshift({
-    _id: createId(),
+  appendAuditEvent(db, {
     module,
     action,
     targetId,
     actor,
     summary,
-    createdAt: now(),
+    actorUserId: null,
+    actorRole: null,
+    siteId: null,
   });
 }
 
@@ -1079,6 +1100,17 @@ export function registerEnterpriseRoutes(app: express.Express) {
     });
   });
 
+  app.get("/api/tat/dashboard", requireRoles("admin"), async (req: AuthRequest, res) => {
+    const db = scopeDbForUser(await loadDb(), ensureUser(req));
+    res.json(
+      buildTatDashboard(db, {
+        range: String(req.query.range ?? ""),
+        from: String(req.query.from ?? ""),
+        to: String(req.query.to ?? ""),
+      }),
+    );
+  });
+
   app.get("/api/analytics/operational-summary", requireRoles("admin"), async (req: AuthRequest, res) => {
     const db = scopeDbForUser(await loadDb(), ensureUser(req));
     const completedReports = db.reports.filter((entry) => entry.lockedAt).length;
@@ -1099,6 +1131,211 @@ export function registerEnterpriseRoutes(app: express.Express) {
   app.get("/api/audit/events", requireRoles("admin"), async (req: AuthRequest, res) => {
     const db = scopeDbForUser(await loadDb(), ensureUser(req));
     res.json(db.auditEvents);
+  });
+
+  app.get("/api/audit/verify", requireRoles("admin"), async (req: AuthRequest, res) => {
+    const db = scopeDbForUser(await loadDb(), ensureUser(req));
+    res.json(verifyAuditTrail(db.auditEvents));
+  });
+
+  app.get("/api/integration-readiness", requireRoles("admin"), async (req: AuthRequest, res) => {
+    const db = scopeDbForUser(await loadDb(), ensureUser(req));
+    res.json({
+      environment: NODE_ENV,
+      dms: {
+        provider: DMS_STORAGE_PROVIDER,
+        persistentStorageRecommended: DMS_STORAGE_PROVIDER === "s3",
+      },
+      hl7: {
+        enabled: HL7_MLLP_ENABLED,
+        host: HL7_MLLP_HOST,
+        port: HL7_MLLP_PORT,
+        deploymentNote:
+          HL7_MLLP_ENABLED && NODE_ENV === "production"
+            ? "Expose the MLLP listener from a raw TCP-capable host or private network service."
+            : null,
+      },
+      maviance: {
+        enabled: MAVIANCE_ENABLED,
+        credentialsConfigured: Boolean(MAVIANCE_ACCESS_TOKEN && MAVIANCE_ACCESS_SECRET),
+        webhookConfigured: Boolean(MAVIANCE_WEBHOOK_SECRET),
+        liveValidationPath: "/api/payments/maviance/validate-live",
+      },
+      vendorConnectors: db.vendorConnectors.map((connector) => ({
+        id: connector._id,
+        name: connector.name,
+        vendor: connector.vendor,
+        deviceType: connector.deviceType,
+        status: connector.status,
+        enabled: connector.enabled,
+        liveMode: connector.liveMode,
+        authConfigured: Boolean(
+          connector.authType === "none" ||
+            !connector.authTokenEnvVar ||
+            process.env[connector.authTokenEnvVar]?.trim(),
+        ),
+        webhookConfigured: Boolean(
+          !connector.webhookSecretEnvVar ||
+            process.env[connector.webhookSecretEnvVar]?.trim(),
+        ),
+        healthUrl: new URL(connector.healthPath, connector.baseUrl).toString(),
+        dispatchUrl: new URL(connector.dispatchPath, connector.baseUrl).toString(),
+        webhookPath: connector.webhookPath,
+      })),
+    });
+  });
+
+  app.post(
+    "/api/documents/upload",
+    requireRoles("admin"),
+    documentUpload.single("file"),
+    async (req: AuthRequest, res) => {
+      const parsed = documentSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ message: "Invalid document payload" });
+      }
+
+      try {
+        const actor = ensureUser(req);
+        const created = await updateDb(async (db) => {
+          const timestamp = now();
+          const recordId = createId();
+          const fileVersion = await saveDocumentBinary({
+            documentId: recordId,
+            file: req.file ?? null,
+            uploadedBy: actor._id,
+            version: parsed.data.version,
+          });
+          const document = {
+            _id: recordId,
+            ...parsed.data,
+            originalFilename: fileVersion.originalFilename,
+            storedFilename: fileVersion.storedFilename,
+            mimeType: fileVersion.mimeType,
+            sizeBytes: fileVersion.sizeBytes,
+            checksumSha256: fileVersion.checksumSha256,
+            storageProvider: fileVersion.storageProvider,
+            storagePath: fileVersion.storagePath,
+            uploadedBy: fileVersion.uploadedBy,
+            versions: [
+              {
+                _id: fileVersion.versionId,
+                version: fileVersion.version,
+                originalFilename: fileVersion.originalFilename,
+                storedFilename: fileVersion.storedFilename,
+                mimeType: fileVersion.mimeType,
+                sizeBytes: fileVersion.sizeBytes,
+                checksumSha256: fileVersion.checksumSha256,
+                storageProvider: fileVersion.storageProvider,
+                storagePath: fileVersion.storagePath,
+                uploadedBy: fileVersion.uploadedBy,
+                uploadedAt: fileVersion.uploadedAt,
+              },
+            ],
+            createdAt: timestamp,
+            updatedAt: timestamp,
+          };
+          db.documents.unshift(document);
+          logAudit(
+            db,
+            "DMS",
+            "upload",
+            document._id,
+            actorName(req),
+            `Document ${document.title} uploaded`,
+          );
+          return document;
+        });
+        res.status(201).json(created);
+      } catch (error) {
+        res.status(400).json({ message: (error as Error).message });
+      }
+    },
+  );
+
+  app.post(
+    "/api/documents/:id/file",
+    requireRoles("admin"),
+    documentUpload.single("file"),
+    async (req: AuthRequest, res) => {
+      try {
+        const actor = ensureUser(req);
+        const updated = await updateDb(async (db) => {
+          const document = db.documents.find((entry) => entry._id === req.params.id);
+          if (!document) {
+            throw new Error("Document not found");
+          }
+          const nextVersion = String(req.body.version ?? document.version).trim() || document.version;
+          const fileVersion = await saveDocumentBinary({
+            documentId: document._id,
+            file: req.file ?? null,
+            previousRecord: document,
+            uploadedBy: actor._id,
+            version: nextVersion,
+          });
+          await removeDocumentBinary(document);
+          document.version = nextVersion;
+          document.originalFilename = fileVersion.originalFilename;
+          document.storedFilename = fileVersion.storedFilename;
+          document.mimeType = fileVersion.mimeType;
+          document.sizeBytes = fileVersion.sizeBytes;
+          document.checksumSha256 = fileVersion.checksumSha256;
+          document.storageProvider = fileVersion.storageProvider;
+          document.storagePath = fileVersion.storagePath;
+          document.uploadedBy = fileVersion.uploadedBy;
+          document.versions ??= [];
+          document.versions.unshift({
+            _id: fileVersion.versionId,
+            version: nextVersion,
+            originalFilename: fileVersion.originalFilename,
+            storedFilename: fileVersion.storedFilename,
+            mimeType: fileVersion.mimeType,
+            sizeBytes: fileVersion.sizeBytes,
+            checksumSha256: fileVersion.checksumSha256,
+            storageProvider: fileVersion.storageProvider,
+            storagePath: fileVersion.storagePath,
+            uploadedBy: fileVersion.uploadedBy,
+            uploadedAt: fileVersion.uploadedAt,
+          });
+          document.updatedAt = now();
+          logAudit(
+            db,
+            "DMS",
+            "replace_file",
+            document._id,
+            actorName(req),
+            `Document ${document.title} file replaced`,
+          );
+          return document;
+        });
+        res.json(updated);
+      } catch (error) {
+        res.status(400).json({ message: (error as Error).message });
+      }
+    },
+  );
+
+  app.get("/api/documents/:id/file", requireRoles("admin"), async (req: AuthRequest, res) => {
+    const db = scopeDbForUser(await loadDb(), ensureUser(req));
+    const document = db.documents.find((entry) => entry._id === req.params.id);
+    if (!document) {
+      return res.status(404).json({ message: "Document not found" });
+    }
+    try {
+      const exists = await documentFileExists(document);
+      if (!exists) {
+        return res.status(404).json({ message: "Stored file not found" });
+      }
+      const buffer = await readDocumentBinary(document);
+      res.setHeader("Content-Type", document.mimeType ?? "application/octet-stream");
+      res.setHeader(
+        "Content-Disposition",
+        `attachment; filename="${document.originalFilename ?? document.title}"`,
+      );
+      return res.send(buffer);
+    } catch (error) {
+      return res.status(400).json({ message: (error as Error).message });
+    }
   });
 
   app.get("/api/security/sessions", requireRoles("admin"), async (req: AuthRequest, res) => {

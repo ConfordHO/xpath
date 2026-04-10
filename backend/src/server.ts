@@ -1,5 +1,6 @@
 import cors from "cors";
 import express from "express";
+import { fileURLToPath } from "node:url";
 import { z } from "zod";
 
 import {
@@ -19,6 +20,8 @@ import {
   PORT,
   isAllowedOrigin,
 } from "./config.js";
+import { appendAuditEvent, auditActorDetails } from "./server/audit.js";
+import { ensureBarcodeAssigned, enforceBarcodeScan, getBarcodeForEntity } from "./server/barcodes.js";
 import {
   buildDashboardSummary,
   buildReport,
@@ -87,6 +90,7 @@ import {
   isMavianceMethod,
   registerMaviancePaymentRoutes,
 } from "./server/maviancePayments.js";
+import { applySecurity, authLimiter } from "./server/security.js";
 import { loadDb, updateDb } from "./store.js";
 import type {
   Accession,
@@ -132,6 +136,7 @@ app.use(
     },
   }),
 );
+applySecurity(app);
 app.use(
   express.json({
     limit: "2mb",
@@ -151,6 +156,38 @@ function sameTestTypeSelection(left: string[], right: string[]) {
 
 function getScopedDb(req: AuthRequest, db: Database) {
   return scopeDbForUser(db, ensureUser(req));
+}
+
+function appendRequestAudit(
+  db: Database,
+  req: AuthRequest,
+  input: {
+    module: string;
+    action: string;
+    targetId: string;
+    summary: string;
+    orderId?: string | null;
+    metadata?: Record<string, unknown> | string | null;
+  },
+) {
+  const actor = req.user ?? null;
+  const actorDetails = auditActorDetails(actor);
+  return appendAuditEvent(db, {
+    ...input,
+    requestId: req.requestId ?? null,
+    ...actorDetails,
+  });
+}
+
+function classifyWorkflowError(error: Error) {
+  const message = error.message.toLowerCase();
+  if (message.includes("access")) {
+    return 403;
+  }
+  if (message.includes("not found")) {
+    return 404;
+  }
+  return 400;
 }
 
 function getAccessibleOrderOrThrow(
@@ -346,7 +383,7 @@ function normalizeUserPreference(input: {
   };
 }
 
-app.post("/api/auth/login", async (req, res) => {
+app.post("/api/auth/login", authLimiter, async (req, res) => {
   const parsed = loginSchema.safeParse(req.body);
   if (!parsed.success) {
     return res.status(400).json({ message: "Invalid login payload" });
@@ -358,25 +395,45 @@ app.post("/api/auth/login", async (req, res) => {
   );
 
   if (!user || !user.active) {
+    await updateDb((mutableDb) => {
+      mutableDb.credentialAudits.unshift({
+        _id: createId(),
+        userId: user?._id ?? "unknown",
+        action: "login",
+        outcome: "failure",
+        createdAt: now(),
+      });
+    });
     return res.status(401).json({ message: "Invalid email or password" });
   }
 
   const valid = await verifyPassword(parsed.data.password, user.passwordHash);
   if (!valid) {
+    await updateDb((mutableDb) => {
+      mutableDb.credentialAudits.unshift({
+        _id: createId(),
+        userId: user._id,
+        action: "login",
+        outcome: "failure",
+        createdAt: now(),
+      });
+    });
     return res.status(401).json({ message: "Invalid email or password" });
   }
 
+  const sessionId = createId();
+  const sessionCreatedAt = now();
   await updateDb((db) => {
     db.sessionRecords.unshift({
-      _id: createId(),
+      _id: sessionId,
       userId: user._id,
       email: user.email,
       role: user.role,
       status: "active",
       ipAddress: req.ip || "127.0.0.1",
       userAgent: req.header("user-agent") ?? "unknown",
-      createdAt: now(),
-      updatedAt: now(),
+      createdAt: sessionCreatedAt,
+      updatedAt: sessionCreatedAt,
     });
     db.credentialAudits.unshift({
       _id: createId(),
@@ -385,10 +442,16 @@ app.post("/api/auth/login", async (req, res) => {
       outcome: "success",
       createdAt: now(),
     });
+    appendRequestAudit(db, req, {
+      module: "Security",
+      action: "login",
+      targetId: user._id,
+      summary: `${user.email} signed in`,
+    });
   });
 
   res.json({
-    token: signToken(user),
+    token: signToken(user, sessionId),
     user: sanitizeUser(user),
   });
 });
@@ -439,14 +502,69 @@ app.post("/api/auth/register", async (req, res) => {
     return;
   }
 
+  const sessionId = createId();
+  const sessionCreatedAt = now();
+  await updateDb((db) => {
+    db.sessionRecords.unshift({
+      _id: sessionId,
+      userId: created._id,
+      email: created.email,
+      role: created.role,
+      status: "active",
+      ipAddress: req.ip || "127.0.0.1",
+      userAgent: req.header("user-agent") ?? "unknown",
+      createdAt: sessionCreatedAt,
+      updatedAt: sessionCreatedAt,
+    });
+    db.credentialAudits.unshift({
+      _id: createId(),
+      userId: created._id,
+      action: "login",
+      outcome: "success",
+      createdAt: sessionCreatedAt,
+    });
+  });
+
   res.status(201).json({
-    token: signToken(created),
+    token: signToken(created, sessionId),
     user: sanitizeUser(created),
   });
 });
 
 app.get("/api/auth/me", requireAuth, async (req: AuthRequest, res) => {
   res.json(sanitizeUser(ensureUser(req)));
+});
+
+app.post("/api/auth/logout", requireAuth, async (req: AuthRequest, res) => {
+  const sessionId = req.session?._id;
+  const user = ensureUser(req);
+  if (!sessionId) {
+    return res.status(204).send();
+  }
+
+  await updateDb((db) => {
+    const session = db.sessionRecords.find((entry) => entry._id === sessionId);
+    if (!session || session.status === "revoked") {
+      return;
+    }
+    session.status = "revoked";
+    session.updatedAt = now();
+    db.credentialAudits.unshift({
+      _id: createId(),
+      userId: user._id,
+      action: "session_revoked",
+      outcome: "success",
+      createdAt: now(),
+    });
+    appendRequestAudit(db, req, {
+      module: "Security",
+      action: "logout",
+      targetId: user._id,
+      summary: `${user.email} signed out`,
+    });
+  });
+
+  res.status(204).send();
 });
 
 app.get("/api/settings", async (_req, res) => {
@@ -938,6 +1056,22 @@ app.post("/api/public/order-request", async (req, res) => {
       updatedAt: timestamp,
     };
     db.orders.push(order);
+    appendAuditEvent(db, {
+      module: "Orders",
+      action: "create_public_order",
+      targetId: order._id,
+      actor: "public_portal",
+      actorUserId: null,
+      actorRole: null,
+      siteId,
+      orderId: order._id,
+      summary: `Public requisition submitted for ${order.orderNumber}`,
+      metadata: {
+        orderNumber: order.orderNumber,
+        intakeSource: "portal",
+        testCount: order.testTypeIds.length,
+      },
+    });
     if (reservation) {
       reservation.status = "consumed";
       reservation.updatedAt = timestamp;
@@ -1181,7 +1315,7 @@ app.put("/api/users/:id", requireRoles("admin"), async (req: AuthRequest, res) =
     return target;
   }).catch((error: Error) => {
     res.status(
-      error.message.includes("access") ? 403 : 404,
+      error.message.includes("access") ? 403 : 400,
     ).json({ message: error.message });
     return null;
   });
@@ -1287,7 +1421,7 @@ app.put("/api/doctors/:id", requireRoles("admin"), async (req: AuthRequest, res)
     return doctor;
   }).catch((error: Error) => {
     res.status(
-      error.message.includes("access") ? 403 : 404,
+      error.message.includes("access") ? 403 : 400,
     ).json({ message: error.message });
     return null;
   });
@@ -1441,6 +1575,23 @@ app.get("/api/orders/:id", async (req: AuthRequest, res) => {
   }
 });
 
+app.get("/api/orders/:id/audit", async (req: AuthRequest, res) => {
+  const db = getScopedDb(req, await loadDb());
+  try {
+    const order = findOrder(db, String(req.params.id));
+    if (!userCanAccessOrder(db, ensureUser(req), order)) {
+      return res.status(403).json({ message: "You do not have access to this order" });
+    }
+    res.json(
+      db.auditEvents
+        .filter((entry) => entry.orderId === order._id || entry.targetId === order._id)
+        .sort((left, right) => right.sequence - left.sequence),
+    );
+  } catch (error) {
+    res.status(404).json({ message: (error as Error).message });
+  }
+});
+
 app.post("/api/orders", requireRoles("admin", "receptionist"), async (req: AuthRequest, res) => {
   const parsed = orderSchema.safeParse(req.body);
   if (!parsed.success) {
@@ -1494,6 +1645,17 @@ app.post("/api/orders", requireRoles("admin", "receptionist"), async (req: AuthR
       updatedAt: timestamp,
     };
     db.orders.push(order);
+    appendRequestAudit(db, req, {
+      module: "Orders",
+      action: "create",
+      targetId: order._id,
+      orderId: order._id,
+      summary: `Manual order ${order.orderNumber} created`,
+      metadata: {
+        intakeSource: "manual",
+        testCount: order.testTypeIds.length,
+      },
+    });
     return order;
   });
 
@@ -1538,6 +1700,17 @@ app.post("/api/orders/create", requireRoles("admin", "receptionist"), async (req
       updatedAt: timestamp,
     };
     db.orders.push(order);
+    appendRequestAudit(db, req, {
+      module: "Orders",
+      action: "create",
+      targetId: order._id,
+      orderId: order._id,
+      summary: `Manual order ${order.orderNumber} created`,
+      metadata: {
+        intakeSource: "manual",
+        testCount: order.testTypeIds.length,
+      },
+    });
     return order;
   });
 
@@ -1575,10 +1748,17 @@ app.put("/api/orders/:id", requireRoles("admin", "receptionist"), async (req: Au
         : normalizeSiteId(currentUser.siteId);
     }
     order.updatedAt = now();
+    appendRequestAudit(db, req, {
+      module: "Orders",
+      action: "update",
+      targetId: order._id,
+      orderId: order._id,
+      summary: `Order ${order.orderNumber} updated`,
+    });
     return order;
   }).catch((error: Error) => {
     res.status(
-      error.message.includes("access") ? 403 : 404,
+      error.message.includes("access") ? 403 : 400,
     ).json({ message: error.message });
     return null;
   });
@@ -1606,6 +1786,13 @@ app.post(
     order.status = "received";
     order.receivedAt = order.receivedAt ?? now();
     order.updatedAt = now();
+    appendRequestAudit(db, req, {
+      module: "Orders",
+      action: "mark_received",
+      targetId: order._id,
+      orderId: order._id,
+      summary: `Order ${order.orderNumber} marked as received`,
+    });
     return order;
   }).catch((error: Error) => {
     res.status(error.message.includes("access") ? 403 : 400).json({ message: error.message });
@@ -1689,6 +1876,18 @@ app.post("/api/orders/:id/payment", requireRoles("admin", "finance"), async (req
     if (parsed.data.status === "completed" && getOrderPaid(db, order._id) >= getOrderTotal(db, order)) {
       order.financialClearance = "cleared";
     }
+    appendRequestAudit(db, req, {
+      module: "Finance",
+      action: "record_payment",
+      targetId: created._id,
+      orderId: order._id,
+      summary: `Payment recorded for ${order.orderNumber}`,
+      metadata: {
+        amount: created.amount,
+        method: created.method,
+        status: created.status,
+      },
+    });
     return created;
   }).catch((error: Error) => {
     res.status(404).json({ message: error.message });
@@ -1719,6 +1918,13 @@ app.post(
     }
     payment.confirmedWithPatientAt = now();
     payment.updatedAt = now();
+    appendRequestAudit(db, req, {
+      module: "Finance",
+      action: "confirm_payment_with_patient",
+      targetId: payment._id,
+      orderId: payment.orderId,
+      summary: `Payment ${payment._id} confirmed with patient`,
+    });
     return payment;
   }).catch((error: Error) => {
     res.status(400).json({ message: error.message });
@@ -1745,10 +1951,17 @@ app.post(
     order.courierStatus = "ready_for_pickup";
     order.courierCheckedInAt = order.courierCheckedInAt ?? timestamp;
     order.updatedAt = timestamp;
+    appendRequestAudit(db, req, {
+      module: "Courier",
+      action: "check_in",
+      targetId: order._id,
+      orderId: order._id,
+      summary: `Courier workflow started for ${order.orderNumber}`,
+    });
     return order;
   }).catch((error: Error) => {
     res.status(
-      error.message.includes("access") ? 403 : 404,
+      error.message.includes("access") ? 403 : 400,
     ).json({ message: error.message });
     return null;
   });
@@ -1796,10 +2009,20 @@ app.post(
       }
     }
     order.updatedAt = now();
+    appendRequestAudit(db, req, {
+      module: "Courier",
+      action: "status_update",
+      targetId: order._id,
+      orderId: order._id,
+      summary: `Courier status for ${order.orderNumber} changed to ${parsed.data.courierStatus}`,
+      metadata: {
+        courierStatus: parsed.data.courierStatus,
+      },
+    });
     return order;
   }).catch((error: Error) => {
     res.status(
-      error.message.includes("access") ? 403 : 404,
+      error.message.includes("access") ? 403 : 400,
     ).json({ message: error.message });
     return null;
   });
@@ -1840,6 +2063,16 @@ app.post(
     }
     order.receivedAt = order.receivedAt ?? now();
     order.updatedAt = now();
+    appendRequestAudit(db, req, {
+      module: "Orders",
+      action: "assign_technician",
+      targetId: order._id,
+      orderId: order._id,
+      summary: `Technician assigned to ${order.orderNumber}`,
+      metadata: {
+        technicianId: parsed.data.technicianId,
+      },
+    });
     return order;
   }).catch((error: Error) => {
     res.status(error.message.includes("access") ? 403 : 400).json({ message: error.message });
@@ -1858,6 +2091,14 @@ app.post(
   "/api/orders/:id/start-processing",
   requireRoles("admin", "technician"),
   async (req: AuthRequest, res) => {
+  const parsed = z
+    .object({
+      scannedCode: z.string().trim().optional(),
+    })
+    .safeParse(req.body ?? {});
+  if (!parsed.success) {
+    return res.status(400).json({ message: "Invalid processing payload" });
+  }
   const currentUser = ensureUser(req);
   const result = await updateDb((db) => {
     const order = getAccessibleOrderOrThrow(db, req, String(req.params.id));
@@ -1913,6 +2154,20 @@ app.post(
       };
       db.accessions.push(accession);
       db.samples.push(sample);
+      const specimenBarcode = ensureBarcodeAssigned(db, "specimen", sample._id, {
+        preferredCode: accessionId,
+      });
+      sample.barcodeId = specimenBarcode._id;
+      appendRequestAudit(db, req, {
+        module: "Specimen Traceability",
+        action: "accession",
+        targetId: accession._id,
+        orderId: order._id,
+        summary: `Accession ${accession.accessionId} created for ${order.orderNumber}`,
+        metadata: {
+          barcode: specimenBarcode.code,
+        },
+      });
       return { order, accession, sample };
     }
 
@@ -1939,6 +2194,13 @@ app.post(
         updatedAt: timestamp,
       };
       db.cytologyCases.push(cytologyCase);
+      appendRequestAudit(db, req, {
+        module: "Cytology",
+        action: "create_case",
+        targetId: cytologyCase._id,
+        orderId: order._id,
+        summary: `Cytology case ${cytologyCase.caseNumber} created for ${order.orderNumber}`,
+      });
       return { order, cytologyCase };
     }
 
@@ -1948,7 +2210,7 @@ app.post(
 
     return { order, pendingStage: workflowPlan.nextStageId };
   }).catch((error: Error) => {
-    res.status(404).json({ message: error.message });
+    res.status(error.message.includes("access") ? 403 : 400).json({ message: error.message });
     return null;
   });
 
@@ -2021,6 +2283,16 @@ app.post(
     order.receivedAt = order.receivedAt ?? timestamp;
     order.assignedTechnicianId = order.assignedTechnicianId ?? currentUser._id;
     order.updatedAt = timestamp;
+    appendRequestAudit(db, req, {
+      module: "Instrument Integration",
+      action: "technical_run",
+      targetId: run._id,
+      orderId: order._id,
+      summary: `${runType} completed for ${order.orderNumber}`,
+      metadata: {
+        runType,
+      },
+    });
     return run;
   }).catch((error: Error) => {
     res.status(error.message.includes("access") ? 403 : 400).json({ message: error.message });
@@ -2067,11 +2339,19 @@ app.post(
       sample.status = "ready_for_review";
       sample.updatedAt = now();
     }
+    appendRequestAudit(db, req, {
+      module: "Orders",
+      action: "ready_for_review",
+      targetId: order._id,
+      orderId: order._id,
+      summary: `Order ${order.orderNumber} moved to review`,
+      metadata: {
+        pathologistId: order.assignedPathologistId,
+      },
+    });
     return order;
   }).catch((error: Error) => {
-    res.status(
-      error.message.includes("access") ? 403 : 404,
-    ).json({ message: error.message });
+    res.status(classifyWorkflowError(error)).json({ message: error.message });
     return null;
   });
 
@@ -2113,9 +2393,23 @@ app.get("/api/accessions/search/:accessionId", requireRoles("admin", "technician
   if (!accession) {
     return res.status(404).json({ message: "Accession not found" });
   }
+  const sample = db.samples.find((entry) => entry.accessionId === accession._id) ?? null;
   res.json({
     accession,
     order: hydrateOrder(db, findOrder(db, accession.orderId)),
+    barcodes: {
+      specimen: sample ? getBarcodeForEntity(db, "specimen", sample._id) : null,
+      blocks: accession.blocks.map((block) => ({
+        blockId: block.blockId,
+        barcode: getBarcodeForEntity(db, "block", block.blockId),
+      })),
+      slides: accession.blocks.flatMap((block) =>
+        block.slides.map((slide) => ({
+          slideId: slide.slideId,
+          barcode: getBarcodeForEntity(db, "slide", slide.slideId),
+        })),
+      ),
+    },
   });
 });
 
@@ -2126,8 +2420,9 @@ app.post("/api/accessions/backfill-samples", requireRoles("admin", "technician")
       const existing = db.samples.find((sample) => sample.accessionId === accession._id);
       if (!existing) {
         const timestamp = now();
+        const sampleId = createId();
         db.samples.push({
-          _id: createId(),
+          _id: sampleId,
           accessionId: accession._id,
           orderId: accession.orderId,
           label: accession.accessionId,
@@ -2136,6 +2431,9 @@ app.post("/api/accessions/backfill-samples", requireRoles("admin", "technician")
           receivedAt: accession.receivedAt,
           createdAt: timestamp,
           updatedAt: timestamp,
+        });
+        ensureBarcodeAssigned(db, "specimen", sampleId, {
+          preferredCode: accession.accessionId,
         });
         created += 1;
       }
@@ -2150,6 +2448,7 @@ app.post("/api/accessions/:id/grossing", requireRoles("admin", "technician"), as
     .object({
       grossDescription: z.string().min(1),
       numberOfBlocks: z.number().min(1),
+      scannedCode: z.string().trim().optional(),
     })
     .safeParse(req.body);
   if (!parsed.success) {
@@ -2169,6 +2468,17 @@ app.post("/api/accessions/:id/grossing", requireRoles("admin", "technician"), as
     if (target.grossedAt && target.blocks.length) {
       return target;
     }
+    const sample = db.samples.find((entry) => entry.accessionId === target._id);
+    if (!sample) {
+      throw new Error("Sample not found for this accession");
+    }
+    const specimenBarcode = enforceBarcodeScan(
+      db,
+      "specimen",
+      sample._id,
+      parsed.data.scannedCode,
+      { preferredCode: target.accessionId },
+    );
     target.grossDescription = parsed.data.grossDescription;
     target.numberOfBlocks = parsed.data.numberOfBlocks;
     target.grossedAt = now();
@@ -2180,21 +2490,32 @@ app.post("/api/accessions/:id/grossing", requireRoles("admin", "technician"), as
       sectionedAt: null,
       slides: [],
     })) satisfies HistologyBlock[];
+    for (const block of target.blocks) {
+      ensureBarcodeAssigned(db, "block", block.blockId, {
+        preferredCode: block.blockId,
+      });
+    }
     target.updatedAt = now();
 
-    const sample = db.samples.find((entry) => entry.accessionId === target._id);
-    if (sample) {
-      sample.status = "grossed";
-      sample.updatedAt = now();
-    }
+    sample.status = "grossed";
+    sample.updatedAt = now();
     order.status = "in_progress";
     order.updatedAt = now();
+    appendRequestAudit(db, req, {
+      module: "Histology",
+      action: "grossing",
+      targetId: target._id,
+      orderId: order._id,
+      summary: `Grossing completed for ${order.orderNumber}`,
+      metadata: {
+        specimenBarcode: specimenBarcode.code,
+        blocks: target.numberOfBlocks,
+      },
+    });
 
     return target;
   }).catch((error: Error) => {
-    res.status(
-      error.message.includes("access") ? 403 : 404,
-    ).json({ message: error.message });
+    res.status(classifyWorkflowError(error)).json({ message: error.message });
     return null;
   });
 
@@ -2209,6 +2530,7 @@ app.post("/api/accessions/:id/processing", requireRoles("admin", "technician"), 
   const parsed = z
     .object({
       processingNotes: z.string().optional(),
+      scannedCode: z.string().trim().optional(),
     })
     .safeParse(req.body);
   if (!parsed.success) {
@@ -2234,19 +2556,35 @@ app.post("/api/accessions/:id/processing", requireRoles("admin", "technician"), 
       }
       return target;
     }
+    const sample = db.samples.find((entry) => entry.accessionId === target._id);
+    if (!sample) {
+      throw new Error("Sample not found for this accession");
+    }
+    const specimenBarcode = enforceBarcodeScan(
+      db,
+      "specimen",
+      sample._id,
+      parsed.data.scannedCode,
+      { preferredCode: target.accessionId },
+    );
     target.processingNotes = parsed.data.processingNotes ?? target.processingNotes;
     target.processedAt = now();
     target.updatedAt = now();
-    const sample = db.samples.find((entry) => entry.accessionId === target._id);
-    if (sample) {
-      sample.status = "processed";
-      sample.updatedAt = now();
-    }
+    sample.status = "processed";
+    sample.updatedAt = now();
+    appendRequestAudit(db, req, {
+      module: "Histology",
+      action: "processing",
+      targetId: target._id,
+      orderId: order._id,
+      summary: `Processing completed for ${order.orderNumber}`,
+      metadata: {
+        specimenBarcode: specimenBarcode.code,
+      },
+    });
     return target;
   }).catch((error: Error) => {
-    res.status(
-      error.message.includes("access") ? 403 : 404,
-    ).json({ message: error.message });
+    res.status(classifyWorkflowError(error)).json({ message: error.message });
     return null;
   });
 
@@ -2258,7 +2596,12 @@ app.post("/api/accessions/:id/processing", requireRoles("admin", "technician"), 
 });
 
 app.post("/api/accessions/:id/embedding", requireRoles("admin", "technician"), async (req: AuthRequest, res) => {
-  const parsed = z.object({ blockId: z.string().min(1) }).safeParse(req.body);
+  const parsed = z
+    .object({
+      blockId: z.string().min(1),
+      scannedCode: z.string().trim().optional(),
+    })
+    .safeParse(req.body);
   if (!parsed.success) {
     return res.status(400).json({ message: "Block ID is required" });
   }
@@ -2282,6 +2625,9 @@ app.post("/api/accessions/:id/embedding", requireRoles("admin", "technician"), a
     if (block.embeddedAt) {
       return target;
     }
+    const blockBarcode = enforceBarcodeScan(db, "block", block.blockId, parsed.data.scannedCode, {
+      preferredCode: block.blockId,
+    });
     block.embeddedAt = now();
     target.embeddedAt = now();
     target.updatedAt = now();
@@ -2290,11 +2636,19 @@ app.post("/api/accessions/:id/embedding", requireRoles("admin", "technician"), a
       sample.status = "embedded";
       sample.updatedAt = now();
     }
+    appendRequestAudit(db, req, {
+      module: "Histology",
+      action: "embedding",
+      targetId: target._id,
+      orderId: order._id,
+      summary: `Embedding completed for block ${block.blockId}`,
+      metadata: {
+        blockBarcode: blockBarcode.code,
+      },
+    });
     return target;
   }).catch((error: Error) => {
-    res.status(
-      error.message.includes("access") ? 403 : 404,
-    ).json({ message: error.message });
+    res.status(classifyWorkflowError(error)).json({ message: error.message });
     return null;
   });
 
@@ -2310,6 +2664,7 @@ app.post("/api/accessions/:id/sectioning", requireRoles("admin", "technician"), 
     .object({
       blockId: z.string().min(1),
       slideCount: z.number().min(1).max(12).default(1),
+      scannedCode: z.string().trim().optional(),
     })
     .safeParse(req.body);
   if (!parsed.success) {
@@ -2335,6 +2690,9 @@ app.post("/api/accessions/:id/sectioning", requireRoles("admin", "technician"), 
     if (block.sectionedAt && block.slides.length) {
       return target;
     }
+    const blockBarcode = enforceBarcodeScan(db, "block", block.blockId, parsed.data.scannedCode, {
+      preferredCode: block.blockId,
+    });
     block.sectionedAt = now();
     block.slides = Array.from({ length: parsed.data.slideCount }, (_, index) => ({
       _id: createId(),
@@ -2345,6 +2703,11 @@ app.post("/api/accessions/:id/sectioning", requireRoles("admin", "technician"), 
       imageUrls: [],
       ihcEntries: [],
     })) satisfies HistologySlide[];
+    for (const slide of block.slides) {
+      ensureBarcodeAssigned(db, "slide", slide.slideId, {
+        preferredCode: slide.slideId,
+      });
+    }
     target.sectionedAt = now();
     target.updatedAt = now();
     const sample = db.samples.find((entry) => entry.accessionId === target._id);
@@ -2352,11 +2715,20 @@ app.post("/api/accessions/:id/sectioning", requireRoles("admin", "technician"), 
       sample.status = "sectioned";
       sample.updatedAt = now();
     }
+    appendRequestAudit(db, req, {
+      module: "Histology",
+      action: "sectioning",
+      targetId: target._id,
+      orderId: order._id,
+      summary: `Sectioning completed for block ${block.blockId}`,
+      metadata: {
+        blockBarcode: blockBarcode.code,
+        slideCount: parsed.data.slideCount,
+      },
+    });
     return target;
   }).catch((error: Error) => {
-    res.status(
-      error.message.includes("access") ? 403 : 404,
-    ).json({ message: error.message });
+    res.status(classifyWorkflowError(error)).json({ message: error.message });
     return null;
   });
 
@@ -2372,6 +2744,7 @@ app.post("/api/accessions/:id/staining", requireRoles("admin", "technician"), as
     .object({
       slideId: z.string().min(1),
       stainType: z.string().min(1).default("H&E"),
+      scannedCode: z.string().trim().optional(),
     })
     .safeParse(req.body);
   if (!parsed.success) {
@@ -2399,6 +2772,9 @@ app.post("/api/accessions/:id/staining", requireRoles("admin", "technician"), as
     if (slide.stainedAt) {
       return target;
     }
+    const slideBarcode = enforceBarcodeScan(db, "slide", slide.slideId, parsed.data.scannedCode, {
+      preferredCode: slide.slideId,
+    });
     slide.stainStatus = "stained";
     slide.stainType = parsed.data.stainType;
     slide.stainedAt = now();
@@ -2409,6 +2785,17 @@ app.post("/api/accessions/:id/staining", requireRoles("admin", "technician"), as
       sample.status = "stained";
       sample.updatedAt = now();
     }
+    appendRequestAudit(db, req, {
+      module: "Histology",
+      action: "staining",
+      targetId: target._id,
+      orderId: order._id,
+      summary: `Staining completed for slide ${slide.slideId}`,
+      metadata: {
+        slideBarcode: slideBarcode.code,
+        stainType: slide.stainType,
+      },
+    });
     return target;
   }).catch((error: Error) => {
     res.status(
@@ -2478,6 +2865,7 @@ app.post("/api/slides/:slideId/ihc", requireRoles("admin", "technician"), async 
       detection: z.string().min(1),
       counterstain: z.string().min(1),
       qcNotes: z.string().optional(),
+      scannedCode: z.string().trim().optional(),
     })
     .safeParse(req.body);
   if (!parsed.success) {
@@ -2511,10 +2899,34 @@ app.post("/api/slides/:slideId/ihc", requireRoles("admin", "technician"), async 
           if (duplicate) {
             return slide;
           }
+          const slideBarcode = enforceBarcodeScan(
+            db,
+            "slide",
+            slide.slideId,
+            parsed.data.scannedCode,
+            { preferredCode: slide.slideId },
+          );
           slide.ihcEntries.push({
             _id: createId(),
-            ...parsed.data,
+            antibody: parsed.data.antibody,
+            clone: parsed.data.clone,
+            antigenRetrieval: parsed.data.antigenRetrieval,
+            detection: parsed.data.detection,
+            counterstain: parsed.data.counterstain,
+            qcNotes: parsed.data.qcNotes,
             createdAt: now(),
+          });
+          appendRequestAudit(db, req, {
+            module: "IHC",
+            action: "record_stain",
+            targetId: slide._id,
+            orderId: order._id,
+            summary: `IHC recorded for slide ${slide.slideId}`,
+            metadata: {
+              antibody: parsed.data.antibody,
+              clone: parsed.data.clone,
+              slideBarcode: slideBarcode.code,
+            },
           });
           return slide;
         }
@@ -2522,7 +2934,7 @@ app.post("/api/slides/:slideId/ihc", requireRoles("admin", "technician"), async 
     }
     throw new Error("Slide not found");
   }).catch((error: Error) => {
-    res.status(404).json({ message: error.message });
+    res.status(classifyWorkflowError(error)).json({ message: error.message });
     return null;
   });
 
@@ -2667,6 +3079,17 @@ app.post("/api/reports/:orderId/save", requireRoles("admin", "pathologist"), asy
       });
       target.updatedAt = now();
     }
+    appendRequestAudit(db, req, {
+      module: "Reporting",
+      action: "save_report",
+      targetId: target._id,
+      orderId: order._id,
+      summary: `Report draft saved for ${order.orderNumber}`,
+      metadata: {
+        templateId: target.templateId,
+        versionCount: target.versions?.length ?? 0,
+      },
+    });
     return target;
   }).catch((error: Error) => {
     res.status(404).json({ message: error.message });
@@ -2700,6 +3123,13 @@ app.post("/api/reports/:orderId/lock", requireRoles("admin", "pathologist"), asy
     order.status = "completed";
     order.completedAt = target.lockedAt;
     order.updatedAt = now();
+    appendRequestAudit(db, req, {
+      module: "Reporting",
+      action: "lock_report",
+      targetId: target._id,
+      orderId: order._id,
+      summary: `Report locked for ${order.orderNumber}`,
+    });
     return target;
   }).catch((error: Error) => {
     res.status(404).json({ message: error.message });
@@ -2746,6 +3176,16 @@ app.post("/api/reports/:orderId/email", requireRoles("admin", "pathologist"), as
       mandatory: false,
       createdAt: now(),
       updatedAt: now(),
+    });
+    appendRequestAudit(db, req, {
+      module: "Reporting",
+      action: "release_report",
+      targetId: target._id,
+      orderId: order._id,
+      summary: `Report released for ${order.orderNumber}`,
+      metadata: {
+        emailedAt: target.emailedAt,
+      },
     });
     return target;
   }).catch((error: Error) => {
@@ -3036,14 +3476,16 @@ app.post("/api/project-review-comments", async (req: AuthRequest, res) => {
       updatedAt: timestamp,
     };
     db.projectReviewComments.unshift(comment);
-    db.auditEvents.unshift({
-      _id: createId(),
+    appendRequestAudit(db, req, {
       module: "Project Review",
       action: "create_comment",
       targetId: comment._id,
-      actor: actor.name,
       summary: `${actor.name} submitted project review feedback: ${comment.title}`,
-      createdAt: timestamp,
+      metadata: {
+        severity: comment.severity,
+        module: comment.module,
+        screen: comment.screen,
+      },
     });
     return comment;
   });
@@ -3077,14 +3519,14 @@ app.patch("/api/project-review-comments/:id", requireRoles("admin"), async (req:
       ? (comment.resolvedAt ?? now())
       : null;
     comment.updatedAt = now();
-    db.auditEvents.unshift({
-      _id: createId(),
+    appendRequestAudit(db, req, {
       module: "Project Review",
       action: "update_comment",
       targetId: comment._id,
-      actor: actor.name,
       summary: `${actor.name} updated project review feedback ${comment._id} to ${comment.status}`,
-      createdAt: now(),
+      metadata: {
+        status: comment.status,
+      },
     });
     return comment;
   }).catch((error: Error) => {
@@ -3172,6 +3614,9 @@ registerMaviancePaymentRoutes(app);
 
 app.use((error: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   console.error(error);
+  if (error.name === "MulterError") {
+    return res.status(400).json({ message: error.message });
+  }
   if (
     error.name.includes("Mongo") ||
     /server selection|database unavailable|ssl alert number 80/i.test(error.message)
@@ -3184,7 +3629,18 @@ app.use((error: Error, _req: express.Request, res: express.Response, _next: expr
   res.status(500).json({ message: "Internal server error" });
 });
 
-app.listen(PORT, () => {
-  console.log(`X-PATH backend listening on http://0.0.0.0:${PORT}`);
-  startHl7MllpListener();
-});
+export { app };
+
+export function startServer() {
+  return app.listen(PORT, () => {
+    console.log(`X-PATH backend listening on http://0.0.0.0:${PORT}`);
+    startHl7MllpListener();
+  });
+}
+
+const isDirectRun =
+  process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1];
+
+if (isDirectRun) {
+  startServer();
+}

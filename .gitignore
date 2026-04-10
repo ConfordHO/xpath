@@ -26,6 +26,8 @@ backend/.env.*
 
 # Local runtime state
 backend/data/runtime-db.json
+backend/storage/
+storage/
 *.log
 npm-debug.log*
 yarn-debug.log*

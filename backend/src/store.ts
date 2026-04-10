@@ -10,7 +10,9 @@ import {
   MONGODB_STATE_ID,
   MONGODB_URI,
 } from "./config.js";
+import { mergeAuditTrail, normalizeAuditTrail, verifyAuditTrail } from "./server/audit.js";
 import { normalizeCourierStatus } from "./server/helpers.js";
+import { deriveTatAlerts } from "./server/tat.js";
 import { createSeedDatabase } from "./seed.js";
 import type { Database } from "./types.js";
 
@@ -53,6 +55,11 @@ const legacyTestCodeMap: Record<string, string> = {
   MOL: "test-bcr-abl",
 };
 
+const canonicalConnectorSecretEnvMap: Record<string, string> = {
+  LEICA_PROCESSOR_API_KEY: "LEICA_PROCESSOR_API_TOKEN",
+  LEICA_STAINER_API_KEY: "LEICA_STAINER_API_TOKEN",
+};
+
 const legacySettingDefaults = {
   labName: "X-PATH LIMS",
   tagline: "Reliable results. Clear pricing. Fast turnaround.",
@@ -68,6 +75,7 @@ const legacySettingDefaults = {
 } as const;
 
 let clientPromise: Promise<MongoClient> | null = null;
+let activeClient: MongoClient | null = null;
 let cachedDb: Database | null = null;
 let initializationPromise: Promise<void> | null = null;
 let updateQueue: Promise<void> = Promise.resolve();
@@ -274,7 +282,15 @@ function normalizeDatabase(raw: Partial<Database>): Database {
   const instruments = mergeByKey(raw.instruments, seed.instruments, (item) => item._id);
   const instrumentRuns = mergeByKey(raw.instrumentRuns, seed.instrumentRuns, (item) => item._id);
   const integrations = mergeByKey(raw.integrations, seed.integrations, (item) => item.name);
-  const vendorConnectors = mergeByKey(raw.vendorConnectors, seed.vendorConnectors, (item) => item._id);
+  const vendorConnectors = mergeByKey(raw.vendorConnectors, seed.vendorConnectors, (item) => item._id).map(
+    (connector) => ({
+      ...connector,
+      authTokenEnvVar:
+        (connector.authTokenEnvVar &&
+          canonicalConnectorSecretEnvMap[connector.authTokenEnvVar]) ||
+        connector.authTokenEnvVar,
+    }),
+  );
   const vendorJobs = mergeByKey(raw.vendorJobs, seed.vendorJobs, (item) => item._id);
   const vendorWebhookEvents = mergeByKey(
     raw.vendorWebhookEvents,
@@ -340,7 +356,24 @@ function normalizeDatabase(raw: Partial<Database>): Database {
         ? seed.settings.locale
         : rawSettings.locale,
   };
-  return {
+  const documents = (raw.documents ?? seed.documents).map((document) => ({
+    ...document,
+    originalFilename: document.originalFilename ?? null,
+    storedFilename: document.storedFilename ?? null,
+    mimeType: document.mimeType ?? null,
+    sizeBytes: document.sizeBytes ?? null,
+    checksumSha256: document.checksumSha256 ?? null,
+    storageProvider: document.storageProvider ?? null,
+    storagePath: document.storagePath ?? null,
+    uploadedBy: document.uploadedBy ?? null,
+    versions: document.versions ?? [],
+  }));
+  const rawAuditEvents = raw.auditEvents ?? seed.auditEvents;
+  const auditEvents =
+    rawAuditEvents.length > 0 && verifyAuditTrail(rawAuditEvents).valid
+      ? rawAuditEvents.slice().sort((left, right) => right.sequence - left.sequence)
+      : normalizeAuditTrail(rawAuditEvents);
+  const normalizedBase: Database = {
     users,
     doctors,
     patients: (raw.patients ?? seed.patients).map((patient) => ({
@@ -429,8 +462,8 @@ function normalizeDatabase(raw: Partial<Database>): Database {
     archiveRecords: raw.archiveRecords ?? seed.archiveRecords,
     reagentInventory: raw.reagentInventory ?? seed.reagentInventory,
     wasteLogs: raw.wasteLogs ?? seed.wasteLogs,
-    documents: raw.documents ?? seed.documents,
-    auditEvents: raw.auditEvents ?? seed.auditEvents,
+    documents,
+    auditEvents,
     projectReviewComments: raw.projectReviewComments ?? seed.projectReviewComments,
     sessionRecords: raw.sessionRecords ?? seed.sessionRecords,
     credentialAudits: raw.credentialAudits ?? seed.credentialAudits,
@@ -444,6 +477,9 @@ function normalizeDatabase(raw: Partial<Database>): Database {
     siteTransfers: raw.siteTransfers ?? seed.siteTransfers,
     settings,
   };
+
+  normalizedBase.tatAlerts = deriveTatAlerts(normalizedBase);
+  return normalizedBase;
 }
 
 function cloneDb(db: Database) {
@@ -466,9 +502,11 @@ function getClient() {
       serverSelectionTimeoutMS: 8000,
       socketTimeoutMS: 10000,
     });
+    activeClient = client;
 
     clientPromise = client.connect().catch(async (error) => {
       clientPromise = null;
+      activeClient = null;
       await client.close().catch(() => undefined);
       throw error;
     });
@@ -483,8 +521,12 @@ async function getCollection(): Promise<Collection<DatabaseDocument>> {
 }
 
 async function persistDb(db: Database) {
-  const normalized = normalizeDatabase(db);
   const collection = await getCollection();
+  const existing = await collection.findOne({ _id: MONGODB_STATE_ID });
+  const normalized = normalizeDatabase({
+    ...db,
+    auditEvents: mergeAuditTrail(existing?.state?.auditEvents ?? [], db.auditEvents),
+  });
   await collection.updateOne(
     { _id: MONGODB_STATE_ID },
     {
@@ -557,6 +599,16 @@ export async function migrateLegacyDbToMongo() {
   const migrated = normalizeDatabase(legacy ?? createSeedDatabase());
   await persistDb(migrated);
   return cloneDb(migrated);
+}
+
+export async function closeStoreConnections() {
+  cachedDb = null;
+  initializationPromise = null;
+  updateQueue = Promise.resolve();
+  clientPromise = null;
+  const client = activeClient;
+  activeClient = null;
+  await client?.close().catch(() => undefined);
 }
 
 export async function updateDb<T>(updater: (db: Database) => T | Promise<T>) {

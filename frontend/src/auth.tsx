@@ -88,6 +88,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
   }
 
   const signOut = () => {
+    void api.post('/auth/logout').catch(() => undefined)
     setStoredToken(null)
     setToken(null)
     setUser(null)

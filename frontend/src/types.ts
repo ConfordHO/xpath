@@ -783,6 +783,27 @@ export interface DocumentRecord {
   owner: string
   accessLevel: 'controlled' | 'training' | 'public'
   trainingDueAt?: string | null
+  originalFilename?: string | null
+  storedFilename?: string | null
+  mimeType?: string | null
+  sizeBytes?: number | null
+  checksumSha256?: string | null
+  storageProvider?: 'local' | 's3' | null
+  storagePath?: string | null
+  uploadedBy?: string | null
+  versions?: Array<{
+    _id: string
+    version: string
+    originalFilename: string
+    storedFilename: string
+    mimeType: string
+    sizeBytes: number
+    checksumSha256: string
+    storageProvider: 'local' | 's3'
+    storagePath: string
+    uploadedBy: string
+    uploadedAt: string
+  }>
   createdAt: string
   updatedAt: string
 }
@@ -793,7 +814,16 @@ export interface AuditEvent {
   action: string
   targetId: string
   actor: string
+  actorUserId?: string | null
+  actorRole?: UserRole | null
+  siteId?: string | null
+  orderId?: string | null
+  requestId?: string | null
   summary: string
+  metadata?: string | null
+  sequence: number
+  previousHash: string | null
+  hash: string
   createdAt: string
 }
 

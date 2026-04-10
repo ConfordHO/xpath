@@ -6,7 +6,11 @@ function resolveApiBaseUrl() {
     return 'http://localhost:4000/api'
   }
 
-  return configured.replace(/^https:\/\/localhost(?=[:/]|$)/i, 'http://localhost')
+  const normalized = configured
+    .replace(/^https:\/\/localhost(?=[:/]|$)/i, 'http://localhost')
+    .replace(/\/+$/, '')
+
+  return normalized.endsWith('/api') ? normalized : `${normalized}/api`
 }
 
 export const storageKeys = {

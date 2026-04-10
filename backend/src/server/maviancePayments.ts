@@ -30,6 +30,7 @@ import type {
   PaymentMethod,
   PaymentStatus,
 } from "../types.js";
+import { appendAuditEvent } from "./audit.js";
 import {
   createId,
   ensureUser,
@@ -385,14 +386,15 @@ function appendAudit(
   actor: string,
   summary: string,
 ) {
-  db.auditEvents.unshift({
-    _id: createId(),
+  appendAuditEvent(db, {
     module,
     action,
     targetId,
     actor,
     summary,
-    createdAt: now(),
+    actorUserId: null,
+    actorRole: null,
+    siteId: null,
   });
 }
 
@@ -730,6 +732,61 @@ export function registerMaviancePaymentRoutes(app: express.Express) {
         requestFormat: MAVIANCE_REQUEST_FORMAT,
         channels,
       });
+    },
+  );
+
+  app.get(
+    "/api/payments/maviance/validate-live",
+    requireAuth,
+    requireRoles("admin", "finance"),
+    async (_req: AuthRequest, res) => {
+      try {
+        assertMavianceReady();
+        const account = await callMaviance<Record<string, unknown>>("GET", "/account", {});
+        const channelChecks = await Promise.all(
+          (["mtn_cameroon", "orange_cameroon"] as const).map(async (channel) => {
+            const channelConfig = getChannelConfig(channel);
+            if (!channelConfig.serviceId) {
+              return {
+                channel,
+                label: channelLabel(channel),
+                ok: false,
+                configured: false,
+                message: "Channel service id is not configured",
+              };
+            }
+
+            try {
+              const packages = await callMaviance<MavianceCashinPackage[]>("GET", "/cashin", {
+                serviceid: channelConfig.serviceId,
+              });
+              return {
+                channel,
+                label: channelLabel(channel),
+                ok: true,
+                configured: true,
+                packages: packages.length,
+              };
+            } catch (error) {
+              return {
+                channel,
+                label: channelLabel(channel),
+                ok: false,
+                configured: true,
+                message: error instanceof Error ? error.message : "Channel validation failed",
+              };
+            }
+          }),
+        );
+
+        res.json({
+          ok: channelChecks.every((entry) => entry.ok || entry.configured === false),
+          account,
+          channels: channelChecks,
+        });
+      } catch (error) {
+        res.status(502).json({ message: (error as Error).message });
+      }
     },
   );
 

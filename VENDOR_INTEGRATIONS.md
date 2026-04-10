@@ -52,9 +52,9 @@ Public webhook endpoints:
 
 Add these in `backend/.env` when you move from simulation to live vendor traffic:
 
-- `LEICA_PROCESSOR_API_KEY`
+- `LEICA_PROCESSOR_API_TOKEN`
 - `LEICA_PROCESSOR_WEBHOOK_SECRET`
-- `LEICA_STAINER_API_KEY`
+- `LEICA_STAINER_API_TOKEN`
 - `LEICA_STAINER_WEBHOOK_SECRET`
 - `ROCHE_SCANNER_API_TOKEN`
 - `ROCHE_SCANNER_WEBHOOK_SECRET`

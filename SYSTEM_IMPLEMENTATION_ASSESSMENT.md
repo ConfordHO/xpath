@@ -4,9 +4,9 @@ Updated: 2026-04-10
 
 ## Executive Summary
 
-The system has broad functional coverage for the requested LIMS modules: core order intake, online requisitions, patient/referrer lookup, role-scoped dashboards, site-scoped user management, finance workflows, accessioning, histology/cytology/IHC/digital pathology screens, reporting, Maviance readiness, HL7/MLLP integration scaffolding, vendor connector APIs, and enterprise record collections.
+The system has broad functional coverage for the requested LIMS modules: core order intake, online requisitions, patient/referrer lookup, role-scoped dashboards, site-scoped user management, finance workflows, accessioning, histology/cytology/IHC/digital pathology screens, reporting, Maviance readiness, HL7/MLLP integration scaffolding, vendor connector APIs, enterprise record collections, DMS upload/download, TAT dashboards, and append-only audit chaining.
 
-It is **not yet production-ready for a regulated pathology laboratory**. The strongest areas are workflow demonstration, role separation, seeded credentials, public requisition flow, Mongo-backed persistence, and report generation. The main production gaps are validation depth, immutable auditability, automated testing, real vendor/payment/live messaging integrations, file/document storage, security hardening, DR operations, and formal compliance evidence.
+It is **closer to production, but still not fully production-ready for a regulated pathology laboratory**. The strongest areas are workflow demonstration, role separation, seeded credentials, public requisition flow, Mongo-backed persistence, report generation, session revocation, request-level audit capture, barcode enforcement in histology/IHC, and backend regression tests. The remaining production gaps are universal audit diff coverage, MFA/SSO, live vendor/payment validation with real credentials, durable document storage configuration in production, operational observability, DR execution, and formal compliance evidence.
 
 ## Status Legend
 
@@ -44,6 +44,7 @@ Implemented:
 - Manual payments, finance dashboard, financial clearance fields, patient payment requests, and receipt/report PDF generation paths.
 - Insurance authorization, invoices, refunds/adjustments collections.
 - Maviance/Smobilpay readiness for Cameroon with config, quote/collect/verify/webhook scaffolding.
+- Live-readiness endpoints for Maviance account/channel validation.
 
 Incomplete / pending:
 - Live Maviance merchant credentials and end-to-end wallet settlement testing are still required.
@@ -73,10 +74,12 @@ Status: **Partial**
 Implemented:
 - Barcode records with symbology, entity type, status, template ID, and reprint justification endpoint.
 - Label template records and scan-enforced configuration fields.
+- Automatic specimen/block/slide barcode assignment during histology workflow creation.
+- Barcode scan enforcement on grossing, processing, embedding, sectioning, staining, and IHC entry.
 
 Incomplete / pending:
 - No real printer integration or browser print template designer.
-- Scan enforcement rules are not consistently enforced across every workflow transition.
+- Scan enforcement rules are still not universal across every workflow transition outside the enforced histology/IHC path.
 - Barcode lifecycle is data-supported but not fully managed through a dedicated operational UI.
 
 ### 5. Pre-Analytical Workflow Management
@@ -86,10 +89,11 @@ Status: **Partial**
 Implemented:
 - Courier workflow, pickup status, public online pickup metadata, sample receipt validation, and pre-analytical logs.
 - Transport temperature/condition fields and TAT alert records.
+- TAT dashboard endpoints with pre-analytical and phase averages.
 
 Incomplete / pending:
 - No live courier provider integration, GPS tracking, or device-sourced temperature logging.
-- Pre-analytical TAT is not yet a robust phase clock with dashboards and SLA escalation.
+- Pre-analytical TAT exists, but SLA escalation and alerts still need broader operational automation.
 - Receipt validation needs stricter required fields and exception handling.
 
 ### 6. Histopathology Workflow
@@ -229,25 +233,29 @@ Incomplete / pending:
 
 ### 17. Document Management System
 
-Status: **Pending production implementation**
+Status: **Partial**
 
 Implemented:
 - Document records for SOP/policy/accreditation/training metadata.
+- Secure file upload/download and file replacement APIs.
+- Version history capture on document file replacement.
+- Local filesystem storage plus S3-compatible object storage support in code.
 
 Incomplete / pending:
-- No file upload/storage, controlled document rendering, approval workflow, version diffing, training attestation, or access audit.
+- Controlled document approval workflow, version diffing, training attestation, and per-document access audit still need implementation.
+- Production deployment should use S3-compatible storage rather than Render local disk.
 
 ### 18. Audit Trail & Compliance
 
 Status: **Partial**
 
 Implemented:
-- Audit event records and selected workflow audit logging.
-- Session records and credential audit records.
+- Hash-chained audit event records with verification endpoint.
+- Append-only audit persistence that ignores tampering/deletion attempts on existing events.
+- Request IDs, actor/session context, order-level audit retrieval, session records, and credential audit records.
 
 Incomplete / pending:
-- Audit logs are not cryptographically immutable or append-only.
-- Not every data mutation records old/new values and actor context.
+- Not every data mutation records old/new values and full before/after diff context yet.
 - ISO/CAP legal evidence export is not production-complete.
 
 ### 19. User, Role & Access Management
@@ -255,12 +263,14 @@ Incomplete / pending:
 Status: **Working demo / Partial production**
 
 Implemented:
-- Seeded roles, JWT auth, role guards, site-scoped admin behavior, user CRUD, activate/deactivate/delete controls, profile updates, and credential audit records.
+- Seeded roles, JWT auth, role guards, site-scoped admin behavior, user CRUD, activate/deactivate/delete controls, profile updates, credential audit records, and session records.
+- Session-bound JWT validation, logout endpoint, and revoked-session enforcement.
+- Rate limiting and security headers on the backend.
 
 Incomplete / pending:
 - MFA/SSO is not implemented.
-- Session management is basic and not fully backed by refresh-token/device/session controls.
-- Password policy, lockout, rate limiting, and security monitoring need hardening.
+- Session management is better, but still not fully backed by refresh-token rotation, device trust, or anomaly detection.
+- Password policy, lockout thresholds, and security monitoring still need deeper hardening.
 
 ### 20. Integration & API Gateway
 
@@ -268,6 +278,7 @@ Status: **Partial**
 
 Implemented:
 - HL7/ASTM APIs, vendor connector APIs, webhooks, Maviance payment integration scaffold, and external integration records.
+- Connector test endpoints, Maviance live-validation endpoint, and integration readiness endpoint for deployment checks.
 
 Incomplete / pending:
 - No centralized API gateway policy management, event streaming bus, accounting integration, or production secret rotation.
@@ -291,6 +302,7 @@ Status: **Partial**
 
 Implemented:
 - Operational summary endpoint, research dataset records, de-identified export flags, and module audit page.
+- TAT dashboard analytics endpoints and readiness telemetry for integrations.
 
 Incomplete / pending:
 - BI dashboards are basic and not yet production analytics.
@@ -339,18 +351,18 @@ Files:
 
 Priority 0 - Required before real patient/lab production:
 - Define final regulatory target: ISO 15189, CAP, local Cameroon requirements, GDPR/HIPAA expectations if applicable.
-- Implement immutable audit trail with actor, timestamp, old/new values, request metadata, and export.
-- Add automated test coverage for role access, order lifecycle, finance, reporting, accessioning, and public requisition.
-- Add rate limiting, stronger password policy, login lockout, MFA/SSO option, refresh/session revocation, and security headers.
+- Extend the now append-only audit trail to capture explicit before/after value diffs and legal evidence export.
+- Expand the current backend regression suite into role access, finance reconciliation, reporting, accessioning, and public requisition coverage.
+- Add stronger password policy, login lockout, MFA/SSO option, refresh-token rotation, and security monitoring.
 - Validate MongoDB deployment, backup/restore, indexes, migration scripts, and environment secret handling.
 - Run end-to-end vendor/payment testing with Maviance, Roche/navify, Leica/CEREBRO, and any EMR/HIS.
 
 Priority 1 - Required for controlled pilot:
-- Enforce scan/barcode gates for accessioning, sample handoff, grossing, slide creation, and release.
-- Complete TAT phase clocks and dashboards.
+- Extend barcode enforcement beyond histology/IHC into accessioning, sample handoff, and release.
+- Turn the current TAT dashboards into full SLA alerting with notifications and bottleneck views.
 - Complete finance ledger, invoice/refund approval, and reconciliation.
 - Complete structured reporting templates and real digital signature controls.
-- Complete DMS file storage/versioning and controlled document access.
+- Complete DMS approval workflow, training attestation, and controlled document access.
 - Complete CAPA, peer review, proficiency testing, and QA trend workflows.
 
 Priority 2 - Required for scale:

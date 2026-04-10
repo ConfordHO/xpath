@@ -14,6 +14,7 @@ import type {
   VendorJobStatus,
   VendorWebhookEvent,
 } from "../types.js";
+import { appendAuditEvent } from "./audit.js";
 import {
   createId,
   ensureUser,
@@ -108,14 +109,15 @@ function appendAudit(
   actor: string,
   summary: string,
 ) {
-  db.auditEvents.unshift({
-    _id: createId(),
+  appendAuditEvent(db, {
     module,
     action,
     targetId,
     actor,
     summary,
-    createdAt: now(),
+    actorUserId: null,
+    actorRole: null,
+    siteId: null,
   });
 }
 
