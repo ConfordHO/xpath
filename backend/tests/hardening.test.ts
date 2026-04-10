@@ -1,15 +1,15 @@
 import assert from "node:assert/strict";
 import { after, before, describe, test } from "node:test";
-import { MongoClient } from "mongodb";
+import { Pool } from "pg";
 import supertest from "supertest";
 
-const testCollection = `app_state_test_${Date.now()}`;
-process.env.MONGODB_COLLECTION = testCollection;
+const testStateId = `app_state_test_${Date.now()}`;
+process.env.POSTGRES_STATE_ID = testStateId;
 process.env.HL7_MLLP_ENABLED = "false";
 
 let request: ReturnType<typeof supertest>;
-let mongoClient: MongoClient | null = null;
-let mongoDbName = "";
+let pgPool: Pool | null = null;
+let pgTable = "app_state";
 let authToken = "";
 let createdOrderId = "";
 let createdAccessionId = "";
@@ -29,17 +29,26 @@ before(async () => {
   const configModule = await import("../src/config.js");
 
   request = supertest(serverModule.app);
-  mongoDbName = configModule.MONGODB_DB_NAME;
-  mongoClient = new MongoClient(configModule.MONGODB_URI);
-  await mongoClient.connect();
+  pgTable = configModule.POSTGRES_STATE_TABLE;
+  pgPool = new Pool({
+    connectionString: configModule.DATABASE_URL,
+    ssl:
+      configModule.DATABASE_SSL_MODE === "require"
+        ? { rejectUnauthorized: false }
+        : undefined,
+  });
+  await pgPool.query("SELECT 1");
 });
 
 after(async () => {
   const storeModule = await import("../src/store.js");
   await storeModule.closeStoreConnections();
-  if (mongoClient) {
-    await mongoClient.db(mongoDbName).collection(testCollection).drop().catch(() => undefined);
-    await mongoClient.close();
+  if (pgPool) {
+    const quotedTable = `"${pgTable.replace(/"/g, "")}"`;
+    await pgPool
+      .query(`DELETE FROM ${quotedTable} WHERE id = $1`, [testStateId])
+      .catch(() => undefined);
+    await pgPool.end();
   }
 });
 

@@ -6,7 +6,9 @@ Updated: 2026-04-10
 
 The system has broad functional coverage for the requested LIMS modules: core order intake, online requisitions, patient/referrer lookup, role-scoped dashboards, site-scoped user management, finance workflows, accessioning, histology/cytology/IHC/digital pathology screens, reporting, Maviance readiness, HL7/MLLP integration scaffolding, vendor connector APIs, enterprise record collections, DMS upload/download, TAT dashboards, and append-only audit chaining.
 
-It is **closer to production, but still not fully production-ready for a regulated pathology laboratory**. The strongest areas are workflow demonstration, role separation, seeded credentials, public requisition flow, Mongo-backed persistence, report generation, session revocation, request-level audit capture, barcode enforcement in histology/IHC, and backend regression tests. The remaining production gaps are universal audit diff coverage, MFA/SSO, live vendor/payment validation with real credentials, durable document storage configuration in production, operational observability, DR execution, and formal compliance evidence.
+As of 2026-04-10, runtime persistence has been migrated from the prior Mongo-backed state store to the Render-hosted PostgreSQL database. The current live state in Postgres contains the migrated users, patients, and orders from the earlier environment, and the legacy Mongo application-state document has been cleared.
+
+It is **closer to production, but still not fully production-ready for a regulated pathology laboratory**. The strongest areas are workflow demonstration, role separation, seeded credentials, public requisition flow, Postgres-backed persistence, report generation, session revocation, request-level audit capture, barcode enforcement in histology/IHC, DMS file handling, and backend regression tests. The remaining production gaps are universal audit diff coverage, MFA/SSO, live vendor/payment validation with real credentials, durable object-storage configuration in production, operational observability, DR execution, and formal compliance evidence.
 
 ## Status Legend
 
@@ -213,6 +215,7 @@ Status: **Partial**
 Implemented:
 - TAT alert records and pre-analytical summary endpoint.
 - Dashboard-level operational summaries.
+- Phase-clock dashboard endpoint with current average timings and status buckets.
 
 Incomplete / pending:
 - Phase clocks are not consistently started/stopped for every order transition.
@@ -311,11 +314,11 @@ Incomplete / pending:
 
 ### 23. Disaster Recovery & Business Continuity
 
-Status: **Pending production implementation**
+Status: **Partial**
 
 Implemented:
 - Recovery/backup/drill/sync records.
-- MongoDB persistence configuration.
+- Managed PostgreSQL persistence configuration.
 
 Incomplete / pending:
 - No automated backup scheduler, restore testing, offline mode, failover procedure, RPO/RTO dashboards, or DR drill execution workflow.
@@ -354,7 +357,7 @@ Priority 0 - Required before real patient/lab production:
 - Extend the now append-only audit trail to capture explicit before/after value diffs and legal evidence export.
 - Expand the current backend regression suite into role access, finance reconciliation, reporting, accessioning, and public requisition coverage.
 - Add stronger password policy, login lockout, MFA/SSO option, refresh-token rotation, and security monitoring.
-- Validate MongoDB deployment, backup/restore, indexes, migration scripts, and environment secret handling.
+- Validate PostgreSQL deployment, backups, restore procedure, indexes, migration scripts, and environment secret handling.
 - Run end-to-end vendor/payment testing with Maviance, Roche/navify, Leica/CEREBRO, and any EMR/HIS.
 
 Priority 1 - Required for controlled pilot:

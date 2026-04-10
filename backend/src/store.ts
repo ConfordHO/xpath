@@ -1,14 +1,18 @@
 import { readFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { MongoClient, type Collection } from "mongodb";
+import { MongoClient } from "mongodb";
+import { Pool } from "pg";
 
 import { normalizeSiteId } from "./auth.js";
 import {
-  MONGODB_COLLECTION,
-  MONGODB_DB_NAME,
-  MONGODB_STATE_ID,
-  MONGODB_URI,
+  DATABASE_SSL_MODE,
+  DATABASE_URL,
+  LEGACY_MONGODB_COLLECTION,
+  LEGACY_MONGODB_DB_NAME,
+  LEGACY_MONGODB_URI,
+  POSTGRES_STATE_ID,
+  POSTGRES_STATE_TABLE,
 } from "./config.js";
 import { mergeAuditTrail, normalizeAuditTrail, verifyAuditTrail } from "./server/audit.js";
 import { normalizeCourierStatus } from "./server/helpers.js";
@@ -19,7 +23,7 @@ import type { Database } from "./types.js";
 const here = dirname(fileURLToPath(import.meta.url));
 const dataFile = resolve(here, "../data/runtime-db.json");
 type DatabaseDocument = {
-  _id: string;
+  id: string;
   state: Database;
   updatedAt: string;
 };
@@ -74,8 +78,7 @@ const legacySettingDefaults = {
   locale: "en",
 } as const;
 
-let clientPromise: Promise<MongoClient> | null = null;
-let activeClient: MongoClient | null = null;
+let pool: Pool | null = null;
 let cachedDb: Database | null = null;
 let initializationPromise: Promise<void> | null = null;
 let updateQueue: Promise<void> = Promise.resolve();
@@ -495,47 +498,121 @@ async function readLegacyDb(): Promise<Partial<Database> | null> {
   }
 }
 
-function getClient() {
-  if (!clientPromise) {
-    const client = new MongoClient(MONGODB_URI, {
-      connectTimeoutMS: 8000,
-      serverSelectionTimeoutMS: 8000,
-      socketTimeoutMS: 10000,
-    });
-    activeClient = client;
-
-    clientPromise = client.connect().catch(async (error) => {
-      clientPromise = null;
-      activeClient = null;
-      await client.close().catch(() => undefined);
-      throw error;
-    });
+function quotedIdentifier(value: string) {
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(value)) {
+    throw new Error(`Unsafe SQL identifier ${value}`);
   }
-
-  return clientPromise;
+  return `"${value}"`;
 }
 
-async function getCollection(): Promise<Collection<DatabaseDocument>> {
-  const client = await getClient();
-  return client.db(MONGODB_DB_NAME).collection<DatabaseDocument>(MONGODB_COLLECTION);
+const stateTableIdentifier = quotedIdentifier(POSTGRES_STATE_TABLE);
+
+function getPool() {
+  if (!pool) {
+    pool = new Pool({
+      connectionString: DATABASE_URL,
+      ssl: DATABASE_SSL_MODE === "require" ? { rejectUnauthorized: false } : undefined,
+      max: 4,
+      idleTimeoutMillis: 10_000,
+      connectionTimeoutMillis: 8_000,
+    });
+  }
+  return pool;
+}
+
+async function ensureStateTable() {
+  await getPool().query(`
+    CREATE TABLE IF NOT EXISTS ${stateTableIdentifier} (
+      id TEXT PRIMARY KEY,
+      state JSONB NOT NULL,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+}
+
+async function getStateRecord(): Promise<DatabaseDocument | null> {
+  await ensureStateTable();
+  const result = await getPool().query<{
+    id: string;
+    state: Database;
+    updated_at: Date | string;
+  }>(
+    `SELECT id, state, updated_at FROM ${stateTableIdentifier} WHERE id = $1 LIMIT 1`,
+    [POSTGRES_STATE_ID],
+  );
+  const row = result.rows[0];
+  if (!row) {
+    return null;
+  }
+  return {
+    id: row.id,
+    state: row.state,
+    updatedAt:
+      row.updated_at instanceof Date
+        ? row.updated_at.toISOString()
+        : new Date(row.updated_at).toISOString(),
+  };
+}
+
+async function readLegacyMongoDb(): Promise<Partial<Database> | null> {
+  if (!LEGACY_MONGODB_URI) {
+    return null;
+  }
+
+  const client = new MongoClient(LEGACY_MONGODB_URI, {
+    connectTimeoutMS: 8000,
+    serverSelectionTimeoutMS: 8000,
+    socketTimeoutMS: 10000,
+  });
+  try {
+    await client.connect();
+    const collection = client
+      .db(LEGACY_MONGODB_DB_NAME)
+      .collection<{ _id: string; state: Partial<Database> }>(LEGACY_MONGODB_COLLECTION);
+    const existing = await collection.findOne({ _id: POSTGRES_STATE_ID });
+    return existing?.state ?? null;
+  } finally {
+    await client.close().catch(() => undefined);
+  }
+}
+
+export async function clearLegacyMongoState() {
+  if (!LEGACY_MONGODB_URI) {
+    return false;
+  }
+
+  const client = new MongoClient(LEGACY_MONGODB_URI, {
+    connectTimeoutMS: 8000,
+    serverSelectionTimeoutMS: 8000,
+    socketTimeoutMS: 10000,
+  });
+  try {
+    await client.connect();
+    const collection = client
+      .db(LEGACY_MONGODB_DB_NAME)
+      .collection<{ _id: string; state: Partial<Database> }>(LEGACY_MONGODB_COLLECTION);
+    const result = await collection.deleteOne({ _id: POSTGRES_STATE_ID });
+    return result.deletedCount > 0;
+  } finally {
+    await client.close().catch(() => undefined);
+  }
 }
 
 async function persistDb(db: Database) {
-  const collection = await getCollection();
-  const existing = await collection.findOne({ _id: MONGODB_STATE_ID });
+  const existing = await getStateRecord();
   const normalized = normalizeDatabase({
     ...db,
     auditEvents: mergeAuditTrail(existing?.state?.auditEvents ?? [], db.auditEvents),
   });
-  await collection.updateOne(
-    { _id: MONGODB_STATE_ID },
-    {
-      $set: {
-        state: normalized,
-        updatedAt: new Date().toISOString(),
-      },
-    },
-    { upsert: true },
+  await ensureStateTable();
+  await getPool().query(
+    `
+      INSERT INTO ${stateTableIdentifier} (id, state, updated_at)
+      VALUES ($1, $2::jsonb, NOW())
+      ON CONFLICT (id)
+      DO UPDATE SET state = EXCLUDED.state, updated_at = EXCLUDED.updated_at
+    `,
+    [POSTGRES_STATE_ID, JSON.stringify(normalized)],
   );
   cachedDb = cloneDb(normalized);
   return cachedDb;
@@ -544,8 +621,7 @@ async function persistDb(db: Database) {
 async function ensureInitialized() {
   if (!initializationPromise) {
     initializationPromise = (async () => {
-      const collection = await getCollection();
-      const existing = await collection.findOne({ _id: MONGODB_STATE_ID });
+      const existing = await getStateRecord();
 
       if (existing?.state) {
         const normalized = normalizeDatabase(existing.state);
@@ -556,7 +632,7 @@ async function ensureInitialized() {
         return;
       }
 
-      const legacy = await readLegacyDb();
+      const legacy = (await readLegacyMongoDb()) ?? (await readLegacyDb());
       const initial = normalizeDatabase(legacy ?? createSeedDatabase());
       await persistDb(initial);
     })().catch((error) => {
@@ -575,8 +651,7 @@ export async function loadDb(): Promise<Database> {
     return cloneDb(cachedDb);
   }
 
-  const collection = await getCollection();
-  const existing = await collection.findOne({ _id: MONGODB_STATE_ID });
+  const existing = await getStateRecord();
   const normalized = normalizeDatabase(existing?.state ?? createSeedDatabase());
   cachedDb = cloneDb(normalized);
   if (!existing?.state || JSON.stringify(existing.state) !== JSON.stringify(normalized)) {
@@ -594,8 +669,8 @@ export async function resetDb() {
   await saveDb(createSeedDatabase());
 }
 
-export async function migrateLegacyDbToMongo() {
-  const legacy = await readLegacyDb();
+export async function migrateLegacyDbToPostgres() {
+  const legacy = (await readLegacyMongoDb()) ?? (await readLegacyDb());
   const migrated = normalizeDatabase(legacy ?? createSeedDatabase());
   await persistDb(migrated);
   return cloneDb(migrated);
@@ -605,10 +680,9 @@ export async function closeStoreConnections() {
   cachedDb = null;
   initializationPromise = null;
   updateQueue = Promise.resolve();
-  clientPromise = null;
-  const client = activeClient;
-  activeClient = null;
-  await client?.close().catch(() => undefined);
+  const activePool = pool;
+  pool = null;
+  await activePool?.end().catch(() => undefined);
 }
 
 export async function updateDb<T>(updater: (db: Database) => T | Promise<T>) {

@@ -60,7 +60,8 @@ Backend tests now cover:
 
 Backend:
 
-- `MONGODB_URI`
+- `DATABASE_URL`
+- `DATABASE_SSL_MODE`
 - `JWT_SECRET`
 - `CORS_ORIGIN`
 
@@ -143,7 +144,7 @@ If you stay on filesystem storage:
 - real Leica processor/stainer health check and callback validation
 - production CORS values for your final frontend domain(s)
 - production S3 bucket and retention policy
-- MongoDB backup, restore, and index review in the target environment
+- PostgreSQL backup, restore, and index review in the target environment
 
 ## External References Used
 

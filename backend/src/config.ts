@@ -39,17 +39,41 @@ function inferMongoDbName(uri: string) {
   return path || null;
 }
 
+function inferPostgresSslMode(url: string) {
+  try {
+    const host = new URL(url).hostname.toLowerCase();
+    if (
+      host === "localhost" ||
+      host === "127.0.0.1" ||
+      !host.includes(".")
+    ) {
+      return "disable";
+    }
+  } catch {
+    // Ignore parse issues and fall back to secure mode.
+  }
+  return "require";
+}
+
 export const PORT = Number(process.env.PORT ?? 4000);
 export const NODE_ENV = process.env.NODE_ENV?.trim() || "development";
 export const JWT_SECRET = readRequiredEnv("JWT_SECRET");
 export const JWT_ISSUER = process.env.JWT_ISSUER?.trim() || "xpath-backend";
 export const JWT_AUDIENCE = process.env.JWT_AUDIENCE?.trim() || "xpath-clients";
 export const JWT_EXPIRY = process.env.JWT_EXPIRY?.trim() || "7d";
-export const MONGODB_URI = readRequiredEnv("MONGODB_URI");
-export const MONGODB_DB_NAME =
-  process.env.MONGODB_DB_NAME?.trim() || inferMongoDbName(MONGODB_URI) || "xpath_lims";
-export const MONGODB_COLLECTION = process.env.MONGODB_COLLECTION?.trim() || "app_state";
-export const MONGODB_STATE_ID = "primary";
+export const DATABASE_URL = readRequiredEnv("DATABASE_URL");
+export const DATABASE_SSL_MODE =
+  process.env.DATABASE_SSL_MODE?.trim().toLowerCase() === "disable"
+    ? "disable"
+    : inferPostgresSslMode(DATABASE_URL);
+export const POSTGRES_STATE_TABLE = process.env.POSTGRES_STATE_TABLE?.trim() || "app_state";
+export const POSTGRES_STATE_ID = process.env.POSTGRES_STATE_ID?.trim() || "primary";
+export const LEGACY_MONGODB_URI = process.env.LEGACY_MONGODB_URI?.trim() || "";
+export const LEGACY_MONGODB_DB_NAME =
+  process.env.LEGACY_MONGODB_DB_NAME?.trim() ||
+  (LEGACY_MONGODB_URI ? inferMongoDbName(LEGACY_MONGODB_URI) || "xpath_lims" : "");
+export const LEGACY_MONGODB_COLLECTION =
+  process.env.LEGACY_MONGODB_COLLECTION?.trim() || "app_state";
 export const CORS_ORIGINS = readOrigins();
 export const TRUST_PROXY =
   process.env.TRUST_PROXY?.trim() === "true"

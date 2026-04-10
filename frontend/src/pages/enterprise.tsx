@@ -380,6 +380,12 @@ export function ModuleAuditPage() {
     return response.data
   })
 
+  const statusColor = (status: string) => {
+    if (status === 'implemented') return 'success' as const
+    if (status === 'partial') return 'warning' as const
+    return 'default' as const
+  }
+
   if (auditState.loading) return <Typography>Loading module audit…</Typography>
   if (auditState.error) return <PageError message={auditState.error} />
 
@@ -388,9 +394,9 @@ export function ModuleAuditPage() {
       <PageHeader
         eyebrow="Module Audit"
         title="Requested LIMS scope review"
-        description="This page tracks the 25-module brief against the current app. Functional coverage is implemented in-app, but the platform is still demo-grade rather than production-certified."
+        description="This page tracks the 25-module brief against the current Postgres-backed app. It stays intentionally honest about what is working today versus what still needs production hardening."
       />
-      <SectionCard title="Coverage by module" description="Production readiness stays intentionally honest here: external integrations, security hardening, test coverage, and operational controls are still demo-level.">
+      <SectionCard title="Coverage by module" description="Implemented means the feature works in the app. Partial means important production controls are still missing. Pending means the module is still mostly scaffolding.">
         <TableContainer>
           <Table>
             <TableHead>
@@ -408,7 +414,7 @@ export function ModuleAuditPage() {
                   <TableCell>{entry.number}</TableCell>
                   <TableCell>{entry.title}</TableCell>
                   <TableCell>
-                    <Chip label={entry.status} color="success" size="small" />
+                    <Chip label={entry.status} color={statusColor(entry.status)} size="small" />
                   </TableCell>
                   <TableCell>
                     <Chip

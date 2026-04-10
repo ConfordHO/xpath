@@ -3619,11 +3619,13 @@ app.use((error: Error, _req: express.Request, res: express.Response, _next: expr
   }
   if (
     error.name.includes("Mongo") ||
-    /server selection|database unavailable|ssl alert number 80/i.test(error.message)
+    error.name.includes("Postgres") ||
+    /server selection|database unavailable|ssl alert number 80|connection terminated|connect econnrefused|no pg_hba.conf|password authentication failed/i.test(
+      error.message,
+    )
   ) {
     return res.status(503).json({
-      message:
-        "Database unavailable. Check the MongoDB connection string and Atlas network access list.",
+      message: "Database unavailable. Check the configured PostgreSQL connection and network access.",
     });
   }
   res.status(500).json({ message: "Internal server error" });

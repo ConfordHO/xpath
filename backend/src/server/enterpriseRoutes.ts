@@ -200,39 +200,39 @@ function moduleAuditEntries() {
       status: "implemented",
       productionReady: false,
       notes:
-        "Manual, portal, and OCR/NLP-simulated intake now exist with validation, amendment, cancellation, and add-on test support.",
+        "Manual and portal intake are working on the live Postgres-backed stack, while OCR/NLP remains simulated and rule enforcement is still app-level rather than policy-engine driven.",
     },
     {
       number: 2,
       title: "Billing, Payments & Financial Control",
-      status: "implemented",
+      status: "partial",
       productionReady: false,
       notes:
-        "Pricing, insurance authorization, invoices, refunds, and financial clearance are available, but real payment gateways remain simulated.",
+        "Pricing, invoices, refunds, and financial clearance exist, but Maviance is only API-ready until real merchant credentials and end-to-end reconciliation are validated.",
     },
     {
       number: 3,
       title: "Specimen Accessioning & Traceability",
-      status: "implemented",
+      status: "partial",
       productionReady: false,
       notes:
-        "Accessioning, traceability, parent-child specimen links, discrepancy flags, and rejection handling are persisted.",
+        "Accessioning, parent-child links, and specimen status history are working, but full chain-of-custody enforcement and discrepancy escalation are still incomplete.",
     },
     {
       number: 4,
       title: "Barcode & Label Governance",
-      status: "implemented",
+      status: "partial",
       productionReady: false,
       notes:
-        "GS1 barcode records, lifecycle tracking, label templates, scan rules, and justified reprints are now managed in-app.",
+        "Barcode assignment and histology/IHC scan enforcement are live, but printer integration, universal scan gating, and dedicated barcode operations UI still need completion.",
     },
     {
       number: 5,
       title: "Pre-Analytical Workflow Management",
-      status: "implemented",
+      status: "partial",
       productionReady: false,
       notes:
-        "Collection, courier, transport condition, receipt validation, and pre-analytical TAT tracking are available.",
+        "Courier and receipt workflows work, and TAT is now clocked in the dashboard, but logistics integrations and exception handling remain incomplete.",
     },
     {
       number: 6,
@@ -240,119 +240,119 @@ function moduleAuditEntries() {
       status: "implemented",
       productionReady: false,
       notes:
-        "Grossing through staining remains in place with added recuts, special stains, and worklist tracking.",
+        "Grossing through staining is operational with barcode enforcement, but recuts, special stains, workload balancing, and lab-floor controls still need deeper production refinement.",
     },
     {
       number: 7,
       title: "Cytopathology Workflow",
-      status: "implemented",
+      status: "partial",
       productionReady: false,
       notes:
-        "GYN/non-GYN routing, preparation mode, QC, and cytology worklists are captured.",
+        "Route type, preparation mode, QC, and cytology worklists exist, but adequacy criteria, screening review, and escalations are not yet production-complete.",
     },
     {
       number: 8,
       title: "Immunohistochemistry / Special Stains",
-      status: "implemented",
+      status: "partial",
       productionReady: false,
       notes:
-        "Antibody inventory, lot control, control slide tracking, QC state, and usage metrics are available.",
+        "IHC entry, antibody inventory, and QC fields are working, but reagent consumption, batch release, and special-stain governance are still incomplete.",
     },
     {
       number: 9,
       title: "Digital Pathology Management",
-      status: "implemented",
+      status: "partial",
       productionReady: false,
       notes:
-        "Digital slide metadata, ownership, viewer links, and sign-out status are persisted.",
+        "Digital slide metadata, ownership, and viewer links are persisted, but no certified WSI viewer or real Roche scanner round-trip has been validated yet.",
     },
     {
       number: 10,
       title: "AI & Decision Support",
-      status: "implemented",
+      status: "pending",
       productionReady: false,
       notes:
-        "AI QC, scoring outputs, explainability, versioning, and acceptance/rejection workflows are recorded.",
+        "AI result records and acceptance fields exist, but there is still no live inference pipeline, validation program, or regulated AI governance workflow.",
     },
     {
       number: 11,
       title: "Instrument & Analyzer Integration",
-      status: "implemented",
+      status: "partial",
       productionReady: false,
       notes:
-        "Instrument connectors, run logs, QC state, downtime, and protocol metadata are implemented as a simulated integration layer.",
+        "HL7/ASTM, Leica, and Roche APIs are ready and Postgres-backed, but live vendor conformance and bidirectional production messaging are still pending.",
     },
     {
       number: 12,
       title: "Reporting & Results Management",
-      status: "implemented",
+      status: "partial",
       productionReady: false,
       notes:
-        "Templates, versioning, addenda, sign-out, and release-rule tracking augment the original reporting flow.",
+        "Bilingual report generation, addenda, sign-out, and release tracking work, but cryptographic signatures and stronger release governance are not complete.",
     },
     {
       number: 13,
       title: "Communication & Notification",
-      status: "implemented",
+      status: "partial",
       productionReady: false,
       notes:
-        "Portal notifications, email/SMS/WhatsApp/call logs, and acknowledgments are now available as persisted communication logs.",
+        "Portals and communication logs exist, but secure email/SMS/WhatsApp delivery providers and mandatory call escalation are not fully integrated.",
     },
     {
       number: 14,
       title: "Quality Control & Assurance (QC / QA)",
-      status: "implemented",
+      status: "partial",
       productionReady: false,
       notes:
-        "QC, QA, CAPA, peer review, internal audit, and proficiency events are tracked.",
+        "QC, QA, CAPA, peer review, and proficiency records are tracked, but trend dashboards, approval chains, and evidence workflows remain incomplete.",
     },
     {
       number: 15,
       title: "Turnaround Time (TAT) & KPI Monitoring",
-      status: "implemented",
+      status: "partial",
       productionReady: false,
       notes:
-        "Phase-level TAT alerts and aggregate KPI summaries are exposed in the system.",
+        "Phase-level TAT dashboards and alerts are now live, but SLA escalation, predictive alerts, and broader KPI visualization still need more work.",
     },
     {
       number: 16,
       title: "Archive, Inventory & Storage Management",
-      status: "implemented",
+      status: "partial",
       productionReady: false,
       notes:
-        "Archive location, retention, disposal, reagent inventory, and waste logs are now represented.",
+        "Archive, reagent, and waste records exist, but physical storage hierarchy, retention automation, and consumption tracking are not yet finished.",
     },
     {
       number: 17,
       title: "Document Management System (DMS)",
-      status: "implemented",
+      status: "partial",
       productionReady: false,
       notes:
-        "Controlled documents, versions, owners, and training due dates are managed in the app.",
+        "Document upload/download, versioning, and S3-ready storage are live, but approvals, training attestations, and controlled access workflows remain incomplete.",
     },
     {
       number: 18,
       title: "Audit Trail & Compliance",
-      status: "implemented",
+      status: "partial",
       productionReady: false,
       notes:
-        "System audit events and change summaries are persisted and exposed for review.",
+        "Hash-chained append-only audit verification is live, but universal before/after diffs and legal evidence export are still missing.",
     },
     {
       number: 19,
       title: "User, Role & Access Management",
-      status: "implemented",
+      status: "partial",
       productionReady: false,
       notes:
-        "RBAC exists with user CRUD, session records, and credential audit logs, but MFA/SSO remain configuration-level placeholders.",
+        "RBAC, site-scoped admin controls, session revocation, and credential audits work, but MFA/SSO and stronger password governance are still pending.",
     },
     {
       number: 20,
       title: "Integration & API Gateway",
-      status: "implemented",
+      status: "partial",
       productionReady: false,
       notes:
-        "External integrations and webhook-style endpoint metadata are tracked as configurable records.",
+        "Vendor APIs, webhook endpoints, and readiness checks exist, but centralized gateway policy, event streaming, and partner-certified integrations are not finished.",
     },
     {
       number: 21,
@@ -360,31 +360,31 @@ function moduleAuditEntries() {
       status: "implemented",
       productionReady: false,
       notes:
-        "Test catalogs, workflow configuration, pricing rules, QC thresholds, and reference ranges are available.",
+        "Test catalogs, workflow templates, pricing rules, QC thresholds, and reference ranges are active, though change approval/version governance is still limited.",
     },
     {
       number: 22,
       title: "Analytics, BI & Research",
-      status: "implemented",
+      status: "partial",
       productionReady: false,
       notes:
-        "Operational analytics, research datasets, and de-identified export summaries are present in the platform layer.",
+        "Operational analytics, de-identified export metadata, and TAT summaries exist, but BI dashboards and governed research pipelines remain incomplete.",
     },
     {
       number: 23,
       title: "Disaster Recovery & Business Continuity",
-      status: "implemented",
+      status: "partial",
       productionReady: false,
       notes:
-        "Backup, restore, drill, and synchronization records are managed, but no real failover automation exists.",
+        "Recovery records exist and the system now runs on managed Postgres, but tested backups, restore drills, and offline/failover execution are still pending.",
     },
     {
       number: 25,
       title: "Multi-Site & Multi-Lab Management",
-      status: "implemented",
+      status: "partial",
       productionReady: false,
       notes:
-        "Sites, transfers, and cross-site tracking are supported for the seeded demo environment.",
+        "Site scoping and transfers work, but site-specific workflow overrides and richer cross-site analytics still need expansion.",
     },
   ];
 }

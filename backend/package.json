@@ -9,7 +9,7 @@
     "start": "node dist/src/server.js",
     "test": "node --import tsx --test tests/**/*.test.ts",
     "seed": "tsx scripts/seed.ts",
-    "migrate:mongo": "tsx scripts/migrate-to-mongodb.ts"
+    "migrate:postgres": "tsx scripts/migrate-to-postgres.ts"
   },
   "keywords": [
     "express",
@@ -33,6 +33,7 @@
     "jsonwebtoken": "^9.0.2",
     "mongodb": "^7.1.1",
     "multer": "^2.1.1",
+    "pg": "^8.20.0",
     "zod": "^4.1.12"
   },
   "devDependencies": {
@@ -42,6 +43,7 @@
     "@types/jsonwebtoken": "^9.0.10",
     "@types/multer": "^2.1.0",
     "@types/node": "^24.12.0",
+    "@types/pg": "^8.20.0",
     "@types/supertest": "^7.2.0",
     "supertest": "^7.2.2",
     "tsx": "^4.20.6",

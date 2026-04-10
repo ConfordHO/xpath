@@ -22,12 +22,18 @@ services:
         value: 7d
       - key: HL7_MLLP_ENABLED
         value: false
-      - key: MONGODB_URI
+      - key: DATABASE_URL
         sync: false
+      - key: DATABASE_SSL_MODE
+        value: disable
+      - key: POSTGRES_STATE_TABLE
+        value: app_state
+      - key: POSTGRES_STATE_ID
+        value: primary
       - key: JWT_SECRET
         sync: false
       - key: CORS_ORIGIN
-        sync: false
+        value: https://x-path.vercel.app,http://localhost:5173
       - key: DMS_STORAGE_PROVIDER
         sync: false
       - key: DMS_LOCAL_STORAGE_PATH
