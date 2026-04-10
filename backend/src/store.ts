@@ -431,6 +431,7 @@ function normalizeDatabase(raw: Partial<Database>): Database {
     wasteLogs: raw.wasteLogs ?? seed.wasteLogs,
     documents: raw.documents ?? seed.documents,
     auditEvents: raw.auditEvents ?? seed.auditEvents,
+    projectReviewComments: raw.projectReviewComments ?? seed.projectReviewComments,
     sessionRecords: raw.sessionRecords ?? seed.sessionRecords,
     credentialAudits: raw.credentialAudits ?? seed.credentialAudits,
     integrations,

@@ -70,6 +70,7 @@ function createCleanSeedDatabase(db: Database): Database {
     archiveRecords: [],
     wasteLogs: [],
     auditEvents: [],
+    projectReviewComments: [],
     sessionRecords: [],
     credentialAudits: [],
     vendorJobs: [],
@@ -1213,6 +1214,7 @@ export function createSeedDatabase(): Database {
         createdAt: "2026-03-31T07:38:00.000Z",
       },
     ],
+    projectReviewComments: [],
     sessionRecords: [
       {
         _id: "session-1",

@@ -112,6 +112,17 @@ import type {
 const app = express();
 const DOUBLE_CLICK_WINDOW_MS = 15_000;
 const NOTE_DUPLICATE_WINDOW_MS = 30_000;
+const projectReviewCommentSchema = z.object({
+  title: z.string().trim().min(3).max(160),
+  module: z.string().trim().min(2).max(120),
+  screen: z.string().trim().min(1).max(160),
+  severity: z.enum(["low", "medium", "high", "critical"]),
+  comment: z.string().trim().min(10).max(4000),
+});
+const projectReviewStatusSchema = z.object({
+  status: z.enum(["new", "reviewed", "planned", "in_progress", "resolved", "closed"]),
+  developerResponse: z.string().trim().max(4000).nullable().optional(),
+});
 
 app.use(
   cors({
@@ -2984,6 +2995,107 @@ app.post("/api/notifications/:id/read", async (req, res) => {
   res.json(updated);
 });
 
+app.get("/api/project-review-comments", async (req: AuthRequest, res) => {
+  const actor = ensureUser(req);
+  const db = await loadDb();
+  const visibleComments = db.projectReviewComments.filter((comment) => {
+    if (isSuperAdmin(actor)) {
+      return true;
+    }
+    if (actor.role === "admin") {
+      return Boolean(comment.siteId) && normalizeSiteId(actor.siteId) === normalizeSiteId(comment.siteId);
+    }
+    return comment.createdByUserId === actor._id;
+  });
+
+  res.json(
+    visibleComments.sort((left, right) => right.createdAt.localeCompare(left.createdAt)),
+  );
+});
+
+app.post("/api/project-review-comments", async (req: AuthRequest, res) => {
+  const parsed = projectReviewCommentSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ message: "Invalid project review payload" });
+  }
+
+  const actor = ensureUser(req);
+  const created = await updateDb((db) => {
+    const timestamp = now();
+    const comment = {
+      _id: createId(),
+      ...parsed.data,
+      status: "new" as const,
+      createdByUserId: actor._id,
+      createdByName: actor.name,
+      createdByRole: actor.role,
+      siteId: actor.siteId ?? null,
+      developerResponse: null,
+      resolvedAt: null,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    };
+    db.projectReviewComments.unshift(comment);
+    db.auditEvents.unshift({
+      _id: createId(),
+      module: "Project Review",
+      action: "create_comment",
+      targetId: comment._id,
+      actor: actor.name,
+      summary: `${actor.name} submitted project review feedback: ${comment.title}`,
+      createdAt: timestamp,
+    });
+    return comment;
+  });
+
+  res.status(201).json(created);
+});
+
+app.patch("/api/project-review-comments/:id", requireRoles("admin"), async (req: AuthRequest, res) => {
+  const parsed = projectReviewStatusSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ message: "Invalid project review update payload" });
+  }
+
+  const actor = ensureUser(req);
+  const updated = await updateDb((db) => {
+    const comment = db.projectReviewComments.find((entry) => entry._id === req.params.id);
+    if (!comment) {
+      throw new Error("Project review comment not found");
+    }
+    if (
+      !isSuperAdmin(actor) &&
+      (!comment.siteId || normalizeSiteId(actor.siteId) !== normalizeSiteId(comment.siteId))
+    ) {
+      throw new Error("You do not have access to this project review comment");
+    }
+    comment.status = parsed.data.status;
+    if (parsed.data.developerResponse !== undefined) {
+      comment.developerResponse = parsed.data.developerResponse;
+    }
+    comment.resolvedAt = ["resolved", "closed"].includes(parsed.data.status)
+      ? (comment.resolvedAt ?? now())
+      : null;
+    comment.updatedAt = now();
+    db.auditEvents.unshift({
+      _id: createId(),
+      module: "Project Review",
+      action: "update_comment",
+      targetId: comment._id,
+      actor: actor.name,
+      summary: `${actor.name} updated project review feedback ${comment._id} to ${comment.status}`,
+      createdAt: now(),
+    });
+    return comment;
+  }).catch((error: Error) => {
+    res.status(error.message.includes("access") ? 403 : 404).json({ message: error.message });
+    return null;
+  });
+
+  if (!updated) return;
+  res.json(updated);
+});
+
 app.get("/api/finance/summary", requireRoles("admin", "finance"), async (req: AuthRequest, res) => {
   const db = getScopedDb(req, await loadDb());
   res.json(getFinanceSummary(db));
@@ -3073,6 +3185,6 @@ app.use((error: Error, _req: express.Request, res: express.Response, _next: expr
 });
 
 app.listen(PORT, () => {
-  console.log(`X-PATH backend listening on http://localhost:${PORT}`);
+  console.log(`X-PATH backend listening on http://0.0.0.0:${PORT}`);
   startHl7MllpListener();
 });

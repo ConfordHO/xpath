@@ -11,6 +11,7 @@ import LocalShippingOutlinedIcon from '@mui/icons-material/LocalShippingOutlined
 import MedicalInformationOutlinedIcon from '@mui/icons-material/MedicalInformationOutlined'
 import NotificationsNoneOutlinedIcon from '@mui/icons-material/NotificationsNoneOutlined'
 import PaymentsOutlinedIcon from '@mui/icons-material/PaymentsOutlined'
+import RateReviewOutlinedIcon from '@mui/icons-material/RateReviewOutlined'
 import SettingsSuggestOutlinedIcon from '@mui/icons-material/SettingsSuggestOutlined'
 import ScienceOutlinedIcon from '@mui/icons-material/ScienceOutlined'
 import TuneOutlinedIcon from '@mui/icons-material/TuneOutlined'
@@ -24,7 +25,10 @@ import type { SafeUser } from '../types'
 function settingsGroup(): NavGroup {
   return {
     label: 'Account',
-    items: [{ label: 'Settings', to: '/settings', icon: <AccountCircleOutlinedIcon /> }],
+    items: [
+      { label: 'Project review', to: '/project-review', icon: <RateReviewOutlinedIcon /> },
+      { label: 'Settings', to: '/settings', icon: <AccountCircleOutlinedIcon /> },
+    ],
   }
 }
 

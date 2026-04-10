@@ -28,3 +28,4 @@ All passwords:
 - `admin.nairobi@xpath.lims` is useful for confirming that one admin cannot see or manage users from the other lab.
 - The patient portal uses lookup rather than a seeded login account.
 - The removed legacy demo accounts are no longer part of the canonical seed set.
+- Every authenticated role can open `/project-review` from the Account navigation to submit project review comments for developers. Admins can triage comments for their own site, while super admins can triage all comments.

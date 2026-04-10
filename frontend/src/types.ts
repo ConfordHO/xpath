@@ -797,6 +797,24 @@ export interface AuditEvent {
   createdAt: string
 }
 
+export interface ProjectReviewComment {
+  _id: string
+  title: string
+  module: string
+  screen: string
+  severity: 'low' | 'medium' | 'high' | 'critical'
+  comment: string
+  status: 'new' | 'reviewed' | 'planned' | 'in_progress' | 'resolved' | 'closed'
+  createdByUserId: string
+  createdByName: string
+  createdByRole: UserRole
+  siteId?: string | null
+  developerResponse?: string | null
+  resolvedAt?: string | null
+  createdAt: string
+  updatedAt: string
+}
+
 export interface SessionRecord {
   _id: string
   userId: string

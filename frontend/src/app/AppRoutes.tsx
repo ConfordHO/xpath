@@ -28,6 +28,7 @@ import {
   PathologistWorkflowPage,
   PatientOrderDetailPage,
   PatientPortalPage,
+  ProjectReviewPage,
   ReceptionistWorkflowPage,
   ReportsPage,
   ResultsQualityPage,
@@ -59,6 +60,7 @@ export function AppRoutes() {
         <Route path="/dashboard" element={<DashboardPage />} />
         <Route path="/orders/:orderId" element={<OrderDetailPage />} />
         <Route path="/settings" element={<MyAccountPage />} />
+        <Route path="/project-review" element={<ProjectReviewPage />} />
 
         <Route element={<RoleGuard roles={['super_admin', 'admin', 'receptionist', 'technician', 'pathologist']} />}>
           <Route path="/orders" element={<OrdersPage />} />

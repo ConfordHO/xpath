@@ -1,4 +1,5 @@
 export { DashboardPage } from './pages/dashboard'
+export { ProjectReviewPage } from './pages/projectReview'
 export {
   DoctorPortalPage,
   DoctorsPage,
