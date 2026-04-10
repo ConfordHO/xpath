@@ -637,7 +637,6 @@ export function HistologyPage() {
     })
   }
 
-  
   const selectedBlock = selected?.accession.blocks.find((block: any) => block.blockId === blockId)
   const selectedSlides = selected?.accession.blocks.flatMap((block: any) => block.slides) ?? []
 
