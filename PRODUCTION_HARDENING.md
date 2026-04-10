@@ -44,6 +44,7 @@ Updated: 2026-04-10
 
 ### Regression coverage
 
+
 Backend tests now cover:
 
 - auth/login and audit verification
