@@ -71,6 +71,8 @@ export const POSTGRES_STATE_ID = process.env.POSTGRES_STATE_ID?.trim() || "prima
 export const POSTGRES_EXTERNAL_HOST_SUFFIX =
   process.env.POSTGRES_EXTERNAL_HOST_SUFFIX?.trim().replace(/^\./, "") ||
   "oregon-postgres.render.com";
+export const HEALTH_DIAGNOSTICS_TOKEN =
+  process.env.HEALTH_DIAGNOSTICS_TOKEN?.trim() || "";
 export const LEGACY_MONGODB_URI = process.env.LEGACY_MONGODB_URI?.trim() || "";
 export const LEGACY_MONGODB_DB_NAME =
   process.env.LEGACY_MONGODB_DB_NAME?.trim() ||

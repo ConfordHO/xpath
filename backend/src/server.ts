@@ -17,6 +17,7 @@ import {
   CORS_ORIGINS,
   DATABASE_SSL_MODE,
   DATABASE_URL,
+  HEALTH_DIAGNOSTICS_TOKEN,
   MAVIANCE_ACCESS_SECRET,
   MAVIANCE_ACCESS_TOKEN,
   MAVIANCE_ENABLED,
@@ -156,7 +157,11 @@ app.get("/api/health", (_req, res) => {
   res.json({ ok: true });
 });
 
-app.get("/api/health/runtime", (_req, res) => {
+app.get("/api/health/runtime", (req, res) => {
+  if (!HEALTH_DIAGNOSTICS_TOKEN || req.query.token !== HEALTH_DIAGNOSTICS_TOKEN) {
+    return res.status(404).json({ message: "Not found" });
+  }
+
   let databaseHost = "unparseable";
   let databaseProtocol = "unparseable";
   let databaseHostClass = "unknown";
@@ -201,13 +206,10 @@ app.get("/api/health/runtime", (_req, res) => {
 });
 
 app.get("/api/health/storage", async (_req, res) => {
-  const db = await loadDb();
+  await loadDb();
   res.json({
     ok: true,
-    users: db.users.length,
-    patients: db.patients.length,
-    orders: db.orders.length,
-    testTypes: db.testTypes.length,
+    storage: "postgres",
     updatedAt: now(),
   });
 });
