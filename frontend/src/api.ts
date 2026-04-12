@@ -1,7 +1,9 @@
 import axios from 'axios'
 
 function resolveApiBaseUrl() {
-  const configured = import.meta.env.VITE_API_URL ?? import.meta.env.VITE_API_BASE_URL
+  const configured =
+    process.env.NEXT_PUBLIC_API_URL ??
+    process.env.NEXT_PUBLIC_API_BASE_URL
   if (!configured) {
     return 'http://localhost:4000/api'
   }
@@ -24,7 +26,7 @@ export const api = axios.create({
 })
 
 api.interceptors.request.use((config) => {
-  const token = window.localStorage.getItem(storageKeys.token)
+  const token = typeof window !== 'undefined' ? window.localStorage.getItem(storageKeys.token) : null
   if (token) {
     config.headers.Authorization = `Bearer ${token}`
   }
@@ -34,7 +36,7 @@ api.interceptors.request.use((config) => {
 api.interceptors.response.use(
   (response) => response,
   (error) => {
-    if (error.response?.status === 401) {
+    if (typeof window !== 'undefined' && error.response?.status === 401) {
       window.localStorage.removeItem(storageKeys.token)
       window.localStorage.removeItem(storageKeys.user)
     }
@@ -43,10 +45,16 @@ api.interceptors.response.use(
 )
 
 export function getStoredToken() {
+  if (typeof window === 'undefined') {
+    return null
+  }
   return window.localStorage.getItem(storageKeys.token)
 }
 
 export function setStoredToken(token: string | null) {
+  if (typeof window === 'undefined') {
+    return
+  }
   if (!token) {
     window.localStorage.removeItem(storageKeys.token)
     return

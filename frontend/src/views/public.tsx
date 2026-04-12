@@ -19,6 +19,7 @@ import {
   TextField,
   Typography,
 } from '@mui/material'
+import type { StaticImageData } from 'next/image'
 import AccessTimeRoundedIcon from '@mui/icons-material/AccessTimeRounded'
 import DescriptionRoundedIcon from '@mui/icons-material/DescriptionRounded'
 import DownloadRoundedIcon from '@mui/icons-material/DownloadRounded'
@@ -62,6 +63,12 @@ import type {
 } from '../types'
 
 import { downloadPathologyReportPdf, formatDate, formatDateTime, formatMoney, paymentMethodLabel } from '../utils'
+
+type AssetSource = string | StaticImageData
+
+function assetSrc(src: AssetSource) {
+  return typeof src === 'string' ? src : src.src
+}
 
 interface PublicConfig {
   accreditations: string[]
@@ -127,7 +134,7 @@ interface PublicExperienceLayoutProps {
   description: string
   eyebrow: string
   imageAlt: string
-  imageSrc: string
+  imageSrc: AssetSource
   title: string
 }
 
@@ -210,7 +217,7 @@ function PublicExperienceLayout({
           >
             <Box
               component="img"
-              src={imageSrc}
+              src={assetSrc(imageSrc)}
               alt={imageAlt}
               sx={{
                 width: '100%',
@@ -325,7 +332,7 @@ export function LandingPage() {
           sx={{
             position: 'absolute',
             inset: 0,
-            backgroundImage: `linear-gradient(90deg, rgba(0, 60, 143, 0.82) 0%, rgba(0, 60, 143, 0.56) 38%, rgba(0, 60, 143, 0.24) 100%), url(${heroLab})`,
+            backgroundImage: `linear-gradient(90deg, rgba(0, 60, 143, 0.82) 0%, rgba(0, 60, 143, 0.56) 38%, rgba(0, 60, 143, 0.24) 100%), url(${assetSrc(heroLab)})`,
             backgroundSize: 'cover',
             backgroundPosition: { xs: 'center', md: 'center right' },
             opacity: 0.3,
@@ -596,7 +603,7 @@ export function LandingPage() {
                 </Box>
                 <Box
                   component="img"
-                  src={card.image}
+                  src={assetSrc(card.image)}
                   alt={card.title}
                   sx={{
                     width: '100%',
