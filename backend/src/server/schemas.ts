@@ -3,6 +3,7 @@ import { z } from "zod";
 export const loginSchema = z.object({
   email: z.string().email(),
   password: z.string().min(1),
+  mfaToken: z.string().trim().min(6).max(10).optional(),
 });
 
 export const patientSchema = z.object({

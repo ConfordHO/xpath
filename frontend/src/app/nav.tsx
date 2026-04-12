@@ -1,6 +1,7 @@
 import AccountCircleOutlinedIcon from '@mui/icons-material/AccountCircleOutlined'
 import AddCircleOutlineRoundedIcon from '@mui/icons-material/AddCircleOutlineRounded'
 import BiotechOutlinedIcon from '@mui/icons-material/BiotechOutlined'
+import ChatBubbleOutlineRoundedIcon from '@mui/icons-material/ChatBubbleOutlineRounded'
 import DashboardOutlinedIcon from '@mui/icons-material/DashboardOutlined'
 import DescriptionOutlinedIcon from '@mui/icons-material/DescriptionOutlined'
 import FolderCopyOutlinedIcon from '@mui/icons-material/FolderCopyOutlined'
@@ -42,6 +43,7 @@ export function getNavGroups(user: SafeUser): NavGroup[] {
             { label: 'Orders', to: '/orders', icon: <ListAltOutlinedIcon /> },
             { label: 'Create order', to: '/orders/create', icon: <AddCircleOutlineRoundedIcon /> },
             { label: 'Financial', to: '/financial', icon: <PaymentsOutlinedIcon /> },
+            { label: 'Accounting', to: '/accounting', icon: <PaymentsOutlinedIcon /> },
             { label: 'Courier', to: '/courier', icon: <LocalShippingOutlinedIcon /> },
             { label: 'Receptionist workflow', to: '/receptionist/workflow', icon: <VerifiedUserOutlinedIcon /> },
             { label: 'Technician workflow', to: '/technician/workflow', icon: <ScienceOutlinedIcon /> },
@@ -53,6 +55,7 @@ export function getNavGroups(user: SafeUser): NavGroup[] {
             { label: 'Digital pathology', to: '/digital-pathology', icon: <ViewInArOutlinedIcon /> },
             { label: 'Inventory', to: '/inventory', icon: <Inventory2OutlinedIcon /> },
             { label: 'Workflows', to: '/workflow/select', icon: <WorkspacesOutlinedIcon /> },
+            { label: 'Communications', to: '/communications', icon: <ChatBubbleOutlineRoundedIcon /> },
             { label: 'Notifications', to: '/notifications', icon: <NotificationsNoneOutlinedIcon /> },
           ],
         },
@@ -76,6 +79,7 @@ export function getNavGroups(user: SafeUser): NavGroup[] {
             { label: 'Governance & compliance', to: '/operations/governance', icon: <SettingsSuggestOutlinedIcon /> },
             { label: 'Enterprise admin', to: '/operations/enterprise-admin', icon: <TuneOutlinedIcon /> },
             { label: 'Module audit', to: '/operations/module-audit', icon: <FolderCopyOutlinedIcon /> },
+            { label: 'Production readiness', to: '/operations/production-hardening', icon: <SettingsSuggestOutlinedIcon /> },
           ],
         },
         settingsGroup(),
@@ -88,6 +92,7 @@ export function getNavGroups(user: SafeUser): NavGroup[] {
             { label: 'Orders', to: '/orders', icon: <ListAltOutlinedIcon /> },
             { label: 'Create order', to: '/orders/create', icon: <AddCircleOutlineRoundedIcon /> },
             { label: 'Financial', to: '/financial', icon: <PaymentsOutlinedIcon /> },
+            { label: 'Accounting', to: '/accounting', icon: <PaymentsOutlinedIcon /> },
             { label: 'Courier', to: '/courier', icon: <LocalShippingOutlinedIcon /> },
             { label: 'Receptionist workflow', to: '/receptionist/workflow', icon: <VerifiedUserOutlinedIcon /> },
             { label: 'Technician workflow', to: '/technician/workflow', icon: <ScienceOutlinedIcon /> },
@@ -99,6 +104,7 @@ export function getNavGroups(user: SafeUser): NavGroup[] {
             { label: 'Digital pathology', to: '/digital-pathology', icon: <ViewInArOutlinedIcon /> },
             { label: 'Inventory', to: '/inventory', icon: <Inventory2OutlinedIcon /> },
             { label: 'Workflows', to: '/workflow/select', icon: <WorkspacesOutlinedIcon /> },
+            { label: 'Communications', to: '/communications', icon: <ChatBubbleOutlineRoundedIcon /> },
             { label: 'Notifications', to: '/notifications', icon: <NotificationsNoneOutlinedIcon /> },
           ],
         },
@@ -121,6 +127,7 @@ export function getNavGroups(user: SafeUser): NavGroup[] {
             { label: 'Governance & compliance', to: '/operations/governance', icon: <SettingsSuggestOutlinedIcon /> },
             { label: 'Enterprise admin', to: '/operations/enterprise-admin', icon: <TuneOutlinedIcon /> },
             { label: 'Module audit', to: '/operations/module-audit', icon: <FolderCopyOutlinedIcon /> },
+            { label: 'Production readiness', to: '/operations/production-hardening', icon: <SettingsSuggestOutlinedIcon /> },
           ],
         },
         settingsGroup(),
@@ -134,6 +141,7 @@ export function getNavGroups(user: SafeUser): NavGroup[] {
             { label: 'Create order', to: '/orders/create', icon: <AddCircleOutlineRoundedIcon /> },
             { label: 'Receptionist workflow', to: '/receptionist/workflow', icon: <VerifiedUserOutlinedIcon /> },
             { label: 'Courier', to: '/courier', icon: <LocalShippingOutlinedIcon /> },
+            { label: 'Communications', to: '/communications', icon: <ChatBubbleOutlineRoundedIcon /> },
             { label: 'Notifications', to: '/notifications', icon: <NotificationsNoneOutlinedIcon /> },
           ],
         },
@@ -151,6 +159,7 @@ export function getNavGroups(user: SafeUser): NavGroup[] {
             { label: 'Digital pathology', to: '/digital-pathology', icon: <ViewInArOutlinedIcon /> },
             { label: 'Inventory', to: '/inventory', icon: <Inventory2OutlinedIcon /> },
             { label: 'Workflows', to: '/workflow/select', icon: <WorkspacesOutlinedIcon /> },
+            { label: 'Communications', to: '/communications', icon: <ChatBubbleOutlineRoundedIcon /> },
           ],
         },
         settingsGroup(),
@@ -164,6 +173,7 @@ export function getNavGroups(user: SafeUser): NavGroup[] {
             { label: 'Reports', to: '/reports', icon: <DescriptionOutlinedIcon /> },
             { label: 'Cytology', to: '/cytology/cases', icon: <MedicalInformationOutlinedIcon /> },
             { label: 'Digital pathology', to: '/digital-pathology', icon: <ViewInArOutlinedIcon /> },
+            { label: 'Communications', to: '/communications', icon: <ChatBubbleOutlineRoundedIcon /> },
             { label: 'Notifications', to: '/notifications', icon: <NotificationsNoneOutlinedIcon /> },
           ],
         },
@@ -175,6 +185,8 @@ export function getNavGroups(user: SafeUser): NavGroup[] {
           items: [
             { label: 'Dashboard', to: '/dashboard', icon: <DashboardOutlinedIcon /> },
             { label: 'Financial', to: '/financial', icon: <PaymentsOutlinedIcon /> },
+            { label: 'Accounting', to: '/accounting', icon: <PaymentsOutlinedIcon /> },
+            { label: 'Communications', to: '/communications', icon: <ChatBubbleOutlineRoundedIcon /> },
             { label: 'Notifications', to: '/notifications', icon: <NotificationsNoneOutlinedIcon /> },
           ],
         },
@@ -186,6 +198,7 @@ export function getNavGroups(user: SafeUser): NavGroup[] {
           items: [
             { label: 'Dashboard', to: '/dashboard', icon: <DashboardOutlinedIcon /> },
             { label: 'Courier', to: '/courier', icon: <LocalShippingOutlinedIcon /> },
+            { label: 'Communications', to: '/communications', icon: <ChatBubbleOutlineRoundedIcon /> },
             { label: 'Notifications', to: '/notifications', icon: <NotificationsNoneOutlinedIcon /> },
           ],
         },

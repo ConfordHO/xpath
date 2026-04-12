@@ -15,8 +15,12 @@ let createdOrderId = "";
 let createdAccessionId = "";
 
 async function loginAdmin() {
+  return loginUser("admin@xpath.lims");
+}
+
+async function loginUser(email: string) {
   const login = await request.post("/api/auth/login").send({
-    email: "admin@xpath.lims",
+    email,
     password: "admin123",
   });
   assert.equal(login.status, 200);
@@ -227,6 +231,235 @@ describe("production hardening", () => {
     assert.equal(readiness.status, 200);
     assert.ok(Array.isArray(readiness.body.vendorConnectors));
     assert.equal(typeof readiness.body.maviance.credentialsConfigured, "boolean");
+  });
+
+  test("production controls expose ledger, validation, chat, offline, and MFA readiness", async () => {
+    const readiness = await request
+      .get("/api/production-readiness")
+      .set("Authorization", `Bearer ${authToken}`);
+    assert.equal(readiness.status, 200);
+    assert.equal(typeof readiness.body.audit.valid, "boolean");
+
+    const monthlyFinance = await request
+      .get("/api/finance/monthly-dashboard")
+      .set("Authorization", `Bearer ${authToken}`);
+    assert.equal(monthlyFinance.status, 200);
+    assert.ok(Array.isArray(monthlyFinance.body.rows));
+
+    const rebuildLedger = await request
+      .post("/api/accounting/rebuild-ledger")
+      .set("Authorization", `Bearer ${authToken}`)
+      .send({});
+    assert.equal(rebuildLedger.status, 200);
+    assert.ok(Array.isArray(rebuildLedger.body));
+
+    const ledger = await request
+      .get("/api/accounting/ledger")
+      .set("Authorization", `Bearer ${authToken}`);
+    assert.equal(ledger.status, 200);
+    assert.ok(Array.isArray(ledger.body));
+
+    const validation = await request
+      .post(`/api/orders/${createdOrderId}/validation/evaluate`)
+      .set("Authorization", `Bearer ${authToken}`)
+      .send({});
+    assert.equal(validation.status, 200);
+    assert.equal(typeof validation.body.valid, "boolean");
+
+    const barcodeScan = await request
+      .post("/api/barcodes/scan")
+      .set("Authorization", `Bearer ${authToken}`)
+      .send({
+        code: "NOT-A-REAL-BARCODE",
+        workflowStep: "accessioning",
+      });
+    assert.equal(barcodeScan.status, 409);
+    assert.equal(barcodeScan.body.outcome, "rejected");
+
+    const chatThread = await request
+      .post("/api/communications/threads")
+      .set("Authorization", `Bearer ${authToken}`)
+      .send({
+        title: "Test production chat",
+        department: "histology",
+        participantUserIds: [],
+      });
+    assert.equal(chatThread.status, 201);
+
+    const chatMessage = await request
+      .post(`/api/communications/threads/${chatThread.body._id}/messages`)
+      .set("Authorization", `Bearer ${authToken}`)
+      .send({ body: "Test message from production controls" });
+    assert.equal(chatMessage.status, 201);
+    assert.equal(chatMessage.body.threadId, chatThread.body._id);
+
+    const offlineSnapshot = await request
+      .get("/api/offline/snapshot")
+      .set("Authorization", `Bearer ${authToken}`);
+    assert.equal(offlineSnapshot.status, 200);
+    assert.ok(Array.isArray(offlineSnapshot.body.orders));
+
+    const mfaSetup = await request
+      .post("/api/security/mfa/setup")
+      .set("Authorization", `Bearer ${authToken}`)
+      .send({});
+    assert.equal(mfaSetup.status, 200);
+    assert.match(mfaSetup.body.otpauthUrl, /^otpauth:\/\/totp\//);
+  });
+
+  test("module one and two governance flows enforce verification, approvals, and reversals", async () => {
+    const pathologistToken = await loginUser("pathologist@xpath.lims");
+    const financeToken = await loginUser("finance@xpath.lims");
+    const superAdminToken = await loginUser("superadmin@xpath.lims");
+
+    const ocrJob = await request
+      .post("/api/intake/ocr/jobs")
+      .set("Authorization", `Bearer ${authToken}`)
+      .field(
+        "text",
+        "Patient name: Alpha Verify\nDOB: 1985-03-04\nPhone: +237690000001\nEmail: alpha.verify@xpath.test\nAddress: Yaounde\nClinical history: OCR verified bleeding history\nRequested tests: HE",
+      );
+    assert.equal(ocrJob.status, 201);
+    assert.equal(ocrJob.body.status, "needs_verification");
+    assert.equal(typeof ocrJob.body.confidence, "number");
+
+    const verifiedPayload = {
+      ...ocrJob.body.parsedPayload,
+      testTypeIds: ["test-biopsy"],
+      matchedTestCodes: ["HE"],
+    };
+    const verifyOcr = await request
+      .post(`/api/intake/ocr/jobs/${ocrJob.body._id}/verify`)
+      .set("Authorization", `Bearer ${authToken}`)
+      .send({ parsedPayload: verifiedPayload, verificationNotes: "Verified in automated test" });
+    assert.equal(verifyOcr.status, 200);
+    assert.equal(verifyOcr.body.status, "verified");
+
+    const convertedOrder = await request
+      .post(`/api/intake/ocr/jobs/${ocrJob.body._id}/convert-order`)
+      .set("Authorization", `Bearer ${authToken}`)
+      .send({});
+    assert.equal(convertedOrder.status, 201);
+    assert.equal(convertedOrder.body.intakeSource, "ocr_nlp");
+
+    const ruleCreate = await request
+      .post("/api/validation-rules")
+      .set("Authorization", `Bearer ${authToken}`)
+      .send({
+        name: "Automated test rule",
+        scope: "order",
+        severity: "warning",
+        active: true,
+        requiredFields: ["patient.dateOfBirth"],
+        message: "Patient DOB is required",
+      });
+    assert.equal(ruleCreate.status, 201);
+
+    const ruleUpdate = await request
+      .put(`/api/validation-rules/${ruleCreate.body._id}`)
+      .set("Authorization", `Bearer ${authToken}`)
+      .send({
+        name: "Automated test rule updated",
+        scope: "order",
+        severity: "blocking",
+        active: true,
+        requiredFields: ["patient.dateOfBirth"],
+        message: "Patient DOB is required for processing",
+      });
+    assert.equal(ruleUpdate.status, 200);
+    assert.equal(ruleUpdate.body.severity, "blocking");
+
+    const lock = await request
+      .post(`/api/orders/${createdOrderId}/lock`)
+      .set("Authorization", `Bearer ${authToken}`)
+      .send({ reason: "Controlled amendment test lock" });
+    assert.equal(lock.status, 200);
+    assert.equal(lock.body.lockStatus, "locked");
+
+    const blockedDirectEdit = await request
+      .put(`/api/orders/${createdOrderId}`)
+      .set("Authorization", `Bearer ${authToken}`)
+      .send({ notes: "This direct edit must be blocked" });
+    assert.equal(blockedDirectEdit.status, 400);
+    assert.match(blockedDirectEdit.body.message, /controlled correction/i);
+
+    const correction = await request
+      .post(`/api/orders/${createdOrderId}/corrections`)
+      .set("Authorization", `Bearer ${authToken}`)
+      .send({
+        reason: "Correct locked order note",
+        changes: { notes: "Controlled correction applied" },
+      });
+    assert.equal(correction.status, 201);
+
+    const correctionApproval = await request
+      .post(`/api/orders/${createdOrderId}/corrections/${correction.body._id}/approve`)
+      .set("Authorization", `Bearer ${pathologistToken}`)
+      .send({});
+    assert.equal(correctionApproval.status, 200);
+    assert.equal(correctionApproval.body.status, "applied");
+
+    const refund = await request
+      .post("/api/refunds")
+      .set("Authorization", `Bearer ${authToken}`)
+      .send({
+        orderId: createdOrderId,
+        invoiceId: null,
+        type: "adjustment",
+        amount: 10,
+        reason: "Automated adjustment approval",
+        status: "completed",
+      });
+    assert.equal(refund.status, 201);
+    assert.equal(refund.body.status, "pending");
+
+    const firstApproval = await request
+      .post(`/api/refunds/${refund.body._id}/approve`)
+      .set("Authorization", `Bearer ${financeToken}`)
+      .send({});
+    assert.equal(firstApproval.status, 200);
+    assert.equal(firstApproval.body.status, "pending");
+    assert.equal(firstApproval.body.approvals.length, 1);
+
+    const secondApproval = await request
+      .post(`/api/refunds/${refund.body._id}/approve`)
+      .set("Authorization", `Bearer ${superAdminToken}`)
+      .send({});
+    assert.equal(secondApproval.status, 200);
+    assert.equal(secondApproval.body.status, "approved");
+    assert.ok(secondApproval.body.reversalJournalEntryId);
+
+    const completed = await request
+      .post(`/api/refunds/${refund.body._id}/complete`)
+      .set("Authorization", `Bearer ${financeToken}`)
+      .send({});
+    assert.equal(completed.status, 200);
+    assert.equal(completed.body.status, "completed");
+
+    const journal = await request
+      .post("/api/accounting/journal-entries")
+      .set("Authorization", `Bearer ${financeToken}`)
+      .send({
+        debitAccount: "Cash and Bank",
+        creditAccount: "Pathology Revenue",
+        amount: 5,
+        memo: "Automated manual journal",
+      });
+    assert.equal(journal.status, 201);
+    assert.equal(journal.body.status, "posted");
+
+    const voidJournal = await request
+      .post(`/api/accounting/journal-entries/${journal.body._id}/void`)
+      .set("Authorization", `Bearer ${financeToken}`)
+      .send({ reason: "Automated reversal control" });
+    assert.equal(voidJournal.status, 200);
+    assert.equal(voidJournal.body.entry.status, "void");
+    assert.equal(voidJournal.body.reversal.reversalOfEntryId, journal.body._id);
+
+    const ruleDelete = await request
+      .delete(`/api/validation-rules/${ruleCreate.body._id}`)
+      .set("Authorization", `Bearer ${authToken}`);
+    assert.equal(ruleDelete.status, 200);
   });
 
   test("logout revokes the active session immediately", async () => {

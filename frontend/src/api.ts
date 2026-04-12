@@ -15,6 +15,8 @@ function resolveApiBaseUrl() {
   return normalized.endsWith('/api') ? normalized : `${normalized}/api`
 }
 
+export const apiBaseUrl = resolveApiBaseUrl()
+
 export const storageKeys = {
   token: 'lims_token',
   locale: 'lims_locale',
@@ -22,7 +24,7 @@ export const storageKeys = {
 } as const
 
 export const api = axios.create({
-  baseURL: resolveApiBaseUrl(),
+  baseURL: apiBaseUrl,
 })
 
 api.interceptors.request.use((config) => {

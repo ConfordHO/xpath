@@ -60,6 +60,8 @@ import type {
   LabelTemplateRecord,
   ModuleAuditEntry,
   OrderAmendment,
+  OcrIntakeJob,
+  OrderCorrection,
   PricingRule,
   PreAnalyticsLog,
   QcThreshold,
@@ -77,7 +79,7 @@ import type {
   SiteTransfer,
   TatAlert,
   TatSummary,
-  TestType,
+  ValidationRule,
   WasteLog,
 } from '../types'
 import { formatDateTime, formatMoney } from '../utils'
@@ -434,6 +436,45 @@ export function ModuleAuditPage() {
   )
 }
 
+function parseOcrJobPayload(job: OcrIntakeJob) {
+  if (typeof job.parsedPayload === 'string') {
+    try {
+      return JSON.parse(job.parsedPayload) as {
+        patient: {
+          firstName: string
+          lastName: string
+          dateOfBirth: string
+          gender: string
+          phone: string
+          email: string
+          address: string
+        }
+        clinicalHistory: string
+        testTypeIds: string[]
+        matchedTestCodes: string[]
+      }
+    } catch {
+      return null
+    }
+  }
+  return job.parsedPayload
+}
+
+function parseOcrFieldConfidences(job: OcrIntakeJob) {
+  if (typeof job.fieldConfidences === 'string') {
+    try {
+      return JSON.parse(job.fieldConfidences) as Record<string, number>
+    } catch {
+      return {}
+    }
+  }
+  return job.fieldConfidences
+}
+
+function formatApprovalProgress(approvals?: Array<{ userName: string }>, required = 1) {
+  return `${approvals?.length ?? 0}/${required}`
+}
+
 export function ClinicalOperationsPage() {
   const ordersState = useLoadable<{ data: HydratedOrder[] }>({ data: [] }, [], async () => {
     const response = await api.get('/orders')
@@ -443,37 +484,44 @@ export function ClinicalOperationsPage() {
     const response = await api.get('/samples')
     return response.data
   })
-  const testTypesState = useLoadable<TestType[]>([], [], async () => {
-    const response = await api.get<TestType[]>('/test-types')
-    return response.data
-  })
   const amendmentsState = useLoadable<OrderAmendment[]>([], [], async () => {
     const response = await api.get<OrderAmendment[]>('/order-amendments')
+    return response.data
+  })
+  const ocrJobsState = useLoadable<OcrIntakeJob[]>([], [], async () => {
+    const response = await api.get<OcrIntakeJob[]>('/intake/ocr/jobs')
+    return response.data
+  })
+  const validationRulesState = useLoadable<ValidationRule[]>([], [], async () => {
+    const response = await api.get<ValidationRule[]>('/validation-rules')
     return response.data
   })
   const [ocrText, setOcrText] = useState(
     'Name: Jane Doe\nDOB: 1989-05-14\nPhone: +254711222333\nEmail: jane@example.com\nAddress: Westlands Nairobi\nHistory: Persistent abnormal bleeding\nRequested tests: HE, IHC',
   )
-  const [ocrPreview, setOcrPreview] = useState<{
-    patient: {
-      firstName: string
-      lastName: string
-      dateOfBirth: string
-      gender: string
-      phone: string
-      email: string
-      address: string
-    }
-    clinicalHistory: string
-    testTypeIds: string[]
-    matchedTestCodes: string[]
-  } | null>(null)
+  const [ocrFile, setOcrFile] = useState<File | null>(null)
+  const [ocrVerifyJob, setOcrVerifyJob] = useState<OcrIntakeJob | null>(null)
+  const [ocrVerifyText, setOcrVerifyText] = useState('')
   const [ocrError, setOcrError] = useState<string | null>(null)
   const [ocrSuccess, setOcrSuccess] = useState<string | null>(null)
+  const [validationFeedback, setValidationFeedback] = useState<string | null>(null)
+  const [ruleEditingId, setRuleEditingId] = useState<string | null>(null)
+  const [ruleForm, setRuleForm] = useState({
+    name: '',
+    scope: 'order' as ValidationRule['scope'],
+    severity: 'blocking' as ValidationRule['severity'],
+    active: true,
+    requiredFields: 'clinicalHistory',
+    message: '',
+  })
   const [amendOrderId, setAmendOrderId] = useState('')
   const [amendType, setAmendType] = useState<'amendment' | 'add_on' | 'cancellation'>('amendment')
   const [amendReason, setAmendReason] = useState('')
   const [amendDetails, setAmendDetails] = useState('')
+  const [correctionOrderId, setCorrectionOrderId] = useState('')
+  const [correctionReason, setCorrectionReason] = useState('')
+  const [correctionNotes, setCorrectionNotes] = useState('')
+  const [corrections, setCorrections] = useState<OrderCorrection[]>([])
   const [sampleRejectId, setSampleRejectId] = useState('')
   const [sampleRejectReason, setSampleRejectReason] = useState('')
 
@@ -486,35 +534,148 @@ export function ClinicalOperationsPage() {
     value: sample._id,
   }))
 
-  const parseOcr = async () => {
+  const submitOcrJob = async () => {
     setOcrError(null)
     setOcrSuccess(null)
     try {
-      const response = await api.post('/intake/ocr-parse', { text: ocrText })
-      setOcrPreview(response.data)
+      const formData = new FormData()
+      if (ocrFile) formData.append('file', ocrFile)
+      if (ocrText.trim()) formData.append('text', ocrText)
+      await api.post('/intake/ocr/jobs', formData)
+      setOcrSuccess('OCR verification job created. Review and verify it before converting to an order.')
+      setOcrFile(null)
+      ocrJobsState.refresh()
     } catch (parseError) {
       setOcrError(errorMessage(parseError))
     }
   }
 
-  const createOrderFromParsed = async () => {
-    if (!ocrPreview) return
+  const openOcrVerifier = (job: OcrIntakeJob) => {
+    const parsed = parseOcrJobPayload(job)
+    setOcrVerifyJob(job)
+    setOcrVerifyText(JSON.stringify(parsed, null, 2))
+  }
+
+  const verifyOcrJob = async () => {
+    if (!ocrVerifyJob) return
     setOcrError(null)
     try {
-      const patientResponse = await api.post('/patients', ocrPreview.patient)
-      await api.post('/orders', {
-        patientId: patientResponse.data._id,
-        testTypeIds: ocrPreview.testTypeIds.length ? ocrPreview.testTypeIds : testTypesState.data.slice(0, 1).map((test) => test._id),
-        priority: 'normal',
-        orderSource: 'walk_in',
-        notes: 'Created from OCR/NLP intake parser',
-        clinicalHistory: ocrPreview.clinicalHistory,
+      await api.post(`/intake/ocr/jobs/${ocrVerifyJob._id}/verify`, {
+        parsedPayload: JSON.parse(ocrVerifyText),
+        verificationNotes: 'Verified from clinical operations screen',
       })
-      setOcrSuccess('Draft order created from OCR/NLP intake.')
-      ordersState.refresh()
+      setOcrVerifyJob(null)
+      setOcrSuccess('OCR job verified. It can now be converted into an order.')
+      ocrJobsState.refresh()
     } catch (createError) {
       setOcrError(errorMessage(createError))
     }
+  }
+
+  const convertOcrJob = async (job: OcrIntakeJob) => {
+    setOcrError(null)
+    setOcrSuccess(null)
+    try {
+      await api.post(`/intake/ocr/jobs/${job._id}/convert-order`)
+      setOcrSuccess('Verified OCR intake converted into a draft order.')
+      ocrJobsState.refresh()
+      ordersState.refresh()
+    } catch (convertError) {
+      setOcrError(errorMessage(convertError))
+    }
+  }
+
+  const saveValidationRule = async () => {
+    setValidationFeedback(null)
+    try {
+      const payload = {
+        ...ruleForm,
+        requiredFields: ruleForm.requiredFields
+          .split(',')
+          .map((field) => field.trim())
+          .filter(Boolean),
+      }
+      if (ruleEditingId) {
+        await api.put(`/validation-rules/${ruleEditingId}`, payload)
+      } else {
+        await api.post('/validation-rules', payload)
+      }
+      setRuleEditingId(null)
+      setRuleForm({
+        name: '',
+        scope: 'order',
+        severity: 'blocking',
+        active: true,
+        requiredFields: 'clinicalHistory',
+        message: '',
+      })
+      setValidationFeedback('Validation rule saved.')
+      validationRulesState.refresh()
+    } catch (ruleError) {
+      setValidationFeedback(errorMessage(ruleError))
+    }
+  }
+
+  const editValidationRule = (rule: ValidationRule) => {
+    setRuleEditingId(rule._id)
+    setRuleForm({
+      name: rule.name,
+      scope: rule.scope,
+      severity: rule.severity,
+      active: rule.active,
+      requiredFields: rule.requiredFields.join(', '),
+      message: rule.message,
+    })
+  }
+
+  const deleteValidationRule = async (rule: ValidationRule) => {
+    await api.delete(`/validation-rules/${rule._id}`)
+    validationRulesState.refresh()
+  }
+
+  const evaluateOrderRules = async (order: HydratedOrder) => {
+    const response = await api.post(`/orders/${order._id}/validation/evaluate`)
+    setValidationFeedback(
+      response.data.valid
+        ? `${order.orderNumber} passed all blocking validation rules.`
+        : `${order.orderNumber} failed ${response.data.blockingCount} blocking validation rule(s).`,
+    )
+  }
+
+  const lockOrder = async (order: HydratedOrder) => {
+    const reason = window.prompt('Enter the controlled lock reason')
+    if (!reason) return
+    await api.post(`/orders/${order._id}/lock`, { reason })
+    ordersState.refresh()
+  }
+
+  const unlockOrder = async (order: HydratedOrder) => {
+    const reason = window.prompt('Enter the unlock reason')
+    if (!reason) return
+    await api.post(`/orders/${order._id}/unlock`, { reason })
+    ordersState.refresh()
+  }
+
+  const submitCorrection = async () => {
+    if (!correctionOrderId || !correctionReason) return
+    await api.post(`/orders/${correctionOrderId}/corrections`, {
+      reason: correctionReason,
+      changes: { notes: correctionNotes },
+    })
+    setCorrectionReason('')
+    setCorrectionNotes('')
+    const response = await api.get<OrderCorrection[]>(`/orders/${correctionOrderId}/corrections`)
+    setCorrections(response.data)
+  }
+
+  const loadCorrections = async (orderId: string) => {
+    setCorrectionOrderId(orderId)
+    if (!orderId) {
+      setCorrections([])
+      return
+    }
+    const response = await api.get<OrderCorrection[]>(`/orders/${orderId}/corrections`)
+    setCorrections(response.data)
   }
 
   const submitAmendment = async () => {
@@ -546,37 +707,136 @@ export function ClinicalOperationsPage() {
         description="Order intake, billing control, specimen traceability, barcode governance, and pre-analytical operations."
       />
 
-      <SectionCard title="1. OCR / NLP intake simulator" description="Paste requisition text to simulate OCR/NLP-assisted intake and create a draft order.">
+      <SectionCard title="1. OCR / NLP intake verification" description="Upload an image requisition or paste extracted text. The system scores the OCR result and requires human verification before order creation.">
         <Stack spacing={2}>
           {ocrError ? <Alert severity="error">{ocrError}</Alert> : null}
           {ocrSuccess ? <Alert severity="success">{ocrSuccess}</Alert> : null}
-          <TextField label="Scanned requisition text" multiline minRows={6} value={ocrText} onChange={(event) => setOcrText(event.target.value)} />
-          <Stack direction="row" spacing={2}>
-            <Button variant="contained" onClick={parseOcr}>
-              Parse requisition
+          <Button component="label" variant="outlined">
+            {ocrFile ? `Selected: ${ocrFile.name}` : 'Upload image requisition'}
+            <input
+              hidden
+              type="file"
+              accept="image/*,text/plain"
+              onChange={(event) => setOcrFile(event.target.files?.[0] ?? null)}
+            />
+          </Button>
+          <TextField label="Fallback or extracted requisition text" multiline minRows={6} value={ocrText} onChange={(event) => setOcrText(event.target.value)} />
+          <Stack direction="row" spacing={2} flexWrap="wrap">
+            <Button variant="contained" onClick={submitOcrJob}>
+              Create verification job
             </Button>
-            <Button variant="outlined" disabled={!ocrPreview} onClick={createOrderFromParsed}>
-              Create draft order
-            </Button>
+            <Button variant="text" onClick={() => ocrJobsState.refresh()}>Refresh queue</Button>
           </Stack>
-          {ocrPreview ? (
-            <Paper sx={{ p: 2 }}>
-              <Typography fontWeight={700}>Parsed result</Typography>
-              <Typography sx={{ mt: 1 }}>
-                {ocrPreview.patient.firstName} {ocrPreview.patient.lastName} · {ocrPreview.patient.dateOfBirth}
-              </Typography>
-              <Typography color="text.secondary" sx={{ mt: 1 }}>
-                Tests: {ocrPreview.matchedTestCodes.join(', ') || 'No exact code match'}
-              </Typography>
-              <Typography color="text.secondary" sx={{ mt: 1 }}>
-                History: {ocrPreview.clinicalHistory}
-              </Typography>
-            </Paper>
-          ) : null}
+          <TablePlaceholder loading={ocrJobsState.loading} />
+          {ocrJobsState.error ? <Alert severity="error">{ocrJobsState.error}</Alert> : null}
+          <Stack spacing={1.5} sx={{ maxHeight: 460, overflow: 'auto', pr: 1 }}>
+            {ocrJobsState.data.map((job) => {
+              const parsed = parseOcrJobPayload(job)
+              const fieldConfidences = parseOcrFieldConfidences(job)
+              return (
+                <Paper key={job._id} sx={{ p: 2 }}>
+                  <Stack direction={{ xs: 'column', md: 'row' }} spacing={1.5} justifyContent="space-between">
+                    <Box>
+                      <Typography fontWeight={700}>
+                        {parsed?.patient.firstName} {parsed?.patient.lastName} · {job.confidence}% confidence
+                      </Typography>
+                      <Typography color="text.secondary">
+                        {job.status} · Tests: {parsed?.matchedTestCodes?.join(', ') || 'Needs test verification'}
+                      </Typography>
+                      <Typography variant="body2" color="text.secondary">
+                        Field confidence: {Object.entries(fieldConfidences).map(([field, score]) => `${field} ${score}%`).join(' · ')}
+                      </Typography>
+                    </Box>
+                    <Stack direction="row" spacing={1} flexWrap="wrap">
+                      <Button size="small" onClick={() => openOcrVerifier(job)}>Review</Button>
+                      <Button size="small" disabled={job.status !== 'verified'} onClick={() => convertOcrJob(job)}>
+                        Convert to order
+                      </Button>
+                      <Button
+                        size="small"
+                        color="error"
+                        disabled={job.status === 'converted_to_order' || job.status === 'rejected'}
+                        onClick={async () => {
+                          await api.post(`/intake/ocr/jobs/${job._id}/reject`, { reason: 'Rejected from clinical operations queue' })
+                          ocrJobsState.refresh()
+                        }}
+                      >
+                        Reject
+                      </Button>
+                    </Stack>
+                  </Stack>
+                </Paper>
+              )
+            })}
+          </Stack>
         </Stack>
       </SectionCard>
 
-      <SectionCard title="1. Order validation and financial clearance" description="Review intake quality, clear billing, or cancel an order with one click.">
+      <SectionCard title="1. No-code validation rules" description="Create blocking, warning, or informational rules without code. Use dot paths such as patient.dateOfBirth, clinicalHistory, testTypeIds, or financialClearance.">
+        <Stack spacing={2}>
+          {validationFeedback ? <Alert severity={validationFeedback.includes('failed') || validationFeedback.includes('Invalid') ? 'warning' : 'success'}>{validationFeedback}</Alert> : null}
+          <Box sx={{ display: 'grid', gap: 2, gridTemplateColumns: { xs: '1fr', md: '1.2fr 0.8fr 0.8fr' } }}>
+            <TextField label="Rule name" value={ruleForm.name} onChange={(event) => setRuleForm((prev) => ({ ...prev, name: event.target.value }))} />
+            <FormControl>
+              <InputLabel>Scope</InputLabel>
+              <Select label="Scope" value={ruleForm.scope} onChange={(event) => setRuleForm((prev) => ({ ...prev, scope: event.target.value as ValidationRule['scope'] }))}>
+                {['order', 'specimen', 'result', 'report', 'finance'].map((scope) => (
+                  <MenuItem key={scope} value={scope}>{scope}</MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+            <FormControl>
+              <InputLabel>Severity</InputLabel>
+              <Select label="Severity" value={ruleForm.severity} onChange={(event) => setRuleForm((prev) => ({ ...prev, severity: event.target.value as ValidationRule['severity'] }))}>
+                <MenuItem value="info">Info</MenuItem>
+                <MenuItem value="warning">Warning</MenuItem>
+                <MenuItem value="blocking">Blocking</MenuItem>
+              </Select>
+            </FormControl>
+          </Box>
+          <TextField label="Required field paths (comma-separated)" value={ruleForm.requiredFields} onChange={(event) => setRuleForm((prev) => ({ ...prev, requiredFields: event.target.value }))} />
+          <TextField label="Message shown when rule fails" value={ruleForm.message} onChange={(event) => setRuleForm((prev) => ({ ...prev, message: event.target.value }))} />
+          <FormControlLabel
+            control={<Checkbox checked={ruleForm.active} onChange={(event) => setRuleForm((prev) => ({ ...prev, active: event.target.checked }))} />}
+            label="Rule is active"
+          />
+          <Stack direction="row" spacing={1.5}>
+            <Button variant="contained" onClick={saveValidationRule}>{ruleEditingId ? 'Update rule' : 'Create rule'}</Button>
+            {ruleEditingId ? <Button onClick={() => setRuleEditingId(null)}>Cancel edit</Button> : null}
+          </Stack>
+          <TableContainer>
+            <Table size="small">
+              <TableHead>
+                <TableRow>
+                  <TableCell>Name</TableCell>
+                  <TableCell>Scope</TableCell>
+                  <TableCell>Severity</TableCell>
+                  <TableCell>Fields</TableCell>
+                  <TableCell>Actions</TableCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {validationRulesState.data.map((rule) => (
+                  <TableRow key={rule._id}>
+                    <TableCell>{rule.name}</TableCell>
+                    <TableCell>{rule.scope}</TableCell>
+                    <TableCell><Chip size="small" label={rule.severity} color={rule.severity === 'blocking' ? 'error' : rule.severity === 'warning' ? 'warning' : 'default'} /></TableCell>
+                    <TableCell>{rule.requiredFields.join(', ')}</TableCell>
+                    <TableCell>
+                      <Stack direction="row" spacing={1}>
+                        <Button size="small" onClick={() => editValidationRule(rule)}>Edit</Button>
+                        <Button size="small" color="error" onClick={() => deleteValidationRule(rule)}>Delete</Button>
+                      </Stack>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </TableContainer>
+        </Stack>
+      </SectionCard>
+
+      <SectionCard title="1. Order validation, financial clearance, and locks" description="Review intake quality, evaluate no-code rules, clear billing, lock orders, or cancel controlled workflows.">
         <TableContainer>
           <Table>
             <TableHead>
@@ -585,6 +845,7 @@ export function ClinicalOperationsPage() {
                 <TableCell>Status</TableCell>
                 <TableCell>Validation</TableCell>
                 <TableCell>Financial</TableCell>
+                <TableCell>Lock</TableCell>
                 <TableCell>Actions</TableCell>
               </TableRow>
             </TableHead>
@@ -596,7 +857,16 @@ export function ClinicalOperationsPage() {
                   <TableCell>{order.validationStatus ?? 'pending'}</TableCell>
                   <TableCell>{order.financialClearance ?? 'pending'}</TableCell>
                   <TableCell>
+                    <Chip size="small" label={order.lockStatus ?? 'unlocked'} color={order.lockStatus === 'locked' ? 'warning' : 'default'} />
+                  </TableCell>
+                  <TableCell>
                     <Stack direction="row" spacing={1} flexWrap="wrap">
+                      <Button
+                        size="small"
+                        onClick={() => evaluateOrderRules(order)}
+                      >
+                        Evaluate
+                      </Button>
                       <Button
                         size="small"
                         startIcon={<CheckCircleRoundedIcon />}
@@ -636,6 +906,11 @@ export function ClinicalOperationsPage() {
                       >
                         Cancel
                       </Button>
+                      {order.lockStatus === 'locked' ? (
+                        <Button size="small" onClick={() => unlockOrder(order)}>Unlock</Button>
+                      ) : (
+                        <Button size="small" onClick={() => lockOrder(order)}>Lock</Button>
+                      )}
                     </Stack>
                   </TableCell>
                 </TableRow>
@@ -672,9 +947,99 @@ export function ClinicalOperationsPage() {
           <Stack spacing={1.5}>
             {amendmentsState.data.map((entry) => (
               <Paper key={entry._id} sx={{ p: 2 }}>
-                <Typography fontWeight={700}>{entry.type}</Typography>
-                <Typography>{entry.reason}</Typography>
-                <Typography color="text.secondary">{entry.details}</Typography>
+                <Stack direction={{ xs: 'column', md: 'row' }} justifyContent="space-between" spacing={1.5}>
+                  <Box>
+                    <Typography fontWeight={700}>{entry.type} · {entry.status ?? 'applied'}</Typography>
+                    <Typography>{entry.reason}</Typography>
+                    <Typography color="text.secondary">{entry.details}</Typography>
+                    <Typography variant="body2" color="text.secondary">
+                      Approvals {formatApprovalProgress(entry.approvals, entry.requiredApprovals ?? 1)} · Policy {entry.policyLevel ?? 'standard'}
+                    </Typography>
+                  </Box>
+                  <Stack direction="row" spacing={1} flexWrap="wrap">
+                    <Button
+                      size="small"
+                      disabled={(entry.status ?? 'applied') === 'applied' || entry.status === 'rejected'}
+                      onClick={async () => {
+                        await api.post(`/order-amendments/${entry._id}/approve`)
+                        amendmentsState.refresh()
+                        ordersState.refresh()
+                      }}
+                    >
+                      Approve
+                    </Button>
+                    <Button
+                      size="small"
+                      color="error"
+                      disabled={(entry.status ?? 'applied') === 'applied' || entry.status === 'rejected'}
+                      onClick={async () => {
+                        const reason = window.prompt('Rejection reason')
+                        if (!reason) return
+                        await api.post(`/order-amendments/${entry._id}/reject`, { reason })
+                        amendmentsState.refresh()
+                      }}
+                    >
+                      Reject
+                    </Button>
+                  </Stack>
+                </Stack>
+              </Paper>
+            ))}
+          </Stack>
+        </Stack>
+      </SectionCard>
+
+      <SectionCard title="1. Controlled correction workflow" description="For locked, completed, released, or legally sensitive orders, submit a correction request instead of direct editing.">
+        <Stack spacing={2}>
+          <FormControl>
+            <InputLabel>Order</InputLabel>
+            <Select label="Order" value={correctionOrderId} onChange={(event) => loadCorrections(String(event.target.value))}>
+              {orderOptions.map((option) => (
+                <MenuItem key={option.value} value={option.value}>{option.label}</MenuItem>
+              ))}
+            </Select>
+          </FormControl>
+          <TextField label="Correction reason" value={correctionReason} onChange={(event) => setCorrectionReason(event.target.value)} />
+          <TextField label="Corrected order notes" multiline minRows={3} value={correctionNotes} onChange={(event) => setCorrectionNotes(event.target.value)} />
+          <Button variant="contained" onClick={submitCorrection}>Submit correction request</Button>
+          <Stack spacing={1.5} sx={{ maxHeight: 360, overflow: 'auto', pr: 1 }}>
+            {corrections.map((entry) => (
+              <Paper key={entry._id} sx={{ p: 2 }}>
+                <Stack direction={{ xs: 'column', md: 'row' }} spacing={1.5} justifyContent="space-between">
+                  <Box>
+                    <Typography fontWeight={700}>{entry.reason}</Typography>
+                    <Typography color="text.secondary">
+                      {entry.status} · Approvals {formatApprovalProgress(entry.approvals, entry.requiredApprovals)}
+                    </Typography>
+                    <Typography variant="body2" color="text.secondary">{entry.changes}</Typography>
+                  </Box>
+                  <Stack direction="row" spacing={1}>
+                    <Button
+                      size="small"
+                      disabled={entry.status !== 'pending'}
+                      onClick={async () => {
+                        await api.post(`/orders/${entry.orderId}/corrections/${entry._id}/approve`)
+                        await loadCorrections(entry.orderId)
+                        ordersState.refresh()
+                      }}
+                    >
+                      Approve
+                    </Button>
+                    <Button
+                      size="small"
+                      color="error"
+                      disabled={entry.status !== 'pending'}
+                      onClick={async () => {
+                        const reason = window.prompt('Rejection reason')
+                        if (!reason) return
+                        await api.post(`/orders/${entry.orderId}/corrections/${entry._id}/reject`, { reason })
+                        await loadCorrections(entry.orderId)
+                      }}
+                    >
+                      Reject
+                    </Button>
+                  </Stack>
+                </Stack>
               </Paper>
             ))}
           </Stack>
@@ -800,22 +1165,38 @@ export function ClinicalOperationsPage() {
           },
           { key: 'amount', label: 'Amount', type: 'number' },
           { key: 'reason', label: 'Reason', type: 'textarea' },
-          {
-            key: 'status',
-            label: 'Status',
-            type: 'select',
-            options: [
-              { label: 'Pending', value: 'pending' },
-              { label: 'Approved', value: 'approved' },
-              { label: 'Completed', value: 'completed' },
-            ],
-          },
         ]}
         columns={[
           { label: 'Order', render: (row) => row.orderId },
           { label: 'Type', render: (row) => row.type },
           { label: 'Amount', render: (row) => formatMoney(row.amount) },
-          { label: 'Status', render: (row) => row.status },
+          { label: 'Status', render: (row) => <Chip size="small" label={`${row.status} ${formatApprovalProgress(row.approvals, row.requiredApprovals ?? 2)}`} color={row.status === 'completed' ? 'success' : row.status === 'rejected' ? 'error' : 'warning'} /> },
+        ]}
+        rowActions={[
+          {
+            label: 'Approve',
+            disabled: (row) => row.status !== 'pending',
+            onClick: async (row) => {
+              await api.post(`/refunds/${row._id}/approve`)
+            },
+          },
+          {
+            label: 'Complete',
+            disabled: (row) => row.status !== 'approved',
+            onClick: async (row) => {
+              await api.post(`/refunds/${row._id}/complete`)
+            },
+          },
+          {
+            label: 'Reject',
+            color: 'error',
+            disabled: (row) => row.status !== 'pending',
+            onClick: async (row) => {
+              const reason = window.prompt('Rejection reason')
+              if (!reason) return
+              await api.post(`/refunds/${row._id}/reject`, { reason })
+            },
+          },
         ]}
       />
 
@@ -1015,6 +1396,31 @@ export function ClinicalOperationsPage() {
           { label: 'TAT', render: (row) => `${row.tatMinutes} min` },
         ]}
       />
+
+      <Dialog open={Boolean(ocrVerifyJob)} onClose={() => setOcrVerifyJob(null)} maxWidth="md" fullWidth>
+        <DialogTitle>Human verification for OCR intake</DialogTitle>
+        <DialogContent>
+          <Stack spacing={2} sx={{ mt: 1 }}>
+            <Alert severity="info">
+              Confirm and correct the parsed JSON before saving. The order conversion endpoint will not run until this verification is completed.
+            </Alert>
+            <TextField
+              label="Verified parsed payload"
+              multiline
+              minRows={12}
+              value={ocrVerifyText}
+              onChange={(event) => setOcrVerifyText(event.target.value)}
+            />
+            {ocrVerifyJob ? (
+              <TextField label="Raw OCR text" multiline minRows={6} value={ocrVerifyJob.rawText} InputProps={{ readOnly: true }} />
+            ) : null}
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setOcrVerifyJob(null)}>Cancel</Button>
+          <Button variant="contained" onClick={verifyOcrJob}>Save human verification</Button>
+        </DialogActions>
+      </Dialog>
     </Stack>
   )
 }

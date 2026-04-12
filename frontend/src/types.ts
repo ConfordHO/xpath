@@ -78,6 +78,10 @@ export interface SafeUser {
   preferredLocale: 'en' | 'fr'
   siteId?: string | null
   active: boolean
+  mfaEnabled?: boolean
+  mfaVerifiedAt?: string | null
+  failedLoginCount?: number
+  lockedUntil?: string | null
   createdAt: string
   updatedAt: string
 }
@@ -368,10 +372,21 @@ export interface HydratedOrder {
   courierReceivedAt?: string | null
   completedAt?: string | null
   releasedAt?: string | null
+  lockStatus?: 'unlocked' | 'locked'
+  lockedAt?: string | null
+  lockedBy?: string | null
+  lockReason?: string | null
   reportSummary?: string | null
   pathologistDiagnosis?: string | null
   createdAt: string
   updatedAt: string
+}
+
+export interface ApprovalRecord {
+  userId: string
+  userName: string
+  role: UserRole
+  approvedAt: string
 }
 
 export interface Sample {
@@ -400,7 +415,65 @@ export interface OrderAmendment {
   reason: string
   details: string
   createdBy: string
+  status?: 'pending' | 'approved' | 'rejected' | 'applied'
+  policyLevel?: 'standard' | 'controlled' | 'legal'
+  requiredApprovals?: number
+  approvals?: ApprovalRecord[]
+  rejectedBy?: string | null
+  rejectedAt?: string | null
+  rejectionReason?: string | null
+  appliedBy?: string | null
+  appliedAt?: string | null
+  beforeSnapshot?: string | null
+  afterSnapshot?: string | null
   createdAt: string
+  updatedAt?: string
+}
+
+export interface OcrIntakeJob {
+  _id: string
+  source: 'upload' | 'manual_text'
+  originalFilename?: string | null
+  mimeType?: string | null
+  rawText: string
+  parsedPayload: string | {
+    patient: Patient
+    clinicalHistory: string
+    testTypeIds: string[]
+    matchedTestCodes: string[]
+  }
+  confidence: number
+  fieldConfidences: string | Record<string, number>
+  status: 'needs_verification' | 'verified' | 'rejected' | 'converted_to_order'
+  requiredHumanVerification: boolean
+  verificationNotes?: string | null
+  verifiedBy?: string | null
+  verifiedAt?: string | null
+  convertedOrderId?: string | null
+  createdBy: string
+  siteId?: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export interface OrderCorrection {
+  _id: string
+  orderId: string
+  reason: string
+  changes: string
+  status: 'pending' | 'approved' | 'rejected' | 'applied'
+  requiredApprovals: number
+  approvals: ApprovalRecord[]
+  requestedBy: string
+  rejectedBy?: string | null
+  rejectedAt?: string | null
+  rejectionReason?: string | null
+  appliedBy?: string | null
+  appliedAt?: string | null
+  beforeSnapshot: string
+  afterSnapshot?: string | null
+  createdAt: string
+  updatedAt: string
 }
 
 export interface InsuranceAuthorization {
@@ -437,7 +510,18 @@ export interface RefundAdjustment {
   type: 'refund' | 'adjustment'
   amount: number
   reason: string
-  status: 'pending' | 'approved' | 'completed'
+  status: 'pending' | 'approved' | 'completed' | 'rejected'
+  createdBy?: string | null
+  requiredApprovals?: number
+  approvals?: ApprovalRecord[]
+  approvedBy?: string | null
+  approvedAt?: string | null
+  rejectedBy?: string | null
+  rejectedAt?: string | null
+  rejectionReason?: string | null
+  completedBy?: string | null
+  completedAt?: string | null
+  reversalJournalEntryId?: string | null
   createdAt: string
   updatedAt: string
 }
@@ -1030,4 +1114,97 @@ export interface FinanceSummary {
     'cash' | 'card' | 'mobile_money' | 'bank_transfer' | 'mtn_mobile_money' | 'orange_money' | 'transfer' | 'other',
     number
   >
+}
+
+export interface FinanceMonthlyDashboard {
+  currency: 'USD' | 'EUR' | 'XAF'
+  rows: Array<{
+    month: string
+    grossRevenue: number
+    refunds: number
+    netRevenue: number
+    invoiceTotal: number
+    paymentCount: number
+    invoiceCount: number
+    display: string
+  }>
+  totals: {
+    grossRevenue: number
+    refunds: number
+    netRevenue: number
+  }
+}
+
+export interface AccountingJournalEntry {
+  _id: string
+  entryNumber: string
+  orderId?: string | null
+  invoiceId?: string | null
+  paymentId?: string | null
+  refundId?: string | null
+  entryType: 'invoice' | 'payment' | 'refund' | 'adjustment' | 'export'
+  debitAccount: string
+  creditAccount: string
+  amount: number
+  currency: 'USD' | 'EUR' | 'XAF'
+  memo: string
+  status: 'draft' | 'posted' | 'void'
+  postedAt?: string | null
+  voidedBy?: string | null
+  voidedAt?: string | null
+  voidReason?: string | null
+  reversalOfEntryId?: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export interface AccountingAccount {
+  _id: string
+  code: string
+  name: string
+  type: 'asset' | 'liability' | 'equity' | 'revenue' | 'expense'
+  normalBalance: 'debit' | 'credit'
+  active: boolean
+  createdAt: string
+  updatedAt: string
+}
+
+export interface ValidationRule {
+  _id: string
+  name: string
+  scope: 'order' | 'specimen' | 'result' | 'report' | 'finance'
+  severity: 'info' | 'warning' | 'blocking'
+  active: boolean
+  requiredFields: string[]
+  message: string
+  createdAt: string
+  updatedAt: string
+}
+
+export interface InternalChatMessage {
+  _id: string
+  threadId: string
+  senderId: string
+  senderName: string
+  senderRole: UserRole
+  body: string
+  readBy: Array<{
+    userId: string
+    readAt: string
+  }>
+  createdAt: string
+  updatedAt: string
+}
+
+export interface InternalChatThread {
+  _id: string
+  title: string
+  department: string
+  participantUserIds: string[]
+  createdBy: string
+  lastMessageAt?: string | null
+  createdAt: string
+  updatedAt: string
+  lastMessage?: InternalChatMessage | null
+  unreadCount?: number
 }

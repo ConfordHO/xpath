@@ -2,7 +2,9 @@ import { Navigate, Route, Routes } from 'react-router-dom'
 
 import {
   AnalyticalOperationsPage,
+  AccountingPage,
   ClinicalOperationsPage,
+  CommunicationsPage,
   CreateOrderPage,
   CourierPage,
   CytologyCasesPage,
@@ -29,6 +31,7 @@ import {
   PatientOrderDetailPage,
   PatientPortalPage,
   ProjectReviewPage,
+  ProductionHardeningPage,
   ReceptionistWorkflowPage,
   ReportsPage,
   ResultsQualityPage,
@@ -73,6 +76,7 @@ export function AppRoutes() {
 
         <Route element={<RoleGuard roles={['super_admin', 'admin', 'finance']} />}>
           <Route path="/financial" element={<FinancePage />} />
+          <Route path="/accounting" element={<AccountingPage />} />
         </Route>
 
         <Route element={<RoleGuard roles={['super_admin', 'admin', 'receptionist', 'courier']} />}>
@@ -101,6 +105,7 @@ export function AppRoutes() {
 
         <Route element={<RoleGuard roles={['super_admin', 'admin', 'receptionist', 'technician', 'pathologist', 'finance', 'courier']} />}>
           <Route path="/notifications" element={<NotificationsPage />} />
+          <Route path="/communications" element={<CommunicationsPage />} />
         </Route>
 
         <Route element={<RoleGuard roles={['super_admin', 'admin']} />}>
@@ -110,6 +115,7 @@ export function AppRoutes() {
           <Route path="/operations/governance" element={<GovernanceOperationsPage />} />
           <Route path="/operations/enterprise-admin" element={<EnterpriseAdminPage />} />
           <Route path="/operations/module-audit" element={<ModuleAuditPage />} />
+          <Route path="/operations/production-hardening" element={<ProductionHardeningPage />} />
           <Route path="/admin/users" element={<UsersPage />} />
           <Route path="/admin/doctors" element={<DoctorsPage />} />
           <Route path="/admin/test-types" element={<TestTypesPage />} />

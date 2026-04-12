@@ -37,7 +37,7 @@ services:
       - key: JWT_SECRET
         sync: false
       - key: CORS_ORIGIN
-        value: https://xpath-two.vercel.app,https://x-path.vercel.app,http://localhost:5173
+        value: https://x-path.vercel.app,http://localhost:5173,http://localhost:3000
       - key: DMS_STORAGE_PROVIDER
         sync: false
       - key: DMS_LOCAL_STORAGE_PATH

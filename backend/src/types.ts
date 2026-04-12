@@ -115,6 +115,11 @@ export interface User {
   siteId?: string | null;
   active: boolean;
   passwordHash: string;
+  mfaEnabled?: boolean;
+  mfaSecret?: string | null;
+  mfaVerifiedAt?: string | null;
+  failedLoginCount?: number;
+  lockedUntil?: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -463,8 +468,19 @@ export interface Order {
   courierReceivedAt?: string | null;
   completedAt?: string | null;
   releasedAt?: string | null;
+  lockStatus?: "unlocked" | "locked";
+  lockedAt?: string | null;
+  lockedBy?: string | null;
+  lockReason?: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface ApprovalRecord {
+  userId: string;
+  userName: string;
+  role: UserRole;
+  approvedAt: string;
 }
 
 export interface OrderAmendment {
@@ -474,7 +490,74 @@ export interface OrderAmendment {
   reason: string;
   details: string;
   createdBy: string;
+  status?: "pending" | "approved" | "rejected" | "applied";
+  policyLevel?: "standard" | "controlled" | "legal";
+  requiredApprovals?: number;
+  approvals?: ApprovalRecord[];
+  rejectedBy?: string | null;
+  rejectedAt?: string | null;
+  rejectionReason?: string | null;
+  appliedBy?: string | null;
+  appliedAt?: string | null;
+  beforeSnapshot?: string | null;
+  afterSnapshot?: string | null;
   createdAt: string;
+  updatedAt?: string;
+}
+
+export interface OcrIntakeJob {
+  _id: string;
+  source: "upload" | "manual_text";
+  originalFilename?: string | null;
+  mimeType?: string | null;
+  rawText: string;
+  parsedPayload: string;
+  confidence: number;
+  fieldConfidences: string;
+  status: "needs_verification" | "verified" | "rejected" | "converted_to_order";
+  requiredHumanVerification: boolean;
+  verificationNotes?: string | null;
+  verifiedBy?: string | null;
+  verifiedAt?: string | null;
+  convertedOrderId?: string | null;
+  createdBy: string;
+  siteId?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface OrderCorrection {
+  _id: string;
+  orderId: string;
+  reason: string;
+  changes: string;
+  status: "pending" | "approved" | "rejected" | "applied";
+  requiredApprovals: number;
+  approvals: ApprovalRecord[];
+  requestedBy: string;
+  rejectedBy?: string | null;
+  rejectedAt?: string | null;
+  rejectionReason?: string | null;
+  appliedBy?: string | null;
+  appliedAt?: string | null;
+  beforeSnapshot: string;
+  afterSnapshot?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface OrderLockRecord {
+  _id: string;
+  orderId: string;
+  status: "active" | "released";
+  reason: string;
+  lockedBy: string;
+  lockedAt: string;
+  releasedBy?: string | null;
+  releasedAt?: string | null;
+  releaseReason?: string | null;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface InsuranceAuthorization {
@@ -517,7 +600,67 @@ export interface RefundAdjustment {
   type: "refund" | "adjustment";
   amount: number;
   reason: string;
-  status: "pending" | "approved" | "completed";
+  status: "pending" | "approved" | "completed" | "rejected";
+  createdBy?: string | null;
+  requiredApprovals?: number;
+  approvals?: ApprovalRecord[];
+  approvedBy?: string | null;
+  approvedAt?: string | null;
+  rejectedBy?: string | null;
+  rejectedAt?: string | null;
+  rejectionReason?: string | null;
+  completedBy?: string | null;
+  completedAt?: string | null;
+  reversalJournalEntryId?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AccountingAccount {
+  _id: string;
+  code: string;
+  name: string;
+  type: "asset" | "liability" | "equity" | "revenue" | "expense";
+  normalBalance: "debit" | "credit";
+  active: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AccountingJournalEntry {
+  _id: string;
+  entryNumber: string;
+  orderId?: string | null;
+  invoiceId?: string | null;
+  paymentId?: string | null;
+  refundId?: string | null;
+  entryType: "invoice" | "payment" | "refund" | "adjustment" | "export";
+  debitAccount: string;
+  creditAccount: string;
+  amount: number;
+  currency: Settings["currency"];
+  memo: string;
+  status: "draft" | "posted" | "void";
+  postedAt?: string | null;
+  voidedBy?: string | null;
+  voidedAt?: string | null;
+  voidReason?: string | null;
+  reversalOfEntryId?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AccountingExportBatch {
+  _id: string;
+  provider: "generic" | "quickbooks" | "sage" | "odoo" | "custom";
+  status: "queued" | "sent" | "failed";
+  entryIds: string[];
+  endpoint?: string | null;
+  requestPayload: string;
+  responsePayload?: string | null;
+  errorMessage?: string | null;
+  exportedBy: string;
+  exportedAt?: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -534,6 +677,19 @@ export interface BarcodeRecord {
   printedAt?: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface BarcodeScanEvent {
+  _id: string;
+  barcodeId?: string | null;
+  code: string;
+  entityType?: BarcodeRecord["entityType"] | null;
+  entityId?: string | null;
+  workflowStep: string;
+  outcome: "accepted" | "rejected";
+  reason?: string | null;
+  scannedBy: string;
+  createdAt: string;
 }
 
 export interface LabelTemplateRecord {
@@ -555,10 +711,15 @@ export interface ChainOfCustodyEvent {
     | "received"
     | "aliquoted"
     | "transferred"
+    | "handoff"
     | "rejected";
   location: string;
   condition: string;
   actor: string;
+  handedOffTo?: string | null;
+  gpsLat?: number | null;
+  gpsLng?: number | null;
+  temperatureCelsius?: number | null;
   notes?: string;
   createdAt: string;
 }
@@ -994,6 +1155,17 @@ export interface DocumentRecord {
   storageProvider?: "local" | "s3" | null;
   storagePath?: string | null;
   uploadedBy?: string | null;
+  approvalStatus?: "draft" | "pending_review" | "approved" | "retired";
+  approvedBy?: string | null;
+  approvedAt?: string | null;
+  approvalNotes?: string | null;
+  trainingAttestations?: Array<{
+    _id: string;
+    userId: string;
+    userName: string;
+    attestedAt: string;
+    version: string;
+  }>;
   versions?: Array<{
     _id: string;
     version: string;
@@ -1066,6 +1238,56 @@ export interface CredentialAuditRecord {
   action: "login" | "password_change" | "mfa_update" | "session_revoked";
   outcome: "success" | "failure";
   createdAt: string;
+}
+
+export interface ValidationRule {
+  _id: string;
+  name: string;
+  scope: "order" | "specimen" | "result" | "report" | "finance";
+  severity: "info" | "warning" | "blocking";
+  active: boolean;
+  requiredFields: string[];
+  message: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface InternalChatThread {
+  _id: string;
+  title: string;
+  department: string;
+  participantUserIds: string[];
+  createdBy: string;
+  lastMessageAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface InternalChatMessage {
+  _id: string;
+  threadId: string;
+  senderId: string;
+  senderName: string;
+  senderRole: UserRole;
+  body: string;
+  readBy: Array<{
+    userId: string;
+    readAt: string;
+  }>;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface OfflineSyncEvent {
+  _id: string;
+  clientId: string;
+  syncType: "snapshot" | "mutation_batch" | "conflict" | "restore";
+  status: "received" | "applied" | "partial" | "failed";
+  payload: string;
+  appliedCount: number;
+  errorMessage?: string | null;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface ExternalIntegration {
@@ -1183,14 +1405,21 @@ export interface Database {
   orderNumberReservations: OrderNumberReservation[];
   orders: Order[];
   orderAmendments: OrderAmendment[];
+  ocrIntakeJobs: OcrIntakeJob[];
+  orderCorrections: OrderCorrection[];
+  orderLocks: OrderLockRecord[];
   payments: Payment[];
   mavianceTransactions: MavianceTransaction[];
   insuranceAuthorizations: InsuranceAuthorization[];
   invoices: Invoice[];
   refunds: RefundAdjustment[];
+  accountingAccounts: AccountingAccount[];
+  accountingJournalEntries: AccountingJournalEntry[];
+  accountingExportBatches: AccountingExportBatch[];
   accessions: Accession[];
   samples: Sample[];
   barcodes: BarcodeRecord[];
+  barcodeScanEvents: BarcodeScanEvent[];
   labelTemplates: LabelTemplateRecord[];
   chainOfCustody: ChainOfCustodyEvent[];
   preAnalyticsLogs: PreAnalyticsLog[];
@@ -1221,6 +1450,10 @@ export interface Database {
   projectReviewComments: ProjectReviewComment[];
   sessionRecords: SessionRecord[];
   credentialAudits: CredentialAuditRecord[];
+  validationRules: ValidationRule[];
+  internalChatThreads: InternalChatThread[];
+  internalChatMessages: InternalChatMessage[];
+  offlineSyncEvents: OfflineSyncEvent[];
   integrations: ExternalIntegration[];
   pricingRules: PricingRule[];
   referenceRanges: ReferenceRange[];

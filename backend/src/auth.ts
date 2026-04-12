@@ -45,7 +45,7 @@ export function hasAnyRole(user: Pick<User, "role"> | undefined, roles: UserRole
 }
 
 export function sanitizeUser(user: User) {
-  const { passwordHash, ...safeUser } = user;
+  const { passwordHash, mfaSecret, ...safeUser } = user;
   return safeUser;
 }
 
@@ -55,7 +55,12 @@ export async function requireAuth(
   next: NextFunction,
 ) {
   const header = req.header("Authorization");
-  const token = header?.replace(/^Bearer\s+/i, "");
+  const queryToken =
+    typeof req.query.access_token === "string" &&
+    req.path.endsWith("/communications/stream")
+      ? req.query.access_token
+      : "";
+  const token = header?.replace(/^Bearer\s+/i, "") || queryToken;
 
   if (!token) {
     return res.status(401).json({ message: "Authentication required" });

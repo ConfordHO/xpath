@@ -160,6 +160,37 @@ export const S3_REGION = process.env.S3_REGION?.trim() || "";
 export const S3_ENDPOINT = process.env.S3_ENDPOINT?.trim() || "";
 export const S3_ACCESS_KEY_ID = process.env.S3_ACCESS_KEY_ID?.trim() || "";
 export const S3_SECRET_ACCESS_KEY = process.env.S3_SECRET_ACCESS_KEY?.trim() || "";
+export const ACCOUNTING_PROVIDER =
+  process.env.ACCOUNTING_PROVIDER?.trim().toLowerCase() || "generic";
+export const ACCOUNTING_API_BASE_URL = process.env.ACCOUNTING_API_BASE_URL?.trim() || "";
+export const ACCOUNTING_API_KEY = process.env.ACCOUNTING_API_KEY?.trim() || "";
+export const MFA_TOTP_ISSUER = process.env.MFA_TOTP_ISSUER?.trim() || "X.PATH LIMS";
+export const MFA_ENFORCED =
+  process.env.MFA_ENFORCED?.trim().toLowerCase() === "true";
+export const MFA_ENFORCED_ROLES = (process.env.MFA_ENFORCED_ROLES ??
+  "super_admin,admin")
+  .split(",")
+  .map((value) => value.trim())
+  .filter(Boolean);
+export const AI_PROVIDER =
+  process.env.AI_PROVIDER?.trim().toLowerCase() || "local";
+export const AI_API_BASE_URL = process.env.AI_API_BASE_URL?.trim() || "";
+export const AI_API_KEY = process.env.AI_API_KEY?.trim() || "";
+export const GPS_PROVIDER =
+  process.env.GPS_PROVIDER?.trim().toLowerCase() || "browser_geolocation";
+export const SMS_PROVIDER = process.env.SMS_PROVIDER?.trim().toLowerCase() || "generic";
+export const SMS_API_BASE_URL = process.env.SMS_API_BASE_URL?.trim() || "";
+export const SMS_API_KEY = process.env.SMS_API_KEY?.trim() || "";
+export const WHATSAPP_PROVIDER =
+  process.env.WHATSAPP_PROVIDER?.trim().toLowerCase() || "meta_cloud";
+export const WHATSAPP_API_BASE_URL =
+  process.env.WHATSAPP_API_BASE_URL?.trim() ||
+  "https://graph.facebook.com/v21.0";
+export const WHATSAPP_ACCESS_TOKEN = process.env.WHATSAPP_ACCESS_TOKEN?.trim() || "";
+export const WHATSAPP_PHONE_NUMBER_ID =
+  process.env.WHATSAPP_PHONE_NUMBER_ID?.trim() || "";
+export const OFFLINE_SYNC_ENABLED =
+  process.env.OFFLINE_SYNC_ENABLED?.trim().toLowerCase() !== "false";
 
 export function isAllowedOrigin(origin?: string | null) {
   if (!origin || CORS_ORIGINS.length === 0 || CORS_ORIGINS.includes("*")) {

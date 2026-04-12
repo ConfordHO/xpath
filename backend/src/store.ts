@@ -15,7 +15,12 @@ import {
   POSTGRES_STATE_ID,
   POSTGRES_STATE_TABLE,
 } from "./config.js";
-import { mergeAuditTrail, normalizeAuditTrail, verifyAuditTrail } from "./server/audit.js";
+import {
+  appendAuditEvent,
+  mergeAuditTrail,
+  normalizeAuditTrail,
+  verifyAuditTrail,
+} from "./server/audit.js";
 import { normalizeCourierStatus } from "./server/helpers.js";
 import { deriveTatAlerts } from "./server/tat.js";
 import { createSeedDatabase } from "./seed.js";
@@ -274,6 +279,11 @@ function normalizeDatabase(raw: Partial<Database>): Database {
           localeFromLanguage(user.preferredLanguage) ??
           defaultLocale,
       ),
+    mfaEnabled: user.mfaEnabled ?? false,
+    mfaSecret: user.mfaSecret ?? null,
+    mfaVerifiedAt: user.mfaVerifiedAt ?? null,
+    failedLoginCount: user.failedLoginCount ?? 0,
+    lockedUntil: user.lockedUntil ?? null,
     siteId:
       canonicalSiteByEmail[user.email.toLowerCase()] !== undefined
         ? canonicalSiteByEmail[user.email.toLowerCase()]
@@ -374,6 +384,11 @@ function normalizeDatabase(raw: Partial<Database>): Database {
     storageProvider: document.storageProvider ?? null,
     storagePath: document.storagePath ?? null,
     uploadedBy: document.uploadedBy ?? null,
+    approvalStatus: document.approvalStatus ?? "draft",
+    approvedBy: document.approvedBy ?? null,
+    approvedAt: document.approvedAt ?? null,
+    approvalNotes: document.approvalNotes ?? null,
+    trainingAttestations: document.trainingAttestations ?? [],
     versions: document.versions ?? [],
   }));
   const rawAuditEvents = raw.auditEvents ?? seed.auditEvents;
@@ -411,6 +426,10 @@ function normalizeDatabase(raw: Partial<Database>): Database {
       validationStatus: order.validationStatus ?? "pending",
       intakeSource: order.intakeSource ?? "manual",
       financialClearance: order.financialClearance ?? "pending",
+      lockStatus: order.lockStatus ?? (order.lockedAt ? "locked" : "unlocked"),
+      lockedAt: order.lockedAt ?? null,
+      lockedBy: order.lockedBy ?? null,
+      lockReason: order.lockReason ?? null,
       courierStatus: normalizeCourierStatus(order.courierStatus),
       completedAt:
         order.completedAt ??
@@ -419,7 +438,24 @@ function normalizeDatabase(raw: Partial<Database>): Database {
       siteId:
         order.siteId ?? userSiteById.get(order.createdBy) ?? normalizeSiteId(order.siteId),
     })),
-    orderAmendments: raw.orderAmendments ?? seed.orderAmendments,
+    orderAmendments: (raw.orderAmendments ?? seed.orderAmendments).map((amendment) => ({
+      ...amendment,
+      status: amendment.status ?? "applied",
+      policyLevel: amendment.policyLevel ?? "standard",
+      requiredApprovals: amendment.requiredApprovals ?? 1,
+      approvals: amendment.approvals ?? [],
+      rejectedBy: amendment.rejectedBy ?? null,
+      rejectedAt: amendment.rejectedAt ?? null,
+      rejectionReason: amendment.rejectionReason ?? null,
+      appliedBy: amendment.appliedBy ?? null,
+      appliedAt: amendment.appliedAt ?? null,
+      beforeSnapshot: amendment.beforeSnapshot ?? null,
+      afterSnapshot: amendment.afterSnapshot ?? null,
+      updatedAt: amendment.updatedAt ?? amendment.createdAt,
+    })),
+    ocrIntakeJobs: raw.ocrIntakeJobs ?? seed.ocrIntakeJobs,
+    orderCorrections: raw.orderCorrections ?? seed.orderCorrections,
+    orderLocks: raw.orderLocks ?? seed.orderLocks,
     payments: (raw.payments ?? seed.payments).map((payment) => ({
       provider: "manual",
       providerChannel: null,
@@ -435,10 +471,27 @@ function normalizeDatabase(raw: Partial<Database>): Database {
     insuranceAuthorizations:
       raw.insuranceAuthorizations ?? seed.insuranceAuthorizations,
     invoices: raw.invoices ?? seed.invoices,
-    refunds: raw.refunds ?? seed.refunds,
+    refunds: (raw.refunds ?? seed.refunds).map((refund) => ({
+      ...refund,
+      createdBy: refund.createdBy ?? null,
+      requiredApprovals: refund.requiredApprovals ?? 2,
+      approvals: refund.approvals ?? [],
+      approvedBy: refund.approvedBy ?? null,
+      approvedAt: refund.approvedAt ?? null,
+      rejectedBy: refund.rejectedBy ?? null,
+      rejectedAt: refund.rejectedAt ?? null,
+      rejectionReason: refund.rejectionReason ?? null,
+      completedBy: refund.completedBy ?? null,
+      completedAt: refund.completedAt ?? null,
+      reversalJournalEntryId: refund.reversalJournalEntryId ?? null,
+    })),
+    accountingAccounts: raw.accountingAccounts ?? seed.accountingAccounts,
+    accountingJournalEntries: raw.accountingJournalEntries ?? seed.accountingJournalEntries,
+    accountingExportBatches: raw.accountingExportBatches ?? seed.accountingExportBatches,
     accessions: raw.accessions ?? seed.accessions,
     samples: raw.samples ?? seed.samples,
     barcodes: raw.barcodes ?? seed.barcodes,
+    barcodeScanEvents: raw.barcodeScanEvents ?? seed.barcodeScanEvents,
     labelTemplates: raw.labelTemplates ?? seed.labelTemplates,
     chainOfCustody: raw.chainOfCustody ?? seed.chainOfCustody,
     preAnalyticsLogs: raw.preAnalyticsLogs ?? seed.preAnalyticsLogs,
@@ -475,6 +528,10 @@ function normalizeDatabase(raw: Partial<Database>): Database {
     projectReviewComments: raw.projectReviewComments ?? seed.projectReviewComments,
     sessionRecords: raw.sessionRecords ?? seed.sessionRecords,
     credentialAudits: raw.credentialAudits ?? seed.credentialAudits,
+    validationRules: raw.validationRules ?? seed.validationRules,
+    internalChatThreads: raw.internalChatThreads ?? seed.internalChatThreads,
+    internalChatMessages: raw.internalChatMessages ?? seed.internalChatMessages,
+    offlineSyncEvents: raw.offlineSyncEvents ?? seed.offlineSyncEvents,
     integrations,
     pricingRules: raw.pricingRules ?? seed.pricingRules,
     referenceRanges: raw.referenceRanges ?? seed.referenceRanges,
@@ -794,12 +851,133 @@ export async function closeStoreConnections() {
   await activePool?.end().catch(() => undefined);
 }
 
+function stableJson(value: unknown) {
+  return JSON.stringify(value);
+}
+
+function hasStringId(entry: unknown): entry is Record<string, unknown> & { _id: string } {
+  return Boolean(
+    entry &&
+      typeof entry === "object" &&
+      "_id" in entry &&
+      typeof (entry as { _id?: unknown })._id === "string",
+  );
+}
+
+function summarizeMutation(before: Database, after: Database) {
+  const changes: Array<{
+    collection: string;
+    added: number;
+    updated: number;
+    removed: number;
+    samples: Array<Record<string, unknown>>;
+  }> = [];
+
+  for (const key of Object.keys(after) as Array<keyof Database>) {
+    if (key === "auditEvents") {
+      continue;
+    }
+    const beforeValue = before[key];
+    const afterValue = after[key];
+    if (stableJson(beforeValue) === stableJson(afterValue)) {
+      continue;
+    }
+
+    if (Array.isArray(beforeValue) && Array.isArray(afterValue)) {
+      const beforeById = new Map(
+        (beforeValue as unknown[]).filter(hasStringId).map((entry) => [entry._id, entry]),
+      );
+      const afterById = new Map(
+        (afterValue as unknown[]).filter(hasStringId).map((entry) => [entry._id, entry]),
+      );
+      const samples: Array<Record<string, unknown>> = [];
+      let added = 0;
+      let updated = 0;
+      let removed = 0;
+
+      for (const [id, entry] of afterById) {
+        const prior = beforeById.get(id);
+        if (!prior) {
+          added += 1;
+          if (samples.length < 12) {
+            samples.push({ id, operation: "added", after: entry });
+          }
+          continue;
+        }
+        if (stableJson(prior) !== stableJson(entry)) {
+          updated += 1;
+          if (samples.length < 12) {
+            samples.push({ id, operation: "updated", before: prior, after: entry });
+          }
+        }
+      }
+
+      for (const [id, entry] of beforeById) {
+        if (!afterById.has(id)) {
+          removed += 1;
+          if (samples.length < 12) {
+            samples.push({ id, operation: "removed", before: entry });
+          }
+        }
+      }
+
+      changes.push({
+        collection: String(key),
+        added,
+        updated,
+        removed,
+        samples,
+      });
+      continue;
+    }
+
+    changes.push({
+      collection: String(key),
+      added: 0,
+      updated: 1,
+      removed: 0,
+      samples: [{ operation: "updated", before: beforeValue, after: afterValue }],
+    });
+  }
+
+  return changes;
+}
+
+function appendAutomaticMutationAudit(before: Database, after: Database) {
+  const changes = summarizeMutation(before, after);
+  if (changes.length === 0) {
+    return;
+  }
+
+  appendAuditEvent(after, {
+    module: "Audit Trail & Compliance",
+    action: "auto_mutation_diff",
+    targetId: "database-state",
+    actor: "system-auto-audit",
+    actorUserId: null,
+    actorRole: null,
+    siteId: null,
+    summary: `Automatic immutable before/after diff captured for ${changes.length} changed collection(s)`,
+    metadata: {
+      changedCollections: changes.map((change) => ({
+        collection: change.collection,
+        added: change.added,
+        updated: change.updated,
+        removed: change.removed,
+      })),
+      changes,
+    },
+  });
+}
+
 export async function updateDb<T>(updater: (db: Database) => T | Promise<T>) {
   let result!: T;
 
   const run = updateQueue.then(async () => {
     const db = await loadDb();
+    const before = cloneDb(db);
     result = await updater(db);
+    appendAutomaticMutationAudit(before, db);
     await saveDb(db);
   });
 

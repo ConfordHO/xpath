@@ -18,6 +18,9 @@ import {
   DATABASE_SSL_MODE,
   DATABASE_URL,
   HEALTH_DIAGNOSTICS_TOKEN,
+  MFA_ENFORCED,
+  MFA_ENFORCED_ROLES,
+  MFA_TOTP_ISSUER,
   MAVIANCE_ACCESS_SECRET,
   MAVIANCE_ACCESS_TOKEN,
   MAVIANCE_ENABLED,
@@ -97,7 +100,10 @@ import {
   isMavianceMethod,
   registerMaviancePaymentRoutes,
 } from "./server/maviancePayments.js";
+import { createTotpSecret, createTotpUri, verifyTotpToken } from "./server/mfa.js";
 import { applySecurity, authLimiter } from "./server/security.js";
+import { registerProductionRoutes } from "./server/productionRoutes.js";
+import { orderIsLockedForDirectEdit, registerOrderGovernanceRoutes } from "./server/orderGovernanceRoutes.js";
 import { loadDb, updateDb } from "./store.js";
 import type {
   Accession,
@@ -471,9 +477,30 @@ app.post("/api/auth/login", authLimiter, async (req, res) => {
     return res.status(401).json({ message: "Invalid email or password" });
   }
 
+  if (user.lockedUntil && new Date(user.lockedUntil).getTime() > Date.now()) {
+    await updateDb((mutableDb) => {
+      mutableDb.credentialAudits.unshift({
+        _id: createId(),
+        userId: user._id,
+        action: "login",
+        outcome: "failure",
+        createdAt: now(),
+      });
+    });
+    return res.status(423).json({ message: "Account is temporarily locked. Try again later." });
+  }
+
   const valid = await verifyPassword(parsed.data.password, user.passwordHash);
   if (!valid) {
     await updateDb((mutableDb) => {
+      const mutableUser = mutableDb.users.find((entry) => entry._id === user._id);
+      if (mutableUser) {
+        mutableUser.failedLoginCount = (mutableUser.failedLoginCount ?? 0) + 1;
+        if (mutableUser.failedLoginCount >= 5) {
+          mutableUser.lockedUntil = new Date(Date.now() + 15 * 60_000).toISOString();
+        }
+        mutableUser.updatedAt = now();
+      }
       mutableDb.credentialAudits.unshift({
         _id: createId(),
         userId: user._id,
@@ -485,9 +512,41 @@ app.post("/api/auth/login", authLimiter, async (req, res) => {
     return res.status(401).json({ message: "Invalid email or password" });
   }
 
+  const mfaRequiredForRole = MFA_ENFORCED && MFA_ENFORCED_ROLES.includes(user.role);
+  if ((user.mfaEnabled || mfaRequiredForRole) && !verifyTotpToken(user.mfaSecret, parsed.data.mfaToken)) {
+    await updateDb((mutableDb) => {
+      mutableDb.credentialAudits.unshift({
+        _id: createId(),
+        userId: user._id,
+        action: "mfa_update",
+        outcome: "failure",
+        createdAt: now(),
+      });
+      appendRequestAudit(mutableDb, req, {
+        module: "Security",
+        action: "mfa_challenge",
+        targetId: user._id,
+        summary: `${user.email} must complete MFA before sign-in`,
+      });
+    });
+    return res.status(401).json({
+      message: user.mfaEnabled
+        ? "MFA code is required"
+        : "MFA is required for this role. Ask an administrator to enroll this user.",
+      mfaRequired: true,
+      mfaConfigured: Boolean(user.mfaEnabled),
+    });
+  }
+
   const sessionId = createId();
   const sessionCreatedAt = now();
   await updateDb((db) => {
+    const mutableUser = db.users.find((entry) => entry._id === user._id);
+    if (mutableUser) {
+      mutableUser.failedLoginCount = 0;
+      mutableUser.lockedUntil = null;
+      mutableUser.updatedAt = sessionCreatedAt;
+    }
     db.sessionRecords.unshift({
       _id: sessionId,
       userId: user._id,
@@ -1258,6 +1317,126 @@ app.put("/api/users/me/password", async (req: AuthRequest, res) => {
   res.json({ message: "Password updated" });
 });
 
+app.post("/api/security/mfa/setup", async (req: AuthRequest, res) => {
+  const actor = ensureUser(req);
+  const secret = createTotpSecret();
+  const updated = await updateDb((db) => {
+    const user = db.users.find((entry) => entry._id === actor._id);
+    if (!user) {
+      throw new Error("User not found");
+    }
+    user.mfaEnabled = false;
+    user.mfaSecret = secret;
+    user.mfaVerifiedAt = null;
+    user.updatedAt = now();
+    db.credentialAudits.unshift({
+      _id: createId(),
+      userId: user._id,
+      action: "mfa_update",
+      outcome: "success",
+      createdAt: now(),
+    });
+    appendRequestAudit(db, req, {
+      module: "Security",
+      action: "mfa_setup",
+      targetId: user._id,
+      summary: `${user.email} started MFA enrollment`,
+    });
+    return user;
+  });
+  res.json({
+    secret,
+    otpauthUrl: createTotpUri({
+      issuer: MFA_TOTP_ISSUER,
+      accountName: updated.email,
+      secret,
+    }),
+    user: sanitizeUser(updated),
+  });
+});
+
+app.post("/api/security/mfa/verify", async (req: AuthRequest, res) => {
+  const actor = ensureUser(req);
+  const parsed = z.object({ token: z.string().trim().min(6).max(10) }).safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ message: "Invalid MFA token" });
+  }
+
+  const updated = await updateDb((db) => {
+    const user = db.users.find((entry) => entry._id === actor._id);
+    if (!user) {
+      throw new Error("User not found");
+    }
+    if (!verifyTotpToken(user.mfaSecret, parsed.data.token)) {
+      db.credentialAudits.unshift({
+        _id: createId(),
+        userId: user._id,
+        action: "mfa_update",
+        outcome: "failure",
+        createdAt: now(),
+      });
+      throw new Error("Invalid MFA token");
+    }
+    user.mfaEnabled = true;
+    user.mfaVerifiedAt = now();
+    user.updatedAt = now();
+    db.credentialAudits.unshift({
+      _id: createId(),
+      userId: user._id,
+      action: "mfa_update",
+      outcome: "success",
+      createdAt: now(),
+    });
+    appendRequestAudit(db, req, {
+      module: "Security",
+      action: "mfa_verify",
+      targetId: user._id,
+      summary: `${user.email} verified MFA enrollment`,
+    });
+    return user;
+  }).catch((error: Error) => {
+    res.status(error.message.includes("Invalid") ? 400 : 404).json({ message: error.message });
+    return null;
+  });
+
+  if (!updated) return;
+  res.json({ user: sanitizeUser(updated) });
+});
+
+app.delete("/api/security/mfa", async (req: AuthRequest, res) => {
+  const actor = ensureUser(req);
+  const updated = await updateDb((db) => {
+    const user = db.users.find((entry) => entry._id === actor._id);
+    if (!user) {
+      throw new Error("User not found");
+    }
+    user.mfaEnabled = false;
+    user.mfaSecret = null;
+    user.mfaVerifiedAt = null;
+    user.updatedAt = now();
+    db.credentialAudits.unshift({
+      _id: createId(),
+      userId: user._id,
+      action: "mfa_update",
+      outcome: "success",
+      createdAt: now(),
+    });
+    appendRequestAudit(db, req, {
+      module: "Security",
+      action: "mfa_disable",
+      targetId: user._id,
+      summary: `${user.email} disabled MFA`,
+    });
+    return user;
+  }).catch((error: Error) => {
+    res.status(404).json({ message: error.message });
+    return null;
+  });
+
+  if (!updated) return;
+  res.json({ user: sanitizeUser(updated) });
+});
+
 app.get("/api/users", requireRoles("admin"), async (req: AuthRequest, res) => {
   const db = await loadDb();
   res.json(getScopedDb(req, db).users.map((entry) => sanitizeUser(entry)));
@@ -1792,6 +1971,11 @@ app.put("/api/orders/:id", requireRoles("admin", "receptionist"), async (req: Au
 
   const updated = await updateDb((db) => {
     const order = getAccessibleOrderOrThrow(db, req, req.params.id);
+    if (orderIsLockedForDirectEdit(order) && !isSuperAdmin(currentUser)) {
+      throw new Error(
+        "Order is locked, completed, released, or cancelled. Submit a controlled correction instead of direct editing.",
+      );
+    }
     if (parsed.data.patientId !== undefined) order.patientId = parsed.data.patientId;
     if (parsed.data.testTypeIds !== undefined) order.testTypeIds = parsed.data.testTypeIds;
     if (parsed.data.priority !== undefined) order.priority = parsed.data.priority;
@@ -1932,6 +2116,27 @@ app.post("/api/orders/:id/payment", requireRoles("admin", "finance"), async (req
       updatedAt: timestamp,
     };
     db.payments.push(created);
+    if (created.status === "completed") {
+      const journalSequence = db.accountingJournalEntries.length + 1;
+      db.accountingJournalEntries.push({
+        _id: createId(),
+        entryNumber: `JE-${new Date(timestamp).getUTCFullYear()}-${String(journalSequence).padStart(6, "0")}`,
+        orderId: order._id,
+        invoiceId: null,
+        paymentId: created._id,
+        refundId: null,
+        entryType: "payment",
+        debitAccount: "Cash and Bank",
+        creditAccount: "Accounts Receivable",
+        amount: created.amount,
+        currency: db.settings.currency,
+        memo: `Payment received for ${order.orderNumber}`,
+        status: "posted",
+        postedAt: timestamp,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      });
+    }
     order.updatedAt = timestamp;
     if (parsed.data.status === "completed" && order.status === "draft") {
       order.status = "received";
@@ -3673,6 +3878,8 @@ app.put("/api/test-types/:id", requireRoles("admin"), async (req, res) => {
 });
 
 registerEnterpriseRoutes(app);
+registerProductionRoutes(app);
+registerOrderGovernanceRoutes(app);
 registerHl7IntegrationRoutes(app);
 registerMaviancePaymentRoutes(app);
 

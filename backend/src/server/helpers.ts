@@ -264,6 +264,14 @@ export function scopeDbForUser(db: Database, actor: User): Database {
     specimenImages: db.specimenImages.filter((entry) => specimenIds.has(entry.specimenId)),
     orders: visibleOrders,
     orderAmendments: db.orderAmendments.filter((entry) => orderIds.has(entry.orderId)),
+    ocrIntakeJobs: db.ocrIntakeJobs.filter(
+      (entry) =>
+        isSuperAdmin(actor) ||
+        normalizeSiteId(entry.siteId) === actorSiteId ||
+        visibleUserIds.has(entry.createdBy),
+    ),
+    orderCorrections: db.orderCorrections.filter((entry) => orderIds.has(entry.orderId)),
+    orderLocks: db.orderLocks.filter((entry) => orderIds.has(entry.orderId)),
     payments: db.payments.filter((entry) => orderIds.has(entry.orderId)),
     mavianceTransactions: db.mavianceTransactions.filter(
       (entry) =>
@@ -278,6 +286,16 @@ export function scopeDbForUser(db: Database, actor: User): Database {
     refunds: db.refunds.filter(
       (entry) => orderIds.has(entry.orderId) || invoiceIds.has(entry.invoiceId ?? ""),
     ),
+    accountingAccounts: db.accountingAccounts,
+    accountingJournalEntries: db.accountingJournalEntries.filter(
+      (entry) =>
+        orderIds.has(entry.orderId ?? "") ||
+        db.payments.some((payment) => payment._id === entry.paymentId && orderIds.has(payment.orderId)) ||
+        db.refunds.some((refund) => refund._id === entry.refundId && orderIds.has(refund.orderId)) ||
+        actor.role === "admin" ||
+        actor.role === "finance",
+    ),
+    accountingExportBatches: db.accountingExportBatches,
     accessions,
     samples,
     barcodes: db.barcodes.filter(

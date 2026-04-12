@@ -8,6 +8,7 @@ import {
   Alert,
   Box,
   Button,
+  Chip,
   Dialog,
   DialogActions,
   DialogContent,
@@ -30,13 +31,7 @@ import {
 
 import { useState } from 'react'
 
-import {
-  Cell,
-  Pie,
-  PieChart,
-  ResponsiveContainer,
-  Tooltip,
-} from 'recharts'
+import ReactECharts from 'echarts-for-react'
 
 import { Link as RouterLink, useParams } from 'react-router-dom'
 
@@ -51,10 +46,13 @@ import {
   SectionCard,
 } from '../components'
 
-import { chartColors, errorMessage, PageError, useActionLock, useLoadable } from './shared'
+import { errorMessage, PageError, useActionLock, useLoadable } from './shared'
 
 import type {
+  AccountingAccount,
+  AccountingJournalEntry,
   FinanceSummary,
+  FinanceMonthlyDashboard,
   HydratedOrder,
   MavianceGatewayConfig,
   MavianceTransaction,
@@ -81,6 +79,10 @@ export function FinancePage() {
   const actionLock = useActionLock()
   const summaryState = useLoadable<FinanceSummary | null>(null, [], async () => {
     const response = await api.get<FinanceSummary>('/finance/summary')
+    return response.data
+  })
+  const monthlyState = useLoadable<FinanceMonthlyDashboard | null>(null, [], async () => {
+    const response = await api.get<FinanceMonthlyDashboard>('/finance/monthly-dashboard')
     return response.data
   })
   const ordersState = useLoadable<{ data: HydratedOrder[] }>({ data: [] }, [], async () => {
@@ -131,12 +133,51 @@ export function FinancePage() {
     tag: '',
   })
 
-  if (summaryState.loading || ordersState.loading) return <LoadingPanel label="Loading finance…" />
+  if (summaryState.loading || ordersState.loading || monthlyState.loading) return <LoadingPanel label="Loading finance…" />
   if (summaryState.error || !summaryState.data) return <PageError message={summaryState.error ?? 'Could not load finance'} />
 
   const pieData = Object.entries(summaryState.data.paymentsByMethod)
     .filter(([, value]) => value > 0)
     .map(([name, value]) => ({ name: paymentMethodLabel(name as FinanceSummary['transactions'][number]['method']), value }))
+  const paymentMethodChart = {
+    tooltip: { trigger: 'item' },
+    series: [
+      {
+        type: 'pie',
+        radius: ['45%', '72%'],
+        data: pieData,
+      },
+    ],
+  }
+  const monthlyChart = {
+    tooltip: { trigger: 'axis' },
+    legend: { data: ['Net revenue', 'Gross revenue', 'Refunds'] },
+    grid: { left: 40, right: 20, top: 50, bottom: 35 },
+    xAxis: {
+      type: 'category',
+      data: monthlyState.data?.rows.map((row) => row.month) ?? [],
+    },
+    yAxis: { type: 'value' },
+    series: [
+      {
+        name: 'Net revenue',
+        type: 'bar',
+        data: monthlyState.data?.rows.map((row) => row.netRevenue) ?? [],
+      },
+      {
+        name: 'Gross revenue',
+        type: 'line',
+        smooth: true,
+        data: monthlyState.data?.rows.map((row) => row.grossRevenue) ?? [],
+      },
+      {
+        name: 'Refunds',
+        type: 'line',
+        smooth: true,
+        data: monthlyState.data?.rows.map((row) => row.refunds) ?? [],
+      },
+    ],
+  }
   const completedAmountsByOrder = summaryState.data.transactions
     .filter((payment) => payment.status === 'completed')
     .reduce<Record<string, number>>((acc, payment) => {
@@ -189,6 +230,7 @@ export function FinancePage() {
 
   const refreshFinance = () => {
     summaryState.refresh()
+    monthlyState.refresh()
     ordersState.refresh()
     mavianceConfigState.refresh()
     mavianceTransactionsState.refresh()
@@ -273,6 +315,7 @@ export function FinancePage() {
       />
       {feedback ? <Alert severity={feedback.kind}>{feedback.message}</Alert> : null}
       {ordersState.error ? <Alert severity="error">{ordersState.error}</Alert> : null}
+      {monthlyState.error ? <Alert severity="error">{monthlyState.error}</Alert> : null}
       <Box sx={{ display: 'grid', gap: 2, gridTemplateColumns: { xs: '1fr', md: 'repeat(4, 1fr)' } }}>
         <MetricCard label="Total revenue (paid)" value={summaryState.data.totalRevenueDisplay} helper={`${summaryState.data.completedPayments} completed payments`} />
         <MetricCard label="Paid transactions" value={String(summaryState.data.completedPayments)} />
@@ -345,20 +388,17 @@ export function FinancePage() {
       <Box sx={{ display: 'grid', gap: 2, gridTemplateColumns: { xs: '1fr', xl: '1fr 1fr' } }}>
         <SectionCard title="Payments by method">
           <Box sx={{ height: 280, minWidth: 0 }}>
-            <ResponsiveContainer width="100%" height="100%">
-              <PieChart>
-                <Pie data={pieData} dataKey="value" nameKey="name" outerRadius={92} label>
-                  {pieData.map((entry, index) => (
-                    <Cell key={entry.name} fill={chartColors[index % chartColors.length]} />
-                  ))}
-                </Pie>
-                <Tooltip />
-              </PieChart>
-            </ResponsiveContainer>
+            <ReactECharts option={paymentMethodChart} style={{ height: 280, width: '100%' }} />
           </Box>
         </SectionCard>
-        <SectionCard title="Revenue (last 7 days)">
-          <EmptyState title="No revenue in the last 7 days" body="Transaction activity will appear here as payments are processed." />
+        <SectionCard title="Month-by-month revenue" description="Finance-grade revenue trend from posted payments and approved refunds.">
+          <Box sx={{ height: 320, minWidth: 0 }}>
+            {monthlyState.data?.rows.some((row) => row.grossRevenue > 0 || row.refunds > 0) ? (
+              <ReactECharts option={monthlyChart} style={{ height: 320, width: '100%' }} />
+            ) : (
+              <EmptyState title="No monthly revenue yet" body="Completed payments and refunds will appear here automatically." />
+            )}
+          </Box>
         </SectionCard>
       </Box>
       <SectionCard title="Outstanding clearance queue" description="Orders remain here until they are financially cleared or fully paid.">
@@ -671,6 +711,183 @@ export function FinancePage() {
           </Button>
         </DialogActions>
       </Dialog>
+    </Stack>
+  )
+}
+
+type TrialBalanceResponse = {
+  currency: 'USD' | 'EUR' | 'XAF'
+  rows: Array<{
+    account: AccountingAccount
+    debits: number
+    credits: number
+    balance: number
+  }>
+  totalDebits: number
+  totalCredits: number
+}
+
+export function AccountingPage() {
+  const accountsState = useLoadable<AccountingAccount[]>([], [], async () => {
+    const response = await api.get<AccountingAccount[]>('/accounting/accounts')
+    return response.data
+  })
+  const ledgerState = useLoadable<AccountingJournalEntry[]>([], [], async () => {
+    const response = await api.get<AccountingJournalEntry[]>('/accounting/ledger')
+    return response.data
+  })
+  const trialBalanceState = useLoadable<TrialBalanceResponse | null>(null, [], async () => {
+    const response = await api.get<TrialBalanceResponse>('/accounting/trial-balance')
+    return response.data
+  })
+  const [feedback, setFeedback] = useState<{ kind: 'success' | 'error'; message: string } | null>(null)
+  const [journalForm, setJournalForm] = useState({
+    debitAccount: 'Cash and Bank',
+    creditAccount: 'Pathology Revenue',
+    amount: 0,
+    memo: '',
+    orderId: '',
+    invoiceId: '',
+  })
+
+  const refresh = () => {
+    accountsState.refresh()
+    ledgerState.refresh()
+    trialBalanceState.refresh()
+  }
+
+  const submitJournal = async () => {
+    setFeedback(null)
+    try {
+      await api.post('/accounting/journal-entries', {
+        ...journalForm,
+        orderId: journalForm.orderId || null,
+        invoiceId: journalForm.invoiceId || null,
+      })
+      setJournalForm((prev) => ({ ...prev, amount: 0, memo: '', orderId: '', invoiceId: '' }))
+      refresh()
+      setFeedback({ kind: 'success', message: 'Manual journal entry posted.' })
+    } catch (journalError) {
+      setFeedback({ kind: 'error', message: errorMessage(journalError) })
+    }
+  }
+
+  const voidJournal = async (entry: AccountingJournalEntry) => {
+    const reason = window.prompt(`Reason for voiding ${entry.entryNumber}`)
+    if (!reason) return
+    try {
+      await api.post(`/accounting/journal-entries/${entry._id}/void`, { reason })
+      refresh()
+      setFeedback({ kind: 'success', message: `${entry.entryNumber} voided with reversal entry.` })
+    } catch (voidError) {
+      setFeedback({ kind: 'error', message: errorMessage(voidError) })
+    }
+  }
+
+  if (accountsState.loading || ledgerState.loading || trialBalanceState.loading) {
+    return <LoadingPanel label="Loading accounting…" />
+  }
+
+  const balanceChart = {
+    tooltip: { trigger: 'axis' },
+    legend: { data: ['Debits', 'Credits'] },
+    xAxis: { type: 'category', data: trialBalanceState.data?.rows.map((row) => row.account.code) ?? [] },
+    yAxis: { type: 'value' },
+    series: [
+      { name: 'Debits', type: 'bar', data: trialBalanceState.data?.rows.map((row) => row.debits) ?? [] },
+      { name: 'Credits', type: 'bar', data: trialBalanceState.data?.rows.map((row) => row.credits) ?? [] },
+    ],
+  }
+
+  return (
+    <Stack spacing={3}>
+      <PageHeader
+        eyebrow="Accounting"
+        title="Internal accounting workspace"
+        description="A simple in-system accounting tool for chart of accounts, posted journals, trial balance, and controlled journal reversals."
+        action={<Button onClick={refresh}>Refresh</Button>}
+      />
+      {feedback ? <Alert severity={feedback.kind}>{feedback.message}</Alert> : null}
+      {accountsState.error ? <Alert severity="error">{accountsState.error}</Alert> : null}
+      {ledgerState.error ? <Alert severity="error">{ledgerState.error}</Alert> : null}
+      {trialBalanceState.error ? <Alert severity="error">{trialBalanceState.error}</Alert> : null}
+
+      <Box sx={{ display: 'grid', gap: 2, gridTemplateColumns: { xs: '1fr', md: 'repeat(3, 1fr)' } }}>
+        <MetricCard label="Total debits" value={formatMoney(trialBalanceState.data?.totalDebits ?? 0, trialBalanceState.data?.currency ?? 'XAF')} />
+        <MetricCard label="Total credits" value={formatMoney(trialBalanceState.data?.totalCredits ?? 0, trialBalanceState.data?.currency ?? 'XAF')} />
+        <MetricCard label="Posted journals" value={String(ledgerState.data.filter((entry) => entry.status === 'posted').length)} />
+      </Box>
+
+      <SectionCard title="Trial balance" description="Debit and credit activity is visualized from posted journal entries. Voided entries are excluded and their reversals are posted separately.">
+        {trialBalanceState.data?.rows.length ? (
+          <ReactECharts option={balanceChart} style={{ height: 300, width: '100%' }} />
+        ) : (
+          <EmptyState title="No trial balance yet" body="Post payments, refunds, adjustments, or manual journals to populate the trial balance." />
+        )}
+      </SectionCard>
+
+      <SectionCard title="Post manual journal entry" description="Use for internal adjustments that are not generated by payments or refund approvals.">
+        <Stack spacing={2}>
+          <Box sx={{ display: 'grid', gap: 2, gridTemplateColumns: { xs: '1fr', md: '1fr 1fr 0.6fr' } }}>
+            <FormControl>
+              <InputLabel>Debit account</InputLabel>
+              <Select label="Debit account" value={journalForm.debitAccount} onChange={(event) => setJournalForm((prev) => ({ ...prev, debitAccount: String(event.target.value) }))}>
+                {accountsState.data.map((account) => (
+                  <MenuItem key={account._id} value={account.name}>{account.code} · {account.name}</MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+            <FormControl>
+              <InputLabel>Credit account</InputLabel>
+              <Select label="Credit account" value={journalForm.creditAccount} onChange={(event) => setJournalForm((prev) => ({ ...prev, creditAccount: String(event.target.value) }))}>
+                {accountsState.data.map((account) => (
+                  <MenuItem key={account._id} value={account.name}>{account.code} · {account.name}</MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+            <TextField label="Amount" type="number" value={journalForm.amount} onChange={(event) => setJournalForm((prev) => ({ ...prev, amount: Number(event.target.value) }))} />
+          </Box>
+          <TextField label="Memo" value={journalForm.memo} onChange={(event) => setJournalForm((prev) => ({ ...prev, memo: event.target.value }))} />
+          <Box sx={{ display: 'grid', gap: 2, gridTemplateColumns: { xs: '1fr', md: '1fr 1fr' } }}>
+            <TextField label="Order ID (optional)" value={journalForm.orderId} onChange={(event) => setJournalForm((prev) => ({ ...prev, orderId: event.target.value }))} />
+            <TextField label="Invoice ID (optional)" value={journalForm.invoiceId} onChange={(event) => setJournalForm((prev) => ({ ...prev, invoiceId: event.target.value }))} />
+          </Box>
+          <Button variant="contained" onClick={submitJournal}>Post journal entry</Button>
+        </Stack>
+      </SectionCard>
+
+      <SectionCard title="Journal ledger and reversal controls" description="Voiding a journal creates a posted reversing entry and marks the original as void.">
+        <TableContainer sx={{ maxHeight: 520 }}>
+          <Table stickyHeader>
+            <TableHead>
+              <TableRow>
+                <TableCell>Entry</TableCell>
+                <TableCell>Type</TableCell>
+                <TableCell>Debit</TableCell>
+                <TableCell>Credit</TableCell>
+                <TableCell>Amount</TableCell>
+                <TableCell>Status</TableCell>
+                <TableCell>Actions</TableCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {ledgerState.data.map((entry) => (
+                <TableRow key={entry._id}>
+                  <TableCell>{entry.entryNumber}</TableCell>
+                  <TableCell>{entry.entryType}</TableCell>
+                  <TableCell>{entry.debitAccount}</TableCell>
+                  <TableCell>{entry.creditAccount}</TableCell>
+                  <TableCell>{formatMoney(entry.amount, entry.currency)}</TableCell>
+                  <TableCell><Chip size="small" label={entry.status} color={entry.status === 'posted' ? 'success' : entry.status === 'void' ? 'default' : 'warning'} /></TableCell>
+                  <TableCell>
+                    <Button size="small" disabled={entry.status === 'void'} onClick={() => voidJournal(entry)}>Void with reversal</Button>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </TableContainer>
+      </SectionCard>
     </Stack>
   )
 }

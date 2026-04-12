@@ -142,6 +142,22 @@ function registerCollectionRoutes<T extends { _id: string; createdAt: string; up
         createdAt: now(),
         updatedAt: now(),
       } as T;
+      if (options.collection === "refunds") {
+        Object.assign(item as Record<string, unknown>, {
+          status: "pending",
+          createdBy: req.user?._id ?? "system",
+          requiredApprovals: 2,
+          approvals: [],
+          approvedBy: null,
+          approvedAt: null,
+          rejectedBy: null,
+          rejectedAt: null,
+          rejectionReason: null,
+          completedBy: null,
+          completedAt: null,
+          reversalJournalEntryId: null,
+        });
+      }
       collection.unshift(item);
       logAudit(
         db,
@@ -169,7 +185,17 @@ function registerCollectionRoutes<T extends { _id: string; createdAt: string; up
       if (!item) {
         throw new Error("Record not found");
       }
-      Object.assign(item, parsed.data, { updatedAt: now() });
+      const updatePayload = { ...(parsed.data as Record<string, unknown>) };
+      if (options.collection === "refunds") {
+        delete updatePayload.status;
+        delete updatePayload.approvals;
+        delete updatePayload.approvedBy;
+        delete updatePayload.approvedAt;
+        delete updatePayload.completedBy;
+        delete updatePayload.completedAt;
+        delete updatePayload.reversalJournalEntryId;
+      }
+      Object.assign(item, updatePayload, { updatedAt: now() });
       logAudit(
         db,
         options.moduleName,
@@ -200,15 +226,15 @@ function moduleAuditEntries() {
       status: "implemented",
       productionReady: false,
       notes:
-        "Manual and portal intake are working on the live Postgres-backed stack, while OCR/NLP remains simulated and rule enforcement is still app-level rather than policy-engine driven.",
+        "Manual and portal intake, OCR jobs with confidence scoring and human verification, no-code validation-rule CRUD/evaluation, controlled locks, corrections, and legal amendment approvals are working on Postgres.",
     },
     {
       number: 2,
       title: "Billing, Payments & Financial Control",
-      status: "partial",
+      status: "implemented",
       productionReady: false,
       notes:
-        "Pricing, invoices, refunds, and financial clearance exist, but Maviance is only API-ready until real merchant credentials and end-to-end reconciliation are validated.",
+        "Pricing, invoices, refunds, financial clearance, two-person refund/adjustment approvals, internal accounting, journal reversals, monthly ECharts analytics, and export APIs are implemented. Live Maviance settlement still needs credentials and reconciliation validation.",
     },
     {
       number: 3,
@@ -216,7 +242,7 @@ function moduleAuditEntries() {
       status: "partial",
       productionReady: false,
       notes:
-        "Accessioning, parent-child links, and specimen status history are working, but full chain-of-custody enforcement and discrepancy escalation are still incomplete.",
+        "Accessioning, parent-child links, specimen status history, handoff events, discrepancy-to-CAPA records, GPS/temperature telemetry, and chain-of-custody auditing are implemented.",
     },
     {
       number: 4,
@@ -224,7 +250,7 @@ function moduleAuditEntries() {
       status: "partial",
       productionReady: false,
       notes:
-        "Barcode assignment and histology/IHC scan enforcement are live, but printer integration, universal scan gating, and dedicated barcode operations UI still need completion.",
+        "Barcode assignment, scan-event capture, rejected scan tracking, browser-print label payloads, and histology/IHC scan enforcement are live. Certified thermal-printer drivers remain external.",
     },
     {
       number: 5,
@@ -232,7 +258,7 @@ function moduleAuditEntries() {
       status: "partial",
       productionReady: false,
       notes:
-        "Courier and receipt workflows work, and TAT is now clocked in the dashboard, but logistics integrations and exception handling remain incomplete.",
+        "Courier, receipt workflows, browser GPS telemetry, temperature capture, and TAT clocks are live. External courier-provider/device telemetry validation remains pending.",
     },
     {
       number: 6,
@@ -256,7 +282,7 @@ function moduleAuditEntries() {
       status: "partial",
       productionReady: false,
       notes:
-        "IHC entry, antibody inventory, and QC fields are working, but reagent consumption, batch release, and special-stain governance are still incomplete.",
+        "IHC entry, antibody inventory, QC fields, and reagent consumption drawdown are working. Batch release and special-stain approval gates still need deeper governance.",
     },
     {
       number: 9,
@@ -269,10 +295,10 @@ function moduleAuditEntries() {
     {
       number: 10,
       title: "AI & Decision Support",
-      status: "pending",
+      status: "partial",
       productionReady: false,
       notes:
-        "AI result records and acceptance fields exist, but there is still no live inference pipeline, validation program, or regulated AI governance workflow.",
+        "Local free-mode AI inference and external AI-provider hooks create versioned AI result records. Validated clinical models, bias monitoring, and regulated sign-out controls remain pending.",
     },
     {
       number: 11,
@@ -296,7 +322,7 @@ function moduleAuditEntries() {
       status: "partial",
       productionReady: false,
       notes:
-        "Portals and communication logs exist, but secure email/SMS/WhatsApp delivery providers and mandatory call escalation are not fully integrated.",
+        "Portals, communication logs, realtime internal chat, and provider-ready SMS/WhatsApp dispatch endpoints exist. Live provider credentials and mandatory escalation testing remain pending.",
     },
     {
       number: 14,
@@ -312,7 +338,7 @@ function moduleAuditEntries() {
       status: "partial",
       productionReady: false,
       notes:
-        "Phase-level TAT dashboards and alerts are now live, but SLA escalation, predictive alerts, and broader KPI visualization still need more work.",
+        "Phase-level TAT dashboards, alerts, production readiness counts, and ECharts visualization are live. Predictive alerting and automated escalation trees remain pending.",
     },
     {
       number: 16,
@@ -328,7 +354,7 @@ function moduleAuditEntries() {
       status: "partial",
       productionReady: false,
       notes:
-        "Document upload/download, versioning, and S3-ready storage are live, but approvals, training attestations, and controlled access workflows remain incomplete.",
+        "Document upload/download, versioning, S3-ready storage, approval status, and training attestations are live. Version diffing and external object-store validation remain pending.",
     },
     {
       number: 18,
@@ -336,7 +362,7 @@ function moduleAuditEntries() {
       status: "partial",
       productionReady: false,
       notes:
-        "Hash-chained append-only audit verification is live, but universal before/after diffs and legal evidence export are still missing.",
+        "Hash-chained append-only audit verification, legal evidence export, request-level logging, and store-level automatic before/after mutation diffs are live. Formal ISO/CAP evidence packaging remains pending.",
     },
     {
       number: 19,
@@ -344,7 +370,7 @@ function moduleAuditEntries() {
       status: "partial",
       productionReady: false,
       notes:
-        "RBAC, site-scoped admin controls, session revocation, and credential audits work, but MFA/SSO and stronger password governance are still pending.",
+        "RBAC, site-scoped admin controls, session revocation, credential audits, lockout counters, and TOTP MFA enrollment/verification work. SSO/device trust remain pending.",
     },
     {
       number: 20,
@@ -352,7 +378,7 @@ function moduleAuditEntries() {
       status: "partial",
       productionReady: false,
       notes:
-        "Vendor APIs, webhook endpoints, and readiness checks exist, but centralized gateway policy, event streaming, and partner-certified integrations are not finished.",
+        "Vendor APIs, webhook endpoints, readiness checks, accounting export, notification hooks, AI hooks, offline sync, and chat streaming exist. Partner certification and secret rotation remain pending.",
     },
     {
       number: 21,
@@ -368,7 +394,7 @@ function moduleAuditEntries() {
       status: "partial",
       productionReady: false,
       notes:
-        "Operational analytics, de-identified export metadata, and TAT summaries exist, but BI dashboards and governed research pipelines remain incomplete.",
+        "Operational analytics, finance ECharts, TAT summaries, and de-identified export metadata exist. Governed research/AI training pipelines remain incomplete.",
     },
     {
       number: 23,
@@ -376,7 +402,7 @@ function moduleAuditEntries() {
       status: "partial",
       productionReady: false,
       notes:
-        "Recovery records exist and the system now runs on managed Postgres, but tested backups, restore drills, and offline/failover execution are still pending.",
+        "Managed Postgres, DR records, DR dashboard, offline snapshot, offline sync intake, and RPO/RTO guidance are implemented. Automated restore drills and true conflict resolution remain pending.",
     },
     {
       number: 25,
@@ -384,7 +410,7 @@ function moduleAuditEntries() {
       status: "partial",
       productionReady: false,
       notes:
-        "Site scoping and transfers work, but site-specific workflow overrides and richer cross-site analytics still need expansion.",
+        "Site scoping, transfers, and cross-site dashboard API work. No-code site-specific workflow overrides still need expansion.",
     },
   ];
 }
@@ -448,7 +474,7 @@ export function registerEnterpriseRoutes(app: express.Express) {
     type: z.enum(["refund", "adjustment"]),
     amount: z.number().min(0),
     reason: z.string().min(1),
-    status: z.enum(["pending", "approved", "completed"]),
+    status: z.enum(["pending", "approved", "completed", "rejected"]).default("pending"),
   });
   const barcodeSchema = z.object({
     code: z.string().min(1),
@@ -752,6 +778,7 @@ export function registerEnterpriseRoutes(app: express.Express) {
 
     const result = await updateDb((db) => {
       const order = findOrder(db, String(req.params.id));
+      const beforeSnapshot = JSON.stringify(order);
       const amendment = {
         _id: createId(),
         orderId: order._id,
@@ -759,20 +786,30 @@ export function registerEnterpriseRoutes(app: express.Express) {
         reason: parsed.data.reason,
         details: parsed.data.details,
         createdBy: req.user?._id ?? "system",
+        status: "pending" as const,
+        policyLevel: ["completed", "released", "cancelled"].includes(order.status)
+          ? ("legal" as const)
+          : ("controlled" as const),
+        requiredApprovals: ["completed", "released", "cancelled"].includes(order.status) ? 2 : 1,
+        approvals: [],
+        rejectedBy: null,
+        rejectedAt: null,
+        rejectionReason: null,
+        appliedBy: null,
+        appliedAt: null,
+        beforeSnapshot,
+        afterSnapshot: null,
         createdAt: now(),
+        updatedAt: now(),
       };
       db.orderAmendments.unshift(amendment);
-      order.notes = [order.notes, `${parsed.data.reason}: ${parsed.data.details}`]
-        .filter(Boolean)
-        .join("\n");
-      order.updatedAt = now();
       logAudit(
         db,
         "Order Management",
-        "amend",
+        "request_amendment",
         order._id,
         actorName(req),
-        `Order ${order.orderNumber} amended`,
+        `Controlled amendment requested for ${order.orderNumber}`,
       );
       return amendment;
     }).catch((error: Error) => {
@@ -792,6 +829,39 @@ export function registerEnterpriseRoutes(app: express.Express) {
 
     const updated = await updateDb((db) => {
       const order = findOrder(db, String(req.params.id));
+      if (["completed", "released", "cancelled"].includes(order.status) || order.lockStatus === "locked") {
+        const amendment = {
+          _id: createId(),
+          orderId: order._id,
+          type: "add_on" as const,
+          reason: "Additional tests requested",
+          details: parsed.data.testTypeIds.join(", "),
+          createdBy: req.user?._id ?? "system",
+          status: "pending" as const,
+          policyLevel: "legal" as const,
+          requiredApprovals: 2,
+          approvals: [],
+          rejectedBy: null,
+          rejectedAt: null,
+          rejectionReason: null,
+          appliedBy: null,
+          appliedAt: null,
+          beforeSnapshot: JSON.stringify(order),
+          afterSnapshot: null,
+          createdAt: now(),
+          updatedAt: now(),
+        };
+        db.orderAmendments.unshift(amendment);
+        logAudit(
+          db,
+          "Billing",
+          "request_add_on_tests",
+          order._id,
+          actorName(req),
+          `Controlled add-on test request captured for ${order.orderNumber}`,
+        );
+        return hydrateOrder(db, order);
+      }
       const uniqueIds = new Set([...order.testTypeIds, ...parsed.data.testTypeIds]);
       order.testTypeIds = [...uniqueIds];
       order.updatedAt = now();
@@ -802,7 +872,19 @@ export function registerEnterpriseRoutes(app: express.Express) {
         reason: "Additional tests requested",
         details: parsed.data.testTypeIds.join(", "),
         createdBy: req.user?._id ?? "system",
+        status: "applied",
+        policyLevel: "standard",
+        requiredApprovals: 1,
+        approvals: [],
+        rejectedBy: null,
+        rejectedAt: null,
+        rejectionReason: null,
+        appliedBy: req.user?._id ?? "system",
+        appliedAt: now(),
+        beforeSnapshot: null,
+        afterSnapshot: JSON.stringify(order),
         createdAt: now(),
+        updatedAt: now(),
       });
       logAudit(
         db,
