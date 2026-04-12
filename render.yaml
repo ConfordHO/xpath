@@ -30,6 +30,8 @@ services:
         value: app_state
       - key: POSTGRES_STATE_ID
         value: primary
+      - key: POSTGRES_EXTERNAL_HOST_SUFFIX
+        value: oregon-postgres.render.com
       - key: JWT_SECRET
         sync: false
       - key: CORS_ORIGIN
