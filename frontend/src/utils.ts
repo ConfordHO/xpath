@@ -1,10 +1,13 @@
 import { jsPDF } from 'jspdf'
+import type { StaticImageData } from 'next/image'
 import QRCode from 'qrcode'
 
 import { storageKeys } from './api'
 import logoLarge from './assets/logo_large.png'
 
 import type { CourierStatus, HydratedOrder, OrderStatus, Payment, Report } from './types'
+
+type AssetSource = string | StaticImageData
 
 interface PdfMetadataRow {
   label: string
@@ -84,12 +87,17 @@ export function courierStatusLabel(status: CourierStatus) {
   return labels[status]
 }
 
-async function loadImage(src: string) {
+function assetSrc(src: AssetSource) {
+  return typeof src === 'string' ? src : src.src
+}
+
+async function loadImage(src: AssetSource) {
+  const resolvedSrc = assetSrc(src)
   return await new Promise<HTMLImageElement>((resolve, reject) => {
     const image = new Image()
     image.onload = () => resolve(image)
-    image.onerror = () => reject(new Error(`Could not load image: ${src}`))
-    image.src = src
+    image.onerror = () => reject(new Error(`Could not load image: ${resolvedSrc}`))
+    image.src = resolvedSrc
   })
 }
 

@@ -23,6 +23,9 @@ interface AuthContextValue {
 const AuthContext = createContext<AuthContextValue | null>(null)
 
 function readStoredUser() {
+  if (typeof window === 'undefined') {
+    return null
+  }
   const raw = window.localStorage.getItem(storageKeys.user)
   if (!raw) {
     return null
@@ -52,6 +55,9 @@ export function AuthProvider({ children }: PropsWithChildren) {
 
   const setUser = (nextUser: SafeUser | null) => {
     setUserState(nextUser)
+    if (typeof window === 'undefined') {
+      return
+    }
     if (!nextUser) {
       window.localStorage.removeItem(storageKeys.user)
       return

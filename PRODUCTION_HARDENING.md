@@ -67,7 +67,7 @@ Backend:
 
 Frontend:
 
-- `VITE_API_URL`
+- `NEXT_PUBLIC_API_URL`
 
 ### Recommended for production security
 
@@ -125,9 +125,9 @@ If you stay on filesystem storage:
 
 ### Vercel
 
-- `vercel.json` now explicitly sets `installCommand`, `buildCommand`, `outputDirectory`, and SPA rewrites.
-- This is intended for the frontend only.
-- Set `VITE_API_URL` in the Vercel project to your deployed backend URL, usually the Render service URL ending in `/api`.
+- `vercel.json` now explicitly sets the frontend install/build commands, `.next` output directory, and the Next.js framework preset.
+- This is intended for the frontend only and should produce a `.next` build, not a `dist` build.
+- Set `NEXT_PUBLIC_API_URL` in the Vercel project to your deployed backend URL, usually the Render service URL ending in `/api`.
 
 ### Render
 
@@ -148,10 +148,9 @@ If you stay on filesystem storage:
 
 ## External References Used
 
-- Vercel `vercel.json` config options, including `installCommand`, `outputDirectory`, and SPA rewrites:
+- Vercel and Next.js deployment config options:
   - https://vercel.com/docs/project-configuration/vercel-json
-  - https://vercel.com/docs/frameworks/frontend/vite
-  - https://vercel.com/docs/routing/rewrites
+  - https://vercel.com/docs/frameworks/full-stack/nextjs
 - Render Blueprint and persistence guidance:
   - https://render.com/docs/blueprint-spec
   - https://render.com/docs/disks

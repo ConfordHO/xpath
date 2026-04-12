@@ -1,5 +1,6 @@
 import { Box } from '@mui/material'
 import type { SxProps, Theme } from '@mui/material/styles'
+import type { StaticImageData } from 'next/image'
 
 import logoLarge from '../assets/logo_large.png'
 
@@ -10,10 +11,12 @@ interface BrandLogoProps {
 }
 
 export function BrandLogo({ alt = 'X.PATH LABS', sx, width = 220 }: BrandLogoProps) {
+  const logoSrc = typeof logoLarge === 'string' ? logoLarge : (logoLarge as StaticImageData).src
+
   return (
     <Box
       component="img"
-      src={logoLarge}
+      src={logoSrc}
       alt={alt}
       sx={[
         {

@@ -1,5 +1,5 @@
-export { DashboardPage } from './pages/dashboard'
-export { ProjectReviewPage } from './pages/projectReview'
+export { DashboardPage } from './views/dashboard'
+export { ProjectReviewPage } from './views/projectReview'
 export {
   DoctorPortalPage,
   DoctorsPage,
@@ -8,7 +8,7 @@ export {
   TestTypesPage,
   UsersPage,
   WorkflowTemplatesPage,
-} from './pages/admin'
+} from './views/admin'
 export {
   CourierPage,
   FinancePage,
@@ -16,15 +16,15 @@ export {
   NotificationsPage,
   ReportsPage,
   SampleDetailPage,
-} from './pages/operations'
-export { CreateOrderPage, OrderDetailPage, OrdersPage } from './pages/orders'
+} from './views/operations'
+export { CreateOrderPage, OrderDetailPage, OrdersPage } from './views/orders'
 export {
   LandingPage,
   LoginPage,
   PatientOrderDetailPage,
   PatientPortalPage,
-} from './pages/public'
-export { OrderAuthenticityPage, OrderOnlinePage } from './pages/order-online'
+} from './views/public'
+export { OrderAuthenticityPage, OrderOnlinePage } from './views/order-online'
 export {
   ClinicalOperationsPage,
   EnterpriseAdminPage,
@@ -32,7 +32,7 @@ export {
   ModuleAuditPage,
   ResultsQualityPage,
   AnalyticalOperationsPage,
-} from './pages/enterprise'
+} from './views/enterprise'
 export {
   CytologyCasesPage,
   DigitalPathologyPage,
@@ -43,4 +43,4 @@ export {
   TechnicianWorkflowPage,
   WorkflowHistoryPage,
   WorkflowSelectPage,
-} from './pages/workflows'
+} from './views/workflows'
