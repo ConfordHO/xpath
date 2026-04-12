@@ -11,6 +11,7 @@ import {
   LEGACY_MONGODB_COLLECTION,
   LEGACY_MONGODB_DB_NAME,
   LEGACY_MONGODB_URI,
+  POSTGRES_EXTERNAL_HOST_SUFFIX,
   POSTGRES_STATE_ID,
   POSTGRES_STATE_TABLE,
 } from "./config.js";
@@ -82,6 +83,7 @@ type PostgresSslMode = "require" | "disable";
 
 let pool: Pool | null = null;
 let activePostgresSslMode: PostgresSslMode | null = null;
+let activePostgresConnectionUrl: string | null = null;
 let cachedDb: Database | null = null;
 let initializationPromise: Promise<void> | null = null;
 let updateQueue: Promise<void> = Promise.resolve();
@@ -520,24 +522,85 @@ function getPreferredPostgresSslModes(): PostgresSslMode[] {
   return DATABASE_SSL_MODE === "require" ? ["require", "disable"] : ["disable", "require"];
 }
 
-async function getPool(mode: PostgresSslMode) {
-  if (pool && activePostgresSslMode === mode) {
+function getPostgresConnectionUrls() {
+  const urls = [DATABASE_URL];
+
+  try {
+    const parsedUrl = new URL(DATABASE_URL);
+    if (
+      POSTGRES_EXTERNAL_HOST_SUFFIX &&
+      parsedUrl.hostname &&
+      !parsedUrl.hostname.includes(".")
+    ) {
+      parsedUrl.hostname = `${parsedUrl.hostname}.${POSTGRES_EXTERNAL_HOST_SUFFIX}`;
+      const fallbackUrl = parsedUrl.toString();
+      if (!urls.includes(fallbackUrl)) {
+        urls.push(fallbackUrl);
+      }
+    }
+  } catch {
+    // Keep the primary URL only; connection handling will surface the original error.
+  }
+
+  return urls;
+}
+
+function getPostgresConnectionAttempts() {
+  const urls = getPostgresConnectionUrls();
+  const primaryUrl = urls[0];
+  const fallbackUrl = urls[1];
+  const [preferredMode, alternateMode] = getPreferredPostgresSslModes();
+  const attempts: Array<{ connectionString: string; mode: PostgresSslMode }> = [];
+
+  if (activePostgresConnectionUrl && activePostgresSslMode) {
+    attempts.push({
+      connectionString: activePostgresConnectionUrl,
+      mode: activePostgresSslMode,
+    });
+  }
+
+  attempts.push({ connectionString: primaryUrl, mode: preferredMode });
+  if (fallbackUrl) {
+    attempts.push({ connectionString: fallbackUrl, mode: "require" });
+    attempts.push({ connectionString: fallbackUrl, mode: "disable" });
+  }
+  attempts.push({ connectionString: primaryUrl, mode: alternateMode });
+
+  const seen = new Set<string>();
+  return attempts.filter((attempt) => {
+    const key = `${attempt.connectionString}|${attempt.mode}`;
+    if (seen.has(key)) {
+      return false;
+    }
+    seen.add(key);
+    return true;
+  });
+}
+
+async function getPool(connectionString: string, mode: PostgresSslMode) {
+  if (
+    pool &&
+    activePostgresConnectionUrl === connectionString &&
+    activePostgresSslMode === mode
+  ) {
     return pool;
   }
 
   const previousPool = pool;
   pool = null;
   activePostgresSslMode = null;
+  activePostgresConnectionUrl = null;
   await previousPool?.end().catch(() => undefined);
 
   pool = new Pool({
-    connectionString: DATABASE_URL,
+    connectionString,
     ssl: mode === "require" ? { rejectUnauthorized: false } : undefined,
     max: 4,
     idleTimeoutMillis: 10_000,
     connectionTimeoutMillis: 8_000,
   });
   activePostgresSslMode = mode;
+  activePostgresConnectionUrl = connectionString;
   return pool;
 }
 
@@ -546,14 +609,17 @@ async function queryPostgres<T extends QueryResultRow = QueryResultRow>(
   params?: unknown[],
 ): Promise<QueryResult<T>> {
   let lastError: unknown;
-  for (const mode of getPreferredPostgresSslModes()) {
+  for (const attempt of getPostgresConnectionAttempts()) {
     try {
-      return await (await getPool(mode)).query<T>(text, params);
+      return await (
+        await getPool(attempt.connectionString, attempt.mode)
+      ).query<T>(text, params);
     } catch (error) {
       lastError = error;
       const failedPool = pool;
       pool = null;
       activePostgresSslMode = null;
+      activePostgresConnectionUrl = null;
       await failedPool?.end().catch(() => undefined);
     }
   }
@@ -724,6 +790,7 @@ export async function closeStoreConnections() {
   const activePool = pool;
   pool = null;
   activePostgresSslMode = null;
+  activePostgresConnectionUrl = null;
   await activePool?.end().catch(() => undefined);
 }
 
