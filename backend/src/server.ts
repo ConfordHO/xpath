@@ -14,9 +14,14 @@ import {
   type AuthRequest,
 } from "./auth.js";
 import {
+  CORS_ORIGINS,
+  DATABASE_SSL_MODE,
+  DATABASE_URL,
   MAVIANCE_ACCESS_SECRET,
   MAVIANCE_ACCESS_TOKEN,
   MAVIANCE_ENABLED,
+  POSTGRES_STATE_ID,
+  POSTGRES_STATE_TABLE,
   PORT,
   isAllowedOrigin,
 } from "./config.js";
@@ -148,6 +153,41 @@ app.use(
 
 app.get("/api/health", (_req, res) => {
   res.json({ ok: true });
+});
+
+app.get("/api/health/runtime", (_req, res) => {
+  let databaseHost = "unparseable";
+  let databaseProtocol = "unparseable";
+  let databaseHostClass = "unknown";
+  try {
+    const parsedUrl = new URL(DATABASE_URL);
+    databaseHost = parsedUrl.hostname || "missing";
+    databaseProtocol = parsedUrl.protocol.replace(/:$/, "") || "missing";
+    databaseHostClass =
+      databaseHost === "localhost" || databaseHost === "127.0.0.1"
+        ? "local"
+        : databaseHost.endsWith(".render.com")
+          ? "render-external"
+          : databaseHost.includes(".")
+            ? "external"
+            : "render-internal";
+  } catch {
+    // Keep the sanitized fallback labels above.
+  }
+
+  res.json({
+    ok: true,
+    build: "postgres-runtime-diagnostics-2026-04-12",
+    nodeEnv: process.env.NODE_ENV ?? "development",
+    databaseUrlPresent: Boolean(DATABASE_URL),
+    databaseProtocol,
+    databaseHost,
+    databaseHostClass,
+    databaseSslMode: DATABASE_SSL_MODE,
+    postgresStateTable: POSTGRES_STATE_TABLE,
+    postgresStateId: POSTGRES_STATE_ID,
+    corsOrigins: CORS_ORIGINS,
+  });
 });
 
 app.get("/api/health/storage", async (_req, res) => {
