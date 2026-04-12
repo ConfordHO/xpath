@@ -150,6 +150,18 @@ app.get("/api/health", (_req, res) => {
   res.json({ ok: true });
 });
 
+app.get("/api/health/storage", async (_req, res) => {
+  const db = await loadDb();
+  res.json({
+    ok: true,
+    users: db.users.length,
+    patients: db.patients.length,
+    orders: db.orders.length,
+    testTypes: db.testTypes.length,
+    updatedAt: now(),
+  });
+});
+
 function sameTestTypeSelection(left: string[], right: string[]) {
   return left.slice().sort().join("|") === right.slice().sort().join("|");
 }
@@ -3612,18 +3624,20 @@ registerEnterpriseRoutes(app);
 registerHl7IntegrationRoutes(app);
 registerMaviancePaymentRoutes(app);
 
+function isDatabaseUnavailableError(error: Error) {
+  const code = "code" in error ? String((error as Error & { code?: unknown }).code ?? "") : "";
+  const message = `${error.name} ${code} ${error.message}`;
+  return /mongo|postgres|pg|database|server selection|ssl alert|ssl required|does not support ssl|connection terminated|connect econnrefused|econnreset|enotfound|etimedout|no pg_hba\.conf|password authentication failed|sasl|scram/i.test(
+    message,
+  );
+}
+
 app.use((error: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   console.error(error);
   if (error.name === "MulterError") {
     return res.status(400).json({ message: error.message });
   }
-  if (
-    error.name.includes("Mongo") ||
-    error.name.includes("Postgres") ||
-    /server selection|database unavailable|ssl alert number 80|connection terminated|connect econnrefused|no pg_hba.conf|password authentication failed/i.test(
-      error.message,
-    )
-  ) {
+  if (isDatabaseUnavailableError(error)) {
     return res.status(503).json({
       message: "Database unavailable. Check the configured PostgreSQL connection and network access.",
     });
