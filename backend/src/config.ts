@@ -23,10 +23,17 @@ function readRequiredEnv(name: string) {
 }
 
 function readOrigins() {
-  return (process.env.CORS_ORIGIN ?? "")
+  const configuredOrigins = (process.env.CORS_ORIGIN ?? "")
     .split(",")
     .map((value) => value.trim())
     .filter(Boolean);
+  return Array.from(
+    new Set([
+      ...configuredOrigins,
+      "https://xpath-two.vercel.app",
+      "https://x-path.vercel.app",
+    ]),
+  );
 }
 
 function normalizeLocalOrigin(value: string) {
