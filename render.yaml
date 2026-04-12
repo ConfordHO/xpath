@@ -25,7 +25,7 @@ services:
       - key: DATABASE_URL
         sync: false
       - key: DATABASE_SSL_MODE
-        value: disable
+        value: require
       - key: POSTGRES_STATE_TABLE
         value: app_state
       - key: POSTGRES_STATE_ID
@@ -33,7 +33,7 @@ services:
       - key: JWT_SECRET
         sync: false
       - key: CORS_ORIGIN
-        value: https://x-path.vercel.app,http://localhost:5173
+        value: https://xpath-two.vercel.app,https://x-path.vercel.app,http://localhost:5173
       - key: DMS_STORAGE_PROVIDER
         sync: false
       - key: DMS_LOCAL_STORAGE_PATH
