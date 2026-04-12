@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { MongoClient } from "mongodb";
-import { Pool } from "pg";
+import { Pool, type QueryResult, type QueryResultRow } from "pg";
 
 import { normalizeSiteId } from "./auth.js";
 import {
@@ -78,7 +78,10 @@ const legacySettingDefaults = {
   locale: "en",
 } as const;
 
+type PostgresSslMode = "require" | "disable";
+
 let pool: Pool | null = null;
+let activePostgresSslMode: PostgresSslMode | null = null;
 let cachedDb: Database | null = null;
 let initializationPromise: Promise<void> | null = null;
 let updateQueue: Promise<void> = Promise.resolve();
@@ -507,21 +510,59 @@ function quotedIdentifier(value: string) {
 
 const stateTableIdentifier = quotedIdentifier(POSTGRES_STATE_TABLE);
 
-function getPool() {
-  if (!pool) {
-    pool = new Pool({
-      connectionString: DATABASE_URL,
-      ssl: DATABASE_SSL_MODE === "require" ? { rejectUnauthorized: false } : undefined,
-      max: 4,
-      idleTimeoutMillis: 10_000,
-      connectionTimeoutMillis: 8_000,
-    });
+function getPreferredPostgresSslModes(): PostgresSslMode[] {
+  if (activePostgresSslMode) {
+    return [
+      activePostgresSslMode,
+      activePostgresSslMode === "require" ? "disable" : "require",
+    ];
   }
+  return DATABASE_SSL_MODE === "require" ? ["require", "disable"] : ["disable", "require"];
+}
+
+async function getPool(mode: PostgresSslMode) {
+  if (pool && activePostgresSslMode === mode) {
+    return pool;
+  }
+
+  const previousPool = pool;
+  pool = null;
+  activePostgresSslMode = null;
+  await previousPool?.end().catch(() => undefined);
+
+  pool = new Pool({
+    connectionString: DATABASE_URL,
+    ssl: mode === "require" ? { rejectUnauthorized: false } : undefined,
+    max: 4,
+    idleTimeoutMillis: 10_000,
+    connectionTimeoutMillis: 8_000,
+  });
+  activePostgresSslMode = mode;
   return pool;
 }
 
+async function queryPostgres<T extends QueryResultRow = QueryResultRow>(
+  text: string,
+  params?: unknown[],
+): Promise<QueryResult<T>> {
+  let lastError: unknown;
+  for (const mode of getPreferredPostgresSslModes()) {
+    try {
+      return await (await getPool(mode)).query<T>(text, params);
+    } catch (error) {
+      lastError = error;
+      const failedPool = pool;
+      pool = null;
+      activePostgresSslMode = null;
+      await failedPool?.end().catch(() => undefined);
+    }
+  }
+
+  throw lastError;
+}
+
 async function ensureStateTable() {
-  await getPool().query(`
+  await queryPostgres(`
     CREATE TABLE IF NOT EXISTS ${stateTableIdentifier} (
       id TEXT PRIMARY KEY,
       state JSONB NOT NULL,
@@ -532,7 +573,7 @@ async function ensureStateTable() {
 
 async function getStateRecord(): Promise<DatabaseDocument | null> {
   await ensureStateTable();
-  const result = await getPool().query<{
+  const result = await queryPostgres<{
     id: string;
     state: Database;
     updated_at: Date | string;
@@ -605,7 +646,7 @@ async function persistDb(db: Database) {
     auditEvents: mergeAuditTrail(existing?.state?.auditEvents ?? [], db.auditEvents),
   });
   await ensureStateTable();
-  await getPool().query(
+  await queryPostgres(
     `
       INSERT INTO ${stateTableIdentifier} (id, state, updated_at)
       VALUES ($1, $2::jsonb, NOW())
@@ -682,6 +723,7 @@ export async function closeStoreConnections() {
   updateQueue = Promise.resolve();
   const activePool = pool;
   pool = null;
+  activePostgresSslMode = null;
   await activePool?.end().catch(() => undefined);
 }
 
