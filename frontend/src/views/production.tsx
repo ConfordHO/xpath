@@ -20,8 +20,8 @@ import { useState } from 'react'
 
 import { api } from '../api'
 import { EmptyState, MetricCard, PageHeader, SectionCard } from '../components'
-import type { AccountingJournalEntry } from '../types'
-import { downloadPdfDocument, formatDateTime, formatMoney } from '../utils'
+import type { ZohoBooksConfig, ZohoBooksSyncLog } from '../types'
+import { downloadPdfDocument, formatDateTime } from '../utils'
 import { errorMessage, PageError, useLoadable } from './shared'
 
 type ProductionReadiness = {
@@ -32,10 +32,13 @@ type ProductionReadiness = {
     latestSequence: number
   }
   finance: {
-    postedJournalEntries: number
-    exportBatches: number
     provider: string
     providerConfigured: boolean
+    syncedInvoices: number
+    pendingInvoices: number
+    syncedPayments: number
+    pendingPayments: number
+    failedZohoSyncs: number
   }
   traceability: {
     chainOfCustodyEvents: number
@@ -88,8 +91,12 @@ export function ProductionHardeningPage() {
     const response = await api.get<ProviderReadiness>('/integrations/provider-readiness')
     return response.data
   })
-  const ledgerState = useLoadable<AccountingJournalEntry[]>([], [], async () => {
-    const response = await api.get<AccountingJournalEntry[]>('/accounting/ledger')
+  const zohoConfigState = useLoadable<ZohoBooksConfig | null>(null, [], async () => {
+    const response = await api.get<ZohoBooksConfig>('/accounting/zoho/config')
+    return response.data
+  })
+  const zohoLogsState = useLoadable<ZohoBooksSyncLog[]>([], [], async () => {
+    const response = await api.get<ZohoBooksSyncLog[]>('/accounting/zoho/sync-logs')
     return response.data
   })
   const drState = useLoadable<DisasterRecoveryDashboard | null>(null, [], async () => {
@@ -98,8 +105,8 @@ export function ProductionHardeningPage() {
   })
   const [feedback, setFeedback] = useState<{ kind: 'success' | 'error'; message: string } | null>(null)
 
-  if (readinessState.error || providerState.error || ledgerState.error || drState.error) {
-    return <PageError message={readinessState.error ?? providerState.error ?? ledgerState.error ?? drState.error ?? 'Could not load production console'} />
+  if (readinessState.error || providerState.error || zohoConfigState.error || zohoLogsState.error || drState.error) {
+    return <PageError message={readinessState.error ?? providerState.error ?? zohoConfigState.error ?? zohoLogsState.error ?? drState.error ?? 'Could not load production console'} />
   }
 
   const readiness = readinessState.data
@@ -116,22 +123,12 @@ export function ProductionHardeningPage() {
     ],
   }
 
-  const rebuildLedger = async () => {
+  const openZohoAuthorizeUrl = async () => {
     try {
-      await api.post('/accounting/rebuild-ledger')
-      ledgerState.refresh()
-      readinessState.refresh()
-      setFeedback({ kind: 'success', message: 'Accounting ledger rebuilt from completed payments.' })
-    } catch (error) {
-      setFeedback({ kind: 'error', message: errorMessage(error) })
-    }
-  }
-
-  const exportLedger = async () => {
-    try {
-      await api.post('/accounting/export', { provider: 'generic' })
-      readinessState.refresh()
-      setFeedback({ kind: 'success', message: 'Accounting export batch created. If provider env is configured, it was sent to the accounting endpoint.' })
+      const response = await api.get<{ authorizeUrl: string }>('/accounting/zoho/authorize-url')
+      window.open(response.data.authorizeUrl, '_blank', 'noopener,noreferrer')
+      zohoLogsState.refresh()
+      setFeedback({ kind: 'success', message: 'Opened the Zoho Books authorization screen.' })
     } catch (error) {
       setFeedback({ kind: 'error', message: errorMessage(error) })
     }
@@ -164,7 +161,7 @@ export function ProductionHardeningPage() {
         action={(
           <Stack direction="row" spacing={1}>
             <Button startIcon={<DownloadRoundedIcon />} onClick={downloadEvidence}>Audit evidence</Button>
-            <Button startIcon={<SyncRoundedIcon />} onClick={() => { readinessState.refresh(); providerState.refresh(); ledgerState.refresh(); drState.refresh() }}>Refresh</Button>
+            <Button startIcon={<SyncRoundedIcon />} onClick={() => { readinessState.refresh(); providerState.refresh(); zohoConfigState.refresh(); zohoLogsState.refresh(); drState.refresh() }}>Refresh</Button>
           </Stack>
         )}
       />
@@ -172,7 +169,7 @@ export function ProductionHardeningPage() {
 
       <Box sx={{ display: 'grid', gap: 2, gridTemplateColumns: { xs: '1fr', md: 'repeat(4, 1fr)' } }}>
         <MetricCard label="Audit chain" value={readiness?.audit.valid ? 'Valid' : 'Check'} helper={`${readiness?.audit.checked ?? 0} events`} />
-        <MetricCard label="Journal entries" value={String(readiness?.finance.postedJournalEntries ?? 0)} helper={readiness?.finance.providerConfigured ? 'Provider configured' : 'Provider env pending'} />
+        <MetricCard label="Zoho invoice syncs" value={String(readiness?.finance.syncedInvoices ?? 0)} helper={readiness?.finance.providerConfigured ? 'Provider configured' : 'Provider env pending'} />
         <MetricCard label="Barcode scans" value={String(readiness?.traceability.barcodeScans ?? 0)} helper={`${readiness?.traceability.rejectedScans ?? 0} rejected scans`} />
         <MetricCard label="Chat messages" value={String(readiness?.communications.chatMessages ?? 0)} helper={readiness?.communications.whatsappConfigured ? 'WhatsApp configured' : 'WhatsApp env pending'} />
       </Box>
@@ -204,44 +201,43 @@ export function ProductionHardeningPage() {
       </Box>
 
       <SectionCard
-        title="Accounting ledger"
-        description="Posted journal entries are the finance-grade bridge to external accounting software."
-        action={(
-          <Stack direction="row" spacing={1}>
-            <Button onClick={rebuildLedger}>Rebuild ledger</Button>
-            <Button variant="contained" onClick={exportLedger}>Export ledger</Button>
-          </Stack>
-        )}
+        title="Zoho Books readiness"
+        description="The accounting bridge is now Zoho Books only. Use this section to confirm env readiness and inspect recent sync activity."
+        action={<Button onClick={openZohoAuthorizeUrl}>Open Zoho consent</Button>}
       >
-        {ledgerState.data.length ? (
+        <Box sx={{ display: 'grid', gap: 2, gridTemplateColumns: { xs: '1fr', md: 'repeat(4, 1fr)' }, mb: 2 }}>
+          <MetricCard label="Client" value={zohoConfigState.data?.clientConfigured ? 'Configured' : 'Missing'} />
+          <MetricCard label="Refresh token" value={zohoConfigState.data?.refreshTokenConfigured ? 'Configured' : 'Missing'} />
+          <MetricCard label="Organization" value={zohoConfigState.data?.organizationConfigured ? 'Configured' : 'Missing'} />
+          <MetricCard label="Failed syncs" value={String(readiness?.finance.failedZohoSyncs ?? 0)} />
+        </Box>
+        {zohoLogsState.data.length ? (
           <TableContainer sx={{ maxHeight: 420 }}>
             <Table stickyHeader>
               <TableHead>
                 <TableRow>
-                  <TableCell>Entry</TableCell>
-                  <TableCell>Type</TableCell>
-                  <TableCell>Debit</TableCell>
-                  <TableCell>Credit</TableCell>
-                  <TableCell>Amount</TableCell>
-                  <TableCell>Posted</TableCell>
+                  <TableCell>When</TableCell>
+                  <TableCell>Operation</TableCell>
+                  <TableCell>Entity</TableCell>
+                  <TableCell>Status</TableCell>
+                  <TableCell>Endpoint</TableCell>
                 </TableRow>
               </TableHead>
               <TableBody>
-                {ledgerState.data.map((entry) => (
+                {zohoLogsState.data.slice(0, 20).map((entry) => (
                   <TableRow key={entry._id}>
-                    <TableCell>{entry.entryNumber}</TableCell>
-                    <TableCell>{entry.entryType}</TableCell>
-                    <TableCell>{entry.debitAccount}</TableCell>
-                    <TableCell>{entry.creditAccount}</TableCell>
-                    <TableCell>{formatMoney(entry.amount, entry.currency)}</TableCell>
-                    <TableCell>{entry.postedAt ? formatDateTime(entry.postedAt) : entry.status}</TableCell>
+                    <TableCell>{formatDateTime(entry.createdAt)}</TableCell>
+                    <TableCell>{entry.operation}</TableCell>
+                    <TableCell>{entry.entityType}</TableCell>
+                    <TableCell>{entry.status}</TableCell>
+                    <TableCell>{entry.endpoint}</TableCell>
                   </TableRow>
                 ))}
               </TableBody>
             </Table>
           </TableContainer>
         ) : (
-          <EmptyState title="No journal entries yet" body="Rebuild the ledger after payments are recorded." />
+          <EmptyState title="No Zoho sync activity yet" body="Authorize Zoho Books or trigger a doctor/order/payment sync to populate this log." />
         )}
       </SectionCard>
 

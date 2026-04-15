@@ -1,6 +1,6 @@
 # X.PATH LIMS Production Readiness Assessment
 
-Updated: 2026-04-12
+Updated: 2026-04-15
 
 ## Executive Summary
 
@@ -8,13 +8,29 @@ The system has broad functional coverage for the requested LIMS modules: core or
 
 As of 2026-04-10, runtime persistence has been migrated from the prior Mongo-backed state store to the Render-hosted PostgreSQL database. The current live state in Postgres contains the migrated users, patients, and orders from the earlier environment, and the legacy Mongo application-state document has been cleared.
 
-It is **closer to production, but still not fully production-ready for a regulated pathology laboratory**. The strongest areas are workflow demonstration, role separation, seeded credentials, public requisition flow, Postgres-backed persistence, report generation, session revocation, hash-chained audit capture with automatic mutation diffs, barcode enforcement in histology/IHC, DMS file handling, finance accounting controls, internal communication, offline/DR scaffolding, and backend regression tests. The remaining production gaps are SSO/device trust, live vendor/payment validation with real credentials, durable object-storage configuration in production, operational observability, validated AI governance, automated restore drills, and formal compliance sign-off.
+It is **closer to production, but still not fully production-ready for a regulated pathology laboratory**. The strongest areas are workflow demonstration, role separation, seeded credentials, public requisition flow, Postgres-backed persistence, report generation, session revocation, hash-chained audit capture with automatic mutation diffs, barcode enforcement in histology/IHC, DMS file handling, Zoho-ready accounting sync controls, internal communication, offline/DR scaffolding, and backend regression tests. The remaining production gaps are SSO/device trust, live vendor/payment validation with real credentials, durable object-storage configuration in production, operational observability, validated AI governance, automated restore drills, and formal compliance sign-off.
+
+## 2026-04-15 Zoho, Intake, and Privacy Update
+
+Implemented in this pass:
+- Removed the user-facing internal accounting workspace and replaced it with Zoho Books-only readiness, OAuth, organization lookup, doctor/contact sync, invoice sync, payment sync, and sync-log monitoring.
+- Added persistent target milestone release dates to the module audit with editable calendar/manual date entry.
+- Added referral-doctor account creation flow with stored name/email/phone capture and automatic admin/receptionist notifications when a new referrer is created.
+- Enforced stronger privacy masking so downstream non-reception roles work with anonymous case labels instead of direct patient identity after reception handoff.
+- Completed the receptionist intake flow with reception confirmation, payment capture state, payment prompts, courier handoff visibility, and release-to-lab gating.
+- Completed receptionist and courier UI gating around blockers, multi-test workflow route visibility, and route-to-lab prerequisites.
+- Updated local env defaults so the frontend talks to `http://localhost:4000/api` and the frontend runs on Next.js port `3000`.
+
+Still requires external validation:
+- Live Zoho OAuth credentials, organization mapping, and production sync verification.
+- Live Maviance merchant credentials and end-to-end wallet settlement testing.
+- Real courier GPS devices, SMS/WhatsApp providers, Roche/Leica live endpoints, and production object storage credentials.
 
 ## 2026-04-12 Hardening Update
 
 Implemented in this pass:
 - Added configurable validation-rule records and `/api/orders/:id/validation/evaluate` for order, finance, specimen, result, and report checks.
-- Added finance-grade accounting journal entries, monthly finance dashboard data, ledger rebuild, and generic accounting export endpoint.
+- Added finance dashboards, invoice/payment tracking, and production-ready accounting integration scaffolding.
 - Restored finance ECharts dashboards for monthly gross/net revenue, refunds, and payment-method visualization.
 - Added chain-of-custody handoff endpoint, barcode scan event persistence, scan rejection capture, browser-print label payloads, courier GPS/temperature telemetry, and discrepancy-to-CAPA creation.
 - Added reagent consumption drawdown for IHC/special stains with reorder-level QC event creation.
@@ -27,7 +43,7 @@ Implemented in this pass:
 - Added internal OCR intake jobs with confidence scoring, raw OCR text retention, parsed payload retention, human verification, rejection, and conversion-to-order controls.
 - Added store-level automatic before/after mutation diff audit events so every database mutation receives immutable diff coverage even when a route has only coarse request-level audit logging.
 - Added controlled order locking, correction request/approval/rejection workflow, and legally controlled amendment approvals.
-- Added internal accounting workspace with chart of accounts, manual journal posting, trial balance visualization, journal void/reversal controls, and two-person refund/adjustment approval.
+- Added two-person refund/adjustment approval workflow and the first pass of finance-grade accounting controls, which have now been superseded by the Zoho Books integration workspace.
 
 Still requires external validation:
 - Live Maviance settlement, Roche/navify, Leica/CEREBRO, SMS/WhatsApp, accounting software, AI model, GPS device, S3-compatible storage, and EMR/HIS conformance all require real credentials, vendor endpoints, and sign-off testing.
@@ -71,14 +87,14 @@ Implemented:
 - Insurance authorization, invoices, refunds/adjustments collections.
 - Maviance/Smobilpay readiness for Cameroon with config, quote/collect/verify/webhook scaffolding.
 - Live-readiness endpoints for Maviance account/channel validation.
-- Internal chart of accounts, posted journal entries, manual journal posting, trial balance, journal void/reversal controls, and ledger rebuild.
-- Multi-person refund/adjustment approval with reversal journal creation before completion.
+- Zoho Books OAuth readiness, organization lookup, referral-contact sync, invoice sync, payment sync, and immutable sync logs.
+- Multi-person refund/adjustment approval before completion.
 
 Incomplete / pending:
 - Live Maviance merchant credentials and end-to-end wallet settlement testing are still required.
 - Insurance/pre-authorization is record-based, not integrated with payers.
 - Month-by-month ECharts finance dashboard has been restored.
-- External accounting integration is intentionally not required now that the internal accounting workspace exists; export remains available for audits or future integrations.
+- Live Zoho OAuth credentials and production sync verification are still required before finance can be signed off.
 
 ### 3. Specimen Accessioning & Traceability
 
@@ -309,7 +325,7 @@ Implemented:
 - Connector test endpoints, Maviance live-validation endpoint, and integration readiness endpoint for deployment checks.
 
 Incomplete / pending:
-- Provider readiness, generic accounting export, AI hooks, SMS/WhatsApp hooks, chat streaming, and offline sync APIs exist; centralized policy management and production secret rotation remain pending.
+- Provider readiness, Zoho Books accounting hooks, AI hooks, SMS/WhatsApp hooks, chat streaming, and offline sync APIs exist; centralized policy management and production secret rotation remain pending.
 - EMR/HIS integration needs real partner endpoints and conformance testing.
 
 ### 21. Configuration & Master Data

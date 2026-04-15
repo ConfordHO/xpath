@@ -381,11 +381,33 @@ export function ModuleAuditPage() {
     const response = await api.get<ModuleAuditEntry[]>('/module-audit')
     return response.data
   })
+  const [editingEntry, setEditingEntry] = useState<ModuleAuditEntry | null>(null)
+  const [targetReleaseDate, setTargetReleaseDate] = useState('')
+  const [feedback, setFeedback] = useState<{ kind: 'success' | 'error'; message: string } | null>(null)
 
   const statusColor = (status: string) => {
     if (status === 'implemented') return 'success' as const
     if (status === 'partial') return 'warning' as const
     return 'default' as const
+  }
+
+  const openTargetEditor = (entry: ModuleAuditEntry) => {
+    setEditingEntry(entry)
+    setTargetReleaseDate(entry.targetReleaseDate ?? '')
+  }
+
+  const saveTargetReleaseDate = async () => {
+    if (!editingEntry) return
+    try {
+      const response = await api.put<ModuleAuditEntry[]>(`/module-audit/${editingEntry.number}/target-release-date`, {
+        targetReleaseDate: targetReleaseDate || null,
+      })
+      auditState.setData(response.data)
+      setFeedback({ kind: 'success', message: `Target release date updated for module ${editingEntry.number}.` })
+      setEditingEntry(null)
+    } catch (saveError) {
+      setFeedback({ kind: 'error', message: errorMessage(saveError) })
+    }
   }
 
   if (auditState.loading) return <Typography>Loading module audit…</Typography>
@@ -398,6 +420,7 @@ export function ModuleAuditPage() {
         title="Requested LIMS scope review"
         description="This page tracks the 25-module brief against the current Postgres-backed app. It stays intentionally honest about what is working today versus what still needs production hardening."
       />
+      {feedback ? <Alert severity={feedback.kind}>{feedback.message}</Alert> : null}
       <SectionCard title="Coverage by module" description="Implemented means the feature works in the app. Partial means important production controls are still missing. Pending means the module is still mostly scaffolding.">
         <TableContainer>
           <Table>
@@ -407,6 +430,7 @@ export function ModuleAuditPage() {
                 <TableCell>Module</TableCell>
                 <TableCell>Status</TableCell>
                 <TableCell>Production readiness</TableCell>
+                <TableCell>Target milestone release date</TableCell>
                 <TableCell>Notes</TableCell>
               </TableRow>
             </TableHead>
@@ -425,6 +449,12 @@ export function ModuleAuditPage() {
                       size="small"
                     />
                   </TableCell>
+                  <TableCell>
+                    <Stack direction="row" spacing={1} alignItems="center">
+                      <Typography variant="body2">{entry.targetReleaseDate || 'Not set'}</Typography>
+                      <Button size="small" onClick={() => openTargetEditor(entry)}>Edit</Button>
+                    </Stack>
+                  </TableCell>
                   <TableCell>{entry.notes}</TableCell>
                 </TableRow>
               ))}
@@ -432,6 +462,27 @@ export function ModuleAuditPage() {
           </Table>
         </TableContainer>
       </SectionCard>
+      <Dialog open={!!editingEntry} onClose={() => setEditingEntry(null)} maxWidth="xs" fullWidth>
+        <DialogTitle>Set target milestone release date</DialogTitle>
+        <DialogContent>
+          <Stack spacing={2} sx={{ mt: 1 }}>
+            <Typography variant="body2" color="text.secondary">
+              Use the calendar picker or type the date manually as YYYY-MM-DD.
+            </Typography>
+            <TextField
+              label="Target release date"
+              type="date"
+              value={targetReleaseDate}
+              onChange={(event) => setTargetReleaseDate(event.target.value)}
+              InputLabelProps={{ shrink: true }}
+            />
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setEditingEntry(null)}>Cancel</Button>
+          <Button variant="contained" onClick={saveTargetReleaseDate}>Save</Button>
+        </DialogActions>
+      </Dialog>
     </Stack>
   )
 }

@@ -338,21 +338,35 @@ export function DoctorsPage() {
   const [dialogOpen, setDialogOpen] = useState(false)
   const [editing, setEditing] = useState<Doctor | null>(null)
   const [form, setForm] = useState({ name: '', code: '', type: 'doctor', email: '', phone: '', active: true, userId: '' })
+  const [message, setMessage] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
 
   const save = async () => {
     const payload = { ...form, userId: form.userId || null }
-    if (editing) {
-      await api.put(`/doctors/${editing._id}`, payload)
-    } else {
-      await api.post('/doctors', payload)
+    setMessage(null)
+    setError(null)
+    try {
+      const response = editing
+        ? await api.put<{ doctor: Doctor; generatedPassword: string | null }>(`/doctors/${editing._id}`, payload)
+        : await api.post<{ doctor: Doctor; generatedPassword: string | null }>('/doctors', payload)
+      const generatedPassword = response.data.generatedPassword
+      setMessage(
+        generatedPassword
+          ? `Doctor saved. Temporary portal password: ${generatedPassword}`
+          : 'Doctor saved successfully.',
+      )
+      setDialogOpen(false)
+      doctorsState.refresh()
+    } catch (saveError) {
+      setError(errorMessage(saveError))
     }
-    setDialogOpen(false)
-    doctorsState.refresh()
   }
 
   return (
     <Stack spacing={3}>
       <PageHeader title="Doctors & Referrers" action={<Button variant="contained" onClick={() => { setEditing(null); setDialogOpen(true) }}>Add doctor / clinic</Button>} />
+      {message ? <Alert severity="success">{message}</Alert> : null}
+      {error ? <Alert severity="error">{error}</Alert> : null}
       <SectionCard description="Create doctors or clinics for referral tracking. Link a portal user so they can sign in and view their referral statistics here.">
         <TableContainer>
           <Table>
@@ -389,6 +403,7 @@ export function DoctorsPage() {
         <DialogTitle>{editing ? 'Edit doctor / clinic' : 'Add doctor / clinic'}</DialogTitle>
         <DialogContent>
           <Stack spacing={2} sx={{ mt: 1 }}>
+            {error ? <Alert severity="error">{error}</Alert> : null}
             <TextField label="Name" value={form.name} onChange={(event) => setForm((prev) => ({ ...prev, name: event.target.value }))} />
             <TextField label="Code" value={form.code} onChange={(event) => setForm((prev) => ({ ...prev, code: event.target.value }))} />
             <FormControl>

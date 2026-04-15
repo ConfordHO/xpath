@@ -104,6 +104,7 @@ import { createTotpSecret, createTotpUri, verifyTotpToken } from "./server/mfa.j
 import { applySecurity, authLimiter } from "./server/security.js";
 import { registerProductionRoutes } from "./server/productionRoutes.js";
 import { orderIsLockedForDirectEdit, registerOrderGovernanceRoutes } from "./server/orderGovernanceRoutes.js";
+import { ensureInvoiceForOrder, registerZohoBooksRoutes, syncPaymentToZoho } from "./server/zohoBooks.js";
 import { loadDb, updateDb } from "./store.js";
 import type {
   Accession,
@@ -271,6 +272,173 @@ function getAccessibleOrderOrThrow(
     throw new Error("You do not have access to this order");
   }
   return order;
+}
+
+function notificationReadForUser(
+  notification: Database["notifications"][number],
+  userId: string,
+) {
+  return (
+    notification.read ||
+    notification.readBy?.some((entry) => entry.userId === userId) ||
+    false
+  );
+}
+
+function hydrateNotificationForUser(
+  notification: Database["notifications"][number],
+  user: User,
+) {
+  return {
+    ...notification,
+    read: notificationReadForUser(notification, user._id),
+  };
+}
+
+function pushNotification(
+  db: Database,
+  input: {
+    title: string;
+    body: string;
+    siteId?: string | null;
+    audienceRoles?: Array<User["role"]> | null;
+    audienceUserIds?: string[] | null;
+  },
+) {
+  const timestamp = now();
+  db.notifications.unshift({
+    _id: createId(),
+    title: input.title,
+    body: input.body,
+    read: false,
+    audienceRoles: input.audienceRoles ?? null,
+    audienceUserIds: input.audienceUserIds ?? null,
+    siteId: input.siteId ?? null,
+    readBy: [],
+    createdAt: timestamp,
+    updatedAt: timestamp,
+  });
+}
+
+function nextDoctorCode(db: Database) {
+  return `REF-${String(db.doctors.length + 1).padStart(4, "0")}`;
+}
+
+function buildTemporaryDoctorPassword() {
+  return `XpathRef-${createId().slice(0, 8)}`;
+}
+
+async function createDoctorPortalAccountIfNeeded(
+  db: Database,
+  input: {
+    name: string;
+    email: string;
+    siteId?: string | null;
+    preferredLocale?: "en" | "fr";
+  },
+) {
+  const normalizedEmail = input.email.trim().toLowerCase();
+  const existingUser = db.users.find((entry) => entry.email.toLowerCase() === normalizedEmail) ?? null;
+  if (existingUser) {
+    if (existingUser.role !== "doctor") {
+      throw new Error("This email address already belongs to a non-referrer account.");
+    }
+    return { user: existingUser, generatedPassword: null };
+  }
+  const bcrypt = await import("bcryptjs");
+  const password = buildTemporaryDoctorPassword();
+  const timestamp = now();
+  const user: User = {
+    _id: createId(),
+    name: input.name,
+    email: normalizedEmail,
+    role: "doctor",
+    preferredLanguage: input.preferredLocale === "en" ? "english" : "french",
+    preferredLocale: input.preferredLocale ?? "fr",
+    siteId: normalizeSiteId(input.siteId),
+    active: true,
+    passwordHash: await bcrypt.default.hash(password, 10),
+    createdAt: timestamp,
+    updatedAt: timestamp,
+  };
+  db.users.push(user);
+  return { user, generatedPassword: password };
+}
+
+async function ensureReferralDoctorRecord(
+  db: Database,
+  input: {
+    name?: string | null;
+    email?: string | null;
+    phone?: string | null;
+    siteId?: string | null;
+    actor?: User | null;
+  },
+) {
+  const name = trimText(input.name);
+  const email = trimText(input.email).toLowerCase();
+  const phone = trimText(input.phone);
+  if (!name || (!email && !phone)) {
+    return { doctor: null, generatedPassword: null, created: false };
+  }
+
+  const existing =
+    db.doctors.find(
+      (entry) =>
+        (email && entry.email.toLowerCase() === email) ||
+        (phone && trimText(entry.phone) === phone),
+    ) ?? null;
+  if (existing) {
+    return { doctor: existing, generatedPassword: null, created: false };
+  }
+
+  const siteId = normalizeSiteId(input.siteId);
+  const locale = db.settings.locale === "en" ? "en" : "fr";
+  const { user, generatedPassword } = email
+    ? await createDoctorPortalAccountIfNeeded(db, {
+        name,
+        email,
+        siteId,
+        preferredLocale: locale,
+      })
+    : { user: null, generatedPassword: null };
+  const timestamp = now();
+  const doctor: Doctor = {
+    _id: createId(),
+    name,
+    code: nextDoctorCode(db),
+    type: "doctor",
+    email,
+    phone,
+    active: true,
+    siteId,
+    userId: user?._id ?? null,
+    createdAt: timestamp,
+    updatedAt: timestamp,
+  };
+  db.doctors.push(doctor);
+  pushNotification(db, {
+    title: "New referrer added",
+    body: `${doctor.name} (${doctor.email || doctor.phone || "no contact"}) was added as a referral doctor.`,
+    siteId,
+    audienceRoles: ["admin", "receptionist"],
+  });
+  appendAuditEvent(db, {
+    module: "User, Role & Access Management",
+    action: "create_referral_doctor",
+    targetId: doctor._id,
+    actor: input.actor?.name ?? input.actor?.email ?? "system",
+    actorUserId: input.actor?._id ?? null,
+    actorRole: input.actor?.role ?? null,
+    siteId,
+    summary: `Referral doctor ${doctor.name} created`,
+    metadata: {
+      email: doctor.email,
+      phone: doctor.phone,
+      generatedPortalAccount: Boolean(user),
+    },
+  });
+  return { doctor, generatedPassword, created: true };
 }
 
 const portalIdentitySchema = z.object({
@@ -1123,6 +1291,13 @@ app.post("/api/public/order-request", async (req, res) => {
       return hydrateOrder(db, existingReservedOrder);
     }
     const assignedOrderNumber = reservation?.orderNumber ?? createOrderNumber(db);
+    const ensuredDoctor = await ensureReferralDoctorRecord(db, {
+      name: parsed.requisition.referringPhysicianName ?? null,
+      email: parsed.requisition.referringPhysicianEmail ?? null,
+      phone: parsed.requisition.referringPhysicianPhone ?? null,
+      siteId,
+      actor: null,
+    });
     const patientId = createId();
     db.patients.push({
       _id: patientId,
@@ -1156,7 +1331,7 @@ app.post("/api/public/order-request", async (req, res) => {
       status: "draft",
       priority: "normal",
       orderSource: "online",
-      referringDoctorId: null,
+      referringDoctorId: ensuredDoctor.doctor?._id ?? null,
       referringDoctorName: parsed.requisition.referringPhysicianName ?? null,
       createdBy: "69a524bffafff8415e680391",
       assignedTechnicianId: null,
@@ -1174,11 +1349,39 @@ app.post("/api/public/order-request", async (req, res) => {
       pickupLat: parsed.pickupLat ?? null,
       pickupLng: parsed.pickupLng ?? null,
       requisitionForm,
+      receivedByUserId: null,
       courierCheckedInAt: timestamp,
+      triagedAt: null,
+      triagedBy: null,
+      workflowReleasedAt: null,
+      workflowReleasedBy: null,
+      paymentCollectionStatus: "unpaid",
+      paymentCollectionMethod: null,
+      paymentCollectionAmount: null,
+      paymentCollectionReference: null,
+      paymentCollectionDeclaredBy: null,
+      paymentCollectionDeclaredAt: null,
+      paymentPromptSentAt: null,
+      paymentPromptRecipient:
+        parsed.requisition.referringPhysicianPhone ??
+        parsed.requisition.referringPhysicianEmail ??
+        parsed.patient.phone,
+      anonymousCaseCode: `CASE-${assignedOrderNumber}`,
+      requesterNotificationEmail:
+        parsed.requisition.referringPhysicianEmail ?? parsed.patient.email,
+      requesterNotificationPhone:
+        parsed.requisition.referringPhysicianPhone ?? parsed.patient.phone,
       createdAt: timestamp,
       updatedAt: timestamp,
     };
     db.orders.push(order);
+    ensureInvoiceForOrder(db, order);
+    pushNotification(db, {
+      title: "New online sample pickup",
+      body: `${order.orderNumber} is ready for courier pickup at ${order.pickupPlaceName ?? order.pickupAddress ?? parsed.patient.address}.`,
+      siteId,
+      audienceRoles: ["courier", "receptionist", "admin"],
+    });
     appendAuditEvent(db, {
       module: "Orders",
       action: "create_public_order",
@@ -1193,6 +1396,7 @@ app.post("/api/public/order-request", async (req, res) => {
         orderNumber: order.orderNumber,
         intakeSource: "portal",
         testCount: order.testTypeIds.length,
+        referralDoctorId: order.referringDoctorId,
       },
     });
     if (reservation) {
@@ -1620,22 +1824,30 @@ app.post("/api/doctors", requireRoles("admin"), async (req: AuthRequest, res) =>
     ? normalizeSiteId(parsed.data.siteId)
     : normalizeSiteId(currentUser.siteId);
 
-  const created = await updateDb((db) => {
-    const timestamp = now();
-    const doctor: Doctor = {
-      _id: createId(),
-      ...parsed.data,
+  const created = await updateDb(async (db) => {
+    const ensured = await ensureReferralDoctorRecord(db, {
+      name: parsed.data.name,
+      email: parsed.data.email,
+      phone: parsed.data.phone,
       siteId,
-      userId: parsed.data.userId ?? null,
-      createdAt: timestamp,
-      updatedAt: timestamp,
-    };
-    db.doctors.push(doctor);
-    return doctor;
+      actor: currentUser,
+    });
+    if (ensured.doctor) {
+      if (parsed.data.type === "clinic") {
+        ensured.doctor.type = "clinic";
+      }
+      ensured.doctor.active = parsed.data.active;
+      ensured.doctor.updatedAt = now();
+      return ensured;
+    }
+    throw new Error("Could not create doctor");
   });
 
   const db = await loadDb();
-  res.status(201).json(hydrateDoctor(created, getScopedDb(req, db)));
+  res.status(201).json({
+    doctor: hydrateDoctor(created.doctor, getScopedDb(req, db)),
+    generatedPassword: created.generatedPassword,
+  });
 });
 
 app.put("/api/doctors/:id", requireRoles("admin"), async (req: AuthRequest, res) => {
@@ -1646,7 +1858,7 @@ app.put("/api/doctors/:id", requireRoles("admin"), async (req: AuthRequest, res)
 
   const currentUser = ensureUser(req);
 
-  const updated = await updateDb((db) => {
+  const updated = await updateDb(async (db) => {
     const doctor = db.doctors.find((entry) => entry._id === req.params.id);
     if (!doctor) {
       throw new Error("Doctor not found");
@@ -1660,8 +1872,27 @@ app.put("/api/doctors/:id", requireRoles("admin"), async (req: AuthRequest, res)
     } else if (parsed.data.siteId !== undefined) {
       doctor.siteId = normalizeSiteId(parsed.data.siteId);
     }
+    let generatedPassword: string | null = null;
+    if (!doctor.userId && doctor.email) {
+      const createdAccount = await createDoctorPortalAccountIfNeeded(db, {
+        name: doctor.name,
+        email: doctor.email,
+        siteId: doctor.siteId ?? null,
+        preferredLocale: db.settings.locale === "en" ? "en" : "fr",
+      });
+      doctor.userId = createdAccount.user._id;
+      generatedPassword = createdAccount.generatedPassword;
+      if (generatedPassword) {
+        pushNotification(db, {
+          title: "Referrer portal account created",
+          body: `${doctor.name} now has a linked portal account.`,
+          siteId: doctor.siteId ?? null,
+          audienceRoles: ["admin", "receptionist"],
+        });
+      }
+    }
     doctor.updatedAt = now();
-    return doctor;
+    return { doctor, generatedPassword };
   }).catch((error: Error) => {
     res.status(
       error.message.includes("access") ? 403 : 400,
@@ -1674,7 +1905,10 @@ app.put("/api/doctors/:id", requireRoles("admin"), async (req: AuthRequest, res)
   }
 
   const db = await loadDb();
-  res.json(hydrateDoctor(updated, getScopedDb(req, db)));
+  res.json({
+    doctor: hydrateDoctor(updated.doctor, getScopedDb(req, db)),
+    generatedPassword: updated.generatedPassword,
+  });
 });
 
 app.get("/api/doctors/me/profile", async (req: AuthRequest, res) => {
@@ -1884,10 +2118,28 @@ app.post("/api/orders", requireRoles("admin", "receptionist"), async (req: AuthR
       financialClearance: "pending",
       siteId,
       courierStatus: "",
+      receivedByUserId: null,
+      triagedAt: null,
+      triagedBy: null,
+      workflowReleasedAt: null,
+      workflowReleasedBy: null,
+      paymentCollectionStatus: "unpaid",
+      paymentCollectionMethod: null,
+      paymentCollectionAmount: null,
+      paymentCollectionReference: null,
+      paymentCollectionDeclaredBy: null,
+      paymentCollectionDeclaredAt: null,
+      paymentPromptSentAt: null,
+      paymentPromptRecipient: null,
+      anonymousCaseCode: null,
+      requesterNotificationEmail: null,
+      requesterNotificationPhone: null,
       createdAt: timestamp,
       updatedAt: timestamp,
     };
+    order.anonymousCaseCode = `CASE-${order.orderNumber}`;
     db.orders.push(order);
+    ensureInvoiceForOrder(db, order);
     appendRequestAudit(db, req, {
       module: "Orders",
       action: "create",
@@ -1939,10 +2191,28 @@ app.post("/api/orders/create", requireRoles("admin", "receptionist"), async (req
       financialClearance: "pending",
       siteId,
       courierStatus: "",
+      receivedByUserId: null,
+      triagedAt: null,
+      triagedBy: null,
+      workflowReleasedAt: null,
+      workflowReleasedBy: null,
+      paymentCollectionStatus: "unpaid",
+      paymentCollectionMethod: null,
+      paymentCollectionAmount: null,
+      paymentCollectionReference: null,
+      paymentCollectionDeclaredBy: null,
+      paymentCollectionDeclaredAt: null,
+      paymentPromptSentAt: null,
+      paymentPromptRecipient: null,
+      anonymousCaseCode: null,
+      requesterNotificationEmail: null,
+      requesterNotificationPhone: null,
       createdAt: timestamp,
       updatedAt: timestamp,
     };
+    order.anonymousCaseCode = `CASE-${order.orderNumber}`;
     db.orders.push(order);
+    ensureInvoiceForOrder(db, order);
     appendRequestAudit(db, req, {
       module: "Orders",
       action: "create",
@@ -2033,6 +2303,7 @@ app.post(
     }
     order.status = "received";
     order.receivedAt = order.receivedAt ?? now();
+    order.receivedByUserId = order.receivedByUserId ?? ensureUser(req)._id;
     order.updatedAt = now();
     appendRequestAudit(db, req, {
       module: "Orders",
@@ -2055,7 +2326,7 @@ app.post(
   res.json(hydrateOrder(db, updated));
 });
 
-app.post("/api/orders/:id/payment", requireRoles("admin", "finance"), async (req: AuthRequest, res) => {
+app.post("/api/orders/:id/payment", requireRoles("admin", "finance", "receptionist"), async (req: AuthRequest, res) => {
   const parsed = z
     .object({
       amount: z.number().min(0),
@@ -2112,36 +2383,27 @@ app.post("/api/orders/:id/payment", requireRoles("admin", "finance"), async (req
       gatewayReference: trimmedReference || null,
       receiptNumber: null,
       verificationCode: null,
+      externalAccountingId: null,
+      accountingSyncStatus: "pending",
+      accountingSyncedAt: null,
       createdAt: timestamp,
       updatedAt: timestamp,
     };
     db.payments.push(created);
-    if (created.status === "completed") {
-      const journalSequence = db.accountingJournalEntries.length + 1;
-      db.accountingJournalEntries.push({
-        _id: createId(),
-        entryNumber: `JE-${new Date(timestamp).getUTCFullYear()}-${String(journalSequence).padStart(6, "0")}`,
-        orderId: order._id,
-        invoiceId: null,
-        paymentId: created._id,
-        refundId: null,
-        entryType: "payment",
-        debitAccount: "Cash and Bank",
-        creditAccount: "Accounts Receivable",
-        amount: created.amount,
-        currency: db.settings.currency,
-        memo: `Payment received for ${order.orderNumber}`,
-        status: "posted",
-        postedAt: timestamp,
-        createdAt: timestamp,
-        updatedAt: timestamp,
-      });
-    }
+    ensureInvoiceForOrder(db, order);
     order.updatedAt = timestamp;
     if (parsed.data.status === "completed" && order.status === "draft") {
       order.status = "received";
       order.receivedAt = timestamp;
+      order.receivedByUserId = req.user?._id ?? null;
     }
+    order.paymentCollectionStatus =
+      parsed.data.status === "completed" ? "reconciled" : "payment_prompt_sent";
+    order.paymentCollectionMethod = normalizedMethod;
+    order.paymentCollectionAmount = parsed.data.amount;
+    order.paymentCollectionReference = trimmedReference || null;
+    order.paymentCollectionDeclaredBy = req.user?._id ?? null;
+    order.paymentCollectionDeclaredAt = timestamp;
     if (parsed.data.status === "completed" && getOrderPaid(db, order._id) >= getOrderTotal(db, order)) {
       order.financialClearance = "cleared";
     }
@@ -2165,6 +2427,14 @@ app.post("/api/orders/:id/payment", requireRoles("admin", "finance"), async (req
 
   if (!payment) {
     return;
+  }
+
+  if (payment.status === "completed") {
+    try {
+      await syncPaymentToZoho(payment._id, ensureUser(req));
+    } catch {
+      // Keep local payment success even when Zoho sync is not yet configured.
+    }
   }
 
   res.status(201).json(payment);
@@ -2206,6 +2476,390 @@ app.post(
 
   res.json(updated);
 });
+
+app.post(
+  "/api/orders/:id/reception-intake",
+  requireRoles("admin", "receptionist"),
+  async (req: AuthRequest, res) => {
+    const parsed = z
+      .object({
+        paymentCollectionStatus: z.enum([
+          "unpaid",
+          "cash_with_courier",
+          "paid_online",
+          "payment_prompt_sent",
+          "cash_received_at_reception",
+          "reconciled",
+        ]),
+        paymentCollectionMethod: z
+          .enum([
+            "cash",
+            "card",
+            "mobile_money",
+            "bank_transfer",
+            "mtn_mobile_money",
+            "orange_money",
+            "transfer",
+            "other",
+          ])
+          .nullable()
+          .optional(),
+        paymentCollectionAmount: z.number().nonnegative().nullable().optional(),
+        paymentCollectionReference: z.string().trim().optional(),
+        transportTemperature: z.string().trim().default("ambient"),
+        transportCondition: z.string().trim().default("stable"),
+        sampleCondition: z.string().trim().default("Received at reception"),
+        lat: z.number().optional(),
+        lng: z.number().optional(),
+        temperatureCelsius: z.number().optional(),
+      })
+      .safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ message: "Invalid reception intake payload" });
+    }
+
+    const result = await updateDb((db) => {
+      const order = getAccessibleOrderOrThrow(db, req, req.params.id);
+      const timestamp = now();
+      const normalizedMethod = parsed.data.paymentCollectionMethod
+        ? normalizePaymentMethod(parsed.data.paymentCollectionMethod)
+        : null;
+      order.status = order.status === "cancelled" ? order.status : "received";
+      order.receivedAt = order.receivedAt ?? timestamp;
+      order.receivedByUserId = req.user?._id ?? null;
+      order.paymentCollectionStatus = parsed.data.paymentCollectionStatus;
+      order.paymentCollectionMethod = normalizedMethod;
+      order.paymentCollectionAmount = parsed.data.paymentCollectionAmount ?? null;
+      order.paymentCollectionReference =
+        trimText(parsed.data.paymentCollectionReference) || null;
+      order.paymentCollectionDeclaredBy = req.user?._id ?? null;
+      order.paymentCollectionDeclaredAt = timestamp;
+      order.updatedAt = timestamp;
+
+      const sample = getSampleByOrder(db, order._id);
+      const specimenId = sample?._id ?? order._id;
+      db.chainOfCustody.unshift({
+        _id: createId(),
+        specimenId,
+        eventType: "received",
+        location: "Reception desk",
+        condition: parsed.data.sampleCondition,
+        actor: req.user?.name ?? req.user?.email ?? "receptionist",
+        handedOffTo: null,
+        gpsLat: parsed.data.lat ?? null,
+        gpsLng: parsed.data.lng ?? null,
+        temperatureCelsius: parsed.data.temperatureCelsius ?? null,
+        notes: `Transport ${parsed.data.transportCondition}; logged as ${parsed.data.transportTemperature}`,
+        createdAt: timestamp,
+      });
+
+      const existingPreAnalytics = db.preAnalyticsLogs.find((entry) => entry.orderId === order._id);
+      const collectionAt = order.createdAt;
+      const pickupAt = order.paymentCollectionDeclaredAt ?? order.courierCheckedInAt ?? null;
+      const receiptAt = order.receivedAt;
+      const tatMinutes =
+        receiptAt && collectionAt
+          ? Math.max(0, Math.round((new Date(receiptAt).getTime() - new Date(collectionAt).getTime()) / 60_000))
+          : 0;
+      if (existingPreAnalytics) {
+        existingPreAnalytics.pickupAt = pickupAt;
+        existingPreAnalytics.receiptAt = receiptAt;
+        existingPreAnalytics.transportTemperature = parsed.data.transportTemperature;
+        existingPreAnalytics.transportCondition = parsed.data.transportCondition;
+        existingPreAnalytics.receiptValidated = true;
+        existingPreAnalytics.tatMinutes = tatMinutes;
+        existingPreAnalytics.updatedAt = timestamp;
+      } else {
+        db.preAnalyticsLogs.unshift({
+          _id: createId(),
+          orderId: order._id,
+          specimenId,
+          collectionAt,
+          pickupAt,
+          receiptAt,
+          transportTemperature: parsed.data.transportTemperature,
+          transportCondition: parsed.data.transportCondition,
+          receiptValidated: true,
+          tatMinutes,
+          createdAt: timestamp,
+          updatedAt: timestamp,
+        });
+      }
+
+      if (
+        normalizedMethod &&
+        parsed.data.paymentCollectionAmount &&
+        ["cash_with_courier", "cash_received_at_reception", "reconciled", "paid_online"].includes(
+          parsed.data.paymentCollectionStatus,
+        )
+      ) {
+        const existingPayment = [...db.payments]
+          .reverse()
+          .find(
+            (entry) =>
+              entry.orderId === order._id &&
+              entry.status === "completed" &&
+              entry.amount === parsed.data.paymentCollectionAmount &&
+              entry.method === normalizedMethod &&
+              sameTrimmedText(entry.gatewayReference, order.paymentCollectionReference) &&
+              occurredWithinWindow(entry.createdAt, DOUBLE_CLICK_WINDOW_MS),
+          );
+        if (!existingPayment) {
+          db.payments.push({
+            _id: createId(),
+            orderId: order._id,
+            amount: parsed.data.paymentCollectionAmount,
+            method: normalizedMethod,
+            status: "completed",
+            provider: normalizedMethod === "mtn_mobile_money" || normalizedMethod === "orange_money" ? "maviance" : "manual",
+            providerChannel:
+              normalizedMethod === "mtn_mobile_money"
+                ? "mtn_cameroon"
+                : normalizedMethod === "orange_money"
+                  ? "orange_cameroon"
+                  : null,
+            providerStatus: null,
+            providerErrorCode: null,
+            providerTransactionNumber: null,
+            providerTransactionReference: null,
+            gatewayReference: order.paymentCollectionReference ?? null,
+            receiptNumber: null,
+            verificationCode: null,
+            confirmedWithPatientAt: null,
+            externalAccountingId: null,
+            accountingSyncStatus: "pending",
+            accountingSyncedAt: null,
+            createdAt: timestamp,
+            updatedAt: timestamp,
+          });
+        }
+      }
+
+      order.financialClearance =
+        getOrderPaid(db, order._id) >= getOrderTotal(db, order) ? "cleared" : "pending";
+
+      db.communicationLogs.unshift({
+        _id: createId(),
+        orderId: order._id,
+        channel: "sms",
+        recipient:
+          order.requesterNotificationPhone ||
+          order.requesterNotificationEmail ||
+          findPatient(db, order.patientId).phone,
+        message:
+          order.financialClearance === "cleared"
+            ? `XPath has received your sample ${order.orderNumber} and payment is confirmed.`
+            : `XPath has received your sample ${order.orderNumber}. Payment is still pending.`,
+        status: "queued",
+        mandatory: false,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      });
+
+      appendRequestAudit(db, req, {
+        module: "Pre-Analytical Workflow",
+        action: "reception_intake",
+        targetId: order._id,
+        orderId: order._id,
+        summary: `Reception confirmed intake for ${order.orderNumber}`,
+        metadata: {
+          paymentCollectionStatus: order.paymentCollectionStatus,
+          paymentCollectionAmount: order.paymentCollectionAmount,
+          financialClearance: order.financialClearance,
+        },
+      });
+      return order;
+    }).catch((error: Error) => {
+      res.status(classifyWorkflowError(error)).json({ message: error.message });
+      return null;
+    });
+
+    if (!result) {
+      return;
+    }
+
+    const latestPayment = (await loadDb()).payments
+      .filter((entry) => entry.orderId === result._id && entry.status === "completed")
+      .sort((left, right) => right.createdAt.localeCompare(left.createdAt))[0];
+    if (latestPayment) {
+      try {
+        await syncPaymentToZoho(latestPayment._id, ensureUser(req));
+      } catch {
+        // Keep intake success even when external Zoho sync is unavailable.
+      }
+    }
+
+    const db = await loadDb();
+    res.json(hydrateOrder(getScopedDb(req, db), findOrder(getScopedDb(req, db), result._id)));
+  },
+);
+
+app.post(
+  "/api/orders/:id/send-payment-prompt",
+  requireRoles("admin", "receptionist", "finance"),
+  async (req: AuthRequest, res) => {
+    const parsed = z
+      .object({
+        amount: z.number().positive().optional(),
+        method: z.enum(["mtn_mobile_money", "orange_money", "cash", "card", "transfer", "other"]).default("mtn_mobile_money"),
+        phone: z.string().trim().optional(),
+        email: z.string().email().optional(),
+        note: z.string().trim().optional(),
+      })
+      .safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ message: "Invalid payment prompt payload" });
+    }
+
+    const db = await loadDb();
+    const order = getAccessibleOrderOrThrow(db, req, req.params.id);
+    const patient = findPatient(db, order.patientId);
+    const amount = parsed.data.amount ?? Math.max(0, getOrderTotal(db, order) - getOrderPaid(db, order._id));
+    const recipientPhone = parsed.data.phone ?? order.requesterNotificationPhone ?? patient.phone;
+    const recipientEmail = parsed.data.email ?? order.requesterNotificationEmail ?? patient.email;
+
+    if (
+      isMavianceMethod(parsed.data.method) &&
+      MAVIANCE_ENABLED &&
+      MAVIANCE_ACCESS_TOKEN &&
+      MAVIANCE_ACCESS_SECRET
+    ) {
+      try {
+        const result = await initiateMavianceCollection({
+          orderId: order._id,
+          siteId: order.siteId ?? patient.siteId ?? null,
+          amount,
+          channel: parsed.data.method === "mtn_mobile_money" ? "mtn_cameroon" : "orange_cameroon",
+          customerPhone: recipientPhone,
+          customerEmail: recipientEmail,
+          customerName: `${patient.firstName} ${patient.lastName}`,
+          customerAddress: patient.address,
+          serviceNumber: recipientPhone,
+          tag: order.orderNumber,
+          cdata: {
+            source: "reception_payment_prompt",
+            orderNumber: order.orderNumber,
+          },
+          actor: req.user?.email ?? "reception",
+        });
+        await updateDb((mutableDb) => {
+          const mutableOrder = findOrder(mutableDb, order._id);
+          mutableOrder.paymentCollectionStatus = "payment_prompt_sent";
+          mutableOrder.paymentCollectionMethod = parsed.data.method;
+          mutableOrder.paymentCollectionAmount = amount;
+          mutableOrder.paymentPromptSentAt = now();
+          mutableOrder.paymentPromptRecipient = recipientPhone || recipientEmail;
+          mutableOrder.updatedAt = now();
+          mutableDb.communicationLogs.unshift({
+            _id: createId(),
+            orderId: mutableOrder._id,
+            channel: "sms",
+            recipient: recipientPhone || recipientEmail,
+            message: `A payment prompt was sent for ${mutableOrder.orderNumber}. Approve it on your phone to continue processing.`,
+            status: "queued",
+            mandatory: true,
+            createdAt: now(),
+            updatedAt: now(),
+          });
+        });
+        return res.status(201).json(result);
+      } catch (error) {
+        return res.status(502).json({ message: (error as Error).message });
+      }
+    }
+
+    const updated = await updateDb((mutableDb) => {
+      const mutableOrder = findOrder(mutableDb, order._id);
+      mutableOrder.paymentCollectionStatus = "payment_prompt_sent";
+      mutableOrder.paymentCollectionMethod = normalizePaymentMethod(parsed.data.method);
+      mutableOrder.paymentCollectionAmount = amount;
+      mutableOrder.paymentPromptSentAt = now();
+      mutableOrder.paymentPromptRecipient = recipientPhone || recipientEmail;
+      mutableOrder.updatedAt = now();
+      mutableDb.communicationLogs.unshift({
+        _id: createId(),
+        orderId: mutableOrder._id,
+        channel: "sms",
+        recipient: recipientPhone || recipientEmail,
+        message: `Payment request for ${mutableOrder.orderNumber}: ${amount}. ${parsed.data.note ?? "Please settle payment to continue processing."}`,
+        status: "queued",
+        mandatory: true,
+        createdAt: now(),
+        updatedAt: now(),
+      });
+      return mutableOrder;
+    });
+    res.status(201).json(hydrateOrder(await loadDb(), updated));
+  },
+);
+
+app.post(
+  "/api/orders/:id/release-to-lab",
+  requireRoles("admin", "receptionist"),
+  async (req: AuthRequest, res) => {
+    const parsed = z
+      .object({
+        technicianId: z.string().trim().nullable().optional(),
+      })
+      .safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ message: "Invalid routing payload" });
+    }
+
+    const updated = await updateDb((db) => {
+      const order = getAccessibleOrderOrThrow(db, req, req.params.id);
+      if (order.status === "cancelled") {
+        throw new Error("Cancelled orders cannot be released to the laboratory workflow");
+      }
+      if (!order.receivedAt) {
+        throw new Error("Reception must confirm sample receipt before routing this case");
+      }
+      if (order.financialClearance !== "cleared") {
+        throw new Error("Financial clearance is still pending. Reception or finance must reconcile payment first");
+      }
+      const workflowPlan = getOrderWorkflowPlan(db, order);
+      order.triagedAt = order.triagedAt ?? now();
+      order.triagedBy = order.triagedBy ?? (req.user?._id ?? null);
+      order.workflowReleasedAt = order.workflowReleasedAt ?? now();
+      order.workflowReleasedBy = order.workflowReleasedBy ?? (req.user?._id ?? null);
+      if (parsed.data.technicianId) {
+        order.assignedTechnicianId = parsed.data.technicianId;
+      }
+      order.status = order.status === "draft" ? "received" : order.status;
+      order.updatedAt = now();
+      pushNotification(db, {
+        title: "Case released to the lab",
+        body: `${order.orderNumber} was routed to ${workflowPlan.routeTags.join(", ")} and is ready for laboratory processing.`,
+        siteId: order.siteId ?? null,
+        audienceRoles: workflowPlan.requiresTechnician
+          ? ["technician", "pathologist", "admin"]
+          : ["pathologist", "admin"],
+      });
+      appendRequestAudit(db, req, {
+        module: "Order Management & Intake",
+        action: "release_to_lab",
+        targetId: order._id,
+        orderId: order._id,
+        summary: `Reception released ${order.orderNumber} to the laboratory workflow`,
+        metadata: {
+          workflowTags: workflowPlan.routeTags,
+          technicianId: order.assignedTechnicianId,
+        },
+      });
+      return order;
+    }).catch((error: Error) => {
+      res.status(classifyWorkflowError(error)).json({ message: error.message });
+      return null;
+    });
+
+    if (!updated) {
+      return;
+    }
+
+    const db = await loadDb();
+    res.json(hydrateOrder(getScopedDb(req, db), findOrder(getScopedDb(req, db), updated._id)));
+  },
+);
 
 app.post(
   "/api/orders/:id/check-in-courier",
@@ -2257,6 +2911,33 @@ app.post(
         "in_transit",
         "received_at_lab",
       ]),
+      paymentCollectionStatus: z
+        .enum([
+          "unpaid",
+          "cash_with_courier",
+          "paid_online",
+          "payment_prompt_sent",
+          "cash_received_at_reception",
+          "reconciled",
+        ])
+        .optional(),
+      paymentCollectionMethod: z
+        .enum([
+          "cash",
+          "card",
+          "mobile_money",
+          "bank_transfer",
+          "mtn_mobile_money",
+          "orange_money",
+          "transfer",
+          "other",
+        ])
+        .optional(),
+      paymentCollectionAmount: z.number().nonnegative().optional(),
+      paymentCollectionReference: z.string().trim().optional(),
+      lat: z.number().optional(),
+      lng: z.number().optional(),
+      temperatureCelsius: z.number().optional(),
     })
     .safeParse(req.body);
   if (!parsed.success) {
@@ -2265,19 +2946,74 @@ app.post(
 
   const updated = await updateDb((db) => {
     const order = getAccessibleOrderOrThrow(db, req, req.params.id);
-    if (order.courierStatus === parsed.data.courierStatus) {
+    if (
+      order.courierStatus === parsed.data.courierStatus &&
+      parsed.data.paymentCollectionStatus === undefined &&
+      parsed.data.lat === undefined &&
+      parsed.data.lng === undefined
+    ) {
       return order;
     }
+    const timestamp = now();
     order.courierStatus = parsed.data.courierStatus;
-    if (parsed.data.courierStatus === "received_at_lab") {
-      const timestamp = now();
-      order.courierReceivedAt = timestamp;
-      order.receivedAt = order.receivedAt ?? timestamp;
-      if (order.status === "draft") {
-        order.status = "received";
-      }
+    if (parsed.data.paymentCollectionStatus) {
+      order.paymentCollectionStatus = parsed.data.paymentCollectionStatus;
+      order.paymentCollectionMethod = parsed.data.paymentCollectionMethod ?? order.paymentCollectionMethod ?? null;
+      order.paymentCollectionAmount = parsed.data.paymentCollectionAmount ?? order.paymentCollectionAmount ?? null;
+      order.paymentCollectionReference =
+        trimText(parsed.data.paymentCollectionReference) || order.paymentCollectionReference || null;
+      order.paymentCollectionDeclaredBy = req.user?._id ?? null;
+      order.paymentCollectionDeclaredAt = timestamp;
     }
-    order.updatedAt = now();
+    if (parsed.data.courierStatus === "received_at_lab") {
+      order.courierReceivedAt = timestamp;
+      pushNotification(db, {
+        title: "Sample arrived at reception",
+        body: `${order.orderNumber} has been delivered to reception and is awaiting receptionist confirmation.`,
+        siteId: order.siteId ?? null,
+        audienceRoles: ["receptionist", "admin"],
+      });
+      db.communicationLogs.unshift({
+        _id: createId(),
+        orderId: order._id,
+        channel: "sms",
+        recipient:
+          order.requesterNotificationPhone ||
+          order.requesterNotificationEmail ||
+          findPatient(db, order.patientId).phone,
+        message: `Your sample for ${order.orderNumber} has arrived at the XPath lab reception desk and is awaiting intake confirmation.`,
+        status: "queued",
+        mandatory: false,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      });
+    }
+    if (parsed.data.lat !== undefined && parsed.data.lng !== undefined) {
+      db.chainOfCustody.unshift({
+        _id: createId(),
+        specimenId: getSampleByOrder(db, order._id)?._id ?? order._id,
+        eventType:
+          parsed.data.courierStatus === "received_at_lab"
+            ? "handoff"
+            : parsed.data.courierStatus === "picked_up_on_way_to_lab"
+              ? "picked_up"
+              : "transferred",
+        location: `${parsed.data.lat},${parsed.data.lng}`,
+        condition:
+          parsed.data.temperatureCelsius === undefined
+            ? `Courier status ${parsed.data.courierStatus}`
+            : `Courier status ${parsed.data.courierStatus}; ${parsed.data.temperatureCelsius}C`,
+        actor: req.user?.name ?? req.user?.email ?? "courier",
+        handedOffTo:
+          parsed.data.courierStatus === "received_at_lab" ? "receptionist" : null,
+        gpsLat: parsed.data.lat,
+        gpsLng: parsed.data.lng,
+        temperatureCelsius: parsed.data.temperatureCelsius ?? null,
+        notes: order.pickupAddress ?? order.pickupPlaceName ?? undefined,
+        createdAt: timestamp,
+      });
+    }
+    order.updatedAt = timestamp;
     appendRequestAudit(db, req, {
       module: "Courier",
       action: "status_update",
@@ -2317,6 +3053,9 @@ app.post(
     const order = getAccessibleOrderOrThrow(db, req, req.params.id);
     if (order.status === "cancelled") {
       throw new Error("Cancelled orders cannot be assigned");
+    }
+    if (!order.workflowReleasedAt) {
+      throw new Error("Reception must route the tests and release this case to the lab before technician assignment");
     }
     if (!orderRequiresTechnicianWorkflow(order)) {
       throw new Error(
@@ -2373,6 +3112,9 @@ app.post(
     const order = getAccessibleOrderOrThrow(db, req, String(req.params.id));
     if (order.status === "cancelled") {
       throw new Error("Cancelled orders cannot be processed");
+    }
+    if (!order.workflowReleasedAt) {
+      throw new Error("Reception must route the tests and release this case to the lab before processing starts");
     }
     if (order.status === "draft" && !order.receivedAt && order.courierStatus !== "received_at_lab") {
       throw new Error("Receive the order before starting processing");
@@ -2590,6 +3332,9 @@ app.post(
 
   const updated = await updateDb((db) => {
     const order = getAccessibleOrderOrThrow(db, req, req.params.id);
+    if (!order.workflowReleasedAt && !["completed", "released"].includes(order.status)) {
+      throw new Error("Reception must route the tests and release this case to the lab before review");
+    }
     const workflowPlan = getOrderWorkflowPlan(db, order);
     if (workflowPlan.nextStageId && workflowPlan.nextStageId !== "pathologist_review") {
       throw new Error(`Complete ${workflowPlan.nextStageLabel ?? "the required workflow step"} before review`);
@@ -3680,17 +4425,24 @@ app.post("/api/workflow/complete/:id", async (req, res) => {
 });
 
 app.get("/api/notifications", async (req: AuthRequest, res) => {
+  const user = ensureUser(req);
   const db = getScopedDb(req, await loadDb());
-  res.json(db.notifications);
+  res.json(db.notifications.map((entry) => hydrateNotificationForUser(entry, user)));
 });
 
-app.post("/api/notifications/:id/read", async (req, res) => {
+app.post("/api/notifications/:id/read", async (req: AuthRequest, res) => {
+  const user = ensureUser(req);
   const updated = await updateDb((db) => {
     const notification = db.notifications.find((entry) => entry._id === req.params.id);
     if (!notification) {
       throw new Error("Notification not found");
     }
+    notification.readBy ??= [];
+    if (!notification.readBy.some((entry) => entry.userId === user._id)) {
+      notification.readBy.push({ userId: user._id, readAt: now() });
+    }
     notification.read = true;
+    notification.updatedAt = now();
     return notification;
   }).catch((error: Error) => {
     res.status(404).json({ message: error.message });
@@ -3701,7 +4453,7 @@ app.post("/api/notifications/:id/read", async (req, res) => {
     return;
   }
 
-  res.json(updated);
+  res.json(hydrateNotificationForUser(updated, user));
 });
 
 app.get("/api/project-review-comments", async (req: AuthRequest, res) => {
@@ -3880,6 +4632,7 @@ app.put("/api/test-types/:id", requireRoles("admin"), async (req, res) => {
 registerEnterpriseRoutes(app);
 registerProductionRoutes(app);
 registerOrderGovernanceRoutes(app);
+registerZohoBooksRoutes(app);
 registerHl7IntegrationRoutes(app);
 registerMaviancePaymentRoutes(app);
 

@@ -62,6 +62,7 @@ function createCleanSeedDatabase(db: Database): Database {
     accountingAccounts: [],
     accountingJournalEntries: [],
     accountingExportBatches: [],
+    zohoBooksSyncLogs: [],
     barcodes: [],
     barcodeScanEvents: [],
     chainOfCustody: [],
@@ -88,6 +89,7 @@ function createCleanSeedDatabase(db: Database): Database {
     vendorWebhookEvents: [],
     researchDatasets: [],
     siteTransfers: [],
+    moduleAuditTargets: [],
   };
 }
 
@@ -823,6 +825,7 @@ export function createSeedDatabase(): Database {
         body: "Courier pickup requests can be claimed from the courier page.",
         read: false,
         createdAt: "2026-03-30T20:00:00.000Z",
+        updatedAt: "2026-03-30T20:00:00.000Z",
       },
       {
         _id: "notif-2",
@@ -830,6 +833,7 @@ export function createSeedDatabase(): Database {
         body: "One order is ready for pathologist review and reporting.",
         read: false,
         createdAt: "2026-03-30T20:30:00.000Z",
+        updatedAt: "2026-03-30T20:30:00.000Z",
       },
     ],
     orderAmendments: [
@@ -1457,6 +1461,16 @@ export function createSeedDatabase(): Database {
         createdAt: "2026-03-31T07:41:00.000Z",
         updatedAt: "2026-03-31T07:41:00.000Z",
       },
+      {
+        _id: "integration-4",
+        name: "Zoho Books",
+        integrationType: "accounting",
+        status: "configured",
+        endpoint: "/api/accounting/zoho",
+        lastEventAt: null,
+        createdAt: "2026-04-15T08:00:00.000Z",
+        updatedAt: "2026-04-15T08:00:00.000Z",
+      },
     ],
     vendorConnectors: [
       {
@@ -1708,6 +1722,8 @@ export function createSeedDatabase(): Database {
         updatedAt: "2026-03-31T07:47:00.000Z",
       },
     ],
+    zohoBooksSyncLogs: [],
+    moduleAuditTargets: [],
     settings: {
       _id: "69b745b13507f37259f8186d",
       language: "english",

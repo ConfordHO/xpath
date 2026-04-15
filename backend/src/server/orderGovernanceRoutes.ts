@@ -5,7 +5,6 @@ import { z } from "zod";
 import { isSuperAdmin, normalizeSiteId, requireRoles, type AuthRequest } from "../auth.js";
 import { loadDb, updateDb } from "../store.js";
 import type {
-  AccountingJournalEntry,
   ApprovalRecord,
   Database,
   OcrIntakeJob,
@@ -259,31 +258,6 @@ async function extractOcrText(file: Express.Multer.File | undefined, fallbackTex
   } finally {
     await worker.terminate();
   }
-}
-
-function nextJournalNumber(db: Database) {
-  const year = new Date().getUTCFullYear();
-  return `JE-${year}-${String(db.accountingJournalEntries.length + 1).padStart(6, "0")}`;
-}
-
-function createJournalEntry(
-  db: Database,
-  input: Omit<
-    AccountingJournalEntry,
-    "_id" | "entryNumber" | "currency" | "createdAt" | "updatedAt"
-  >,
-) {
-  const timestamp = now();
-  const entry: AccountingJournalEntry = {
-    _id: createId(),
-    entryNumber: nextJournalNumber(db),
-    currency: db.settings.currency,
-    createdAt: timestamp,
-    updatedAt: timestamp,
-    ...input,
-  };
-  db.accountingJournalEntries.push(entry);
-  return entry;
 }
 
 function applyOrderChanges(order: Order, changes: Partial<Order>) {
@@ -888,150 +862,6 @@ export function registerOrderGovernanceRoutes(app: express.Express) {
     res.json(amendment);
   });
 
-  app.get("/api/accounting/accounts", requireRoles("admin", "finance"), async (req: AuthRequest, res) => {
-    const db = scopeDbForUser(await loadDb(), ensureUser(req));
-    res.json(db.accountingAccounts.slice().sort((left, right) => left.code.localeCompare(right.code)));
-  });
-
-  app.post("/api/accounting/accounts", requireRoles("admin", "finance"), async (req: AuthRequest, res) => {
-    const parsed = z
-      .object({
-        code: z.string().trim().min(1),
-        name: z.string().trim().min(1),
-        type: z.enum(["asset", "liability", "equity", "revenue", "expense"]),
-        normalBalance: z.enum(["debit", "credit"]),
-        active: z.boolean().default(true),
-      })
-      .safeParse(req.body);
-    if (!parsed.success) {
-      return res.status(400).json({ message: "Invalid account payload" });
-    }
-    const created = await updateDb((db) => {
-      if (db.accountingAccounts.some((account) => account.code === parsed.data.code)) {
-        throw new Error("Account code already exists");
-      }
-      const timestamp = now();
-      const account = { _id: createId(), ...parsed.data, createdAt: timestamp, updatedAt: timestamp };
-      db.accountingAccounts.push(account);
-      audit(db, req, {
-        module: "Accounting",
-        action: "create_account",
-        targetId: account._id,
-        summary: `Chart of account ${account.code} created`,
-      });
-      return account;
-    }).catch((error: Error) => {
-      res.status(400).json({ message: error.message });
-      return null;
-    });
-    if (!created) return;
-    res.status(201).json(created);
-  });
-
-  app.post("/api/accounting/journal-entries", requireRoles("admin", "finance"), async (req: AuthRequest, res) => {
-    const parsed = z
-      .object({
-        debitAccount: z.string().trim().min(1),
-        creditAccount: z.string().trim().min(1),
-        amount: z.number().positive(),
-        memo: z.string().trim().min(1),
-        orderId: z.string().trim().nullable().optional(),
-        invoiceId: z.string().trim().nullable().optional(),
-      })
-      .safeParse(req.body);
-    if (!parsed.success) {
-      return res.status(400).json({ message: "Invalid journal entry payload" });
-    }
-    const created = await updateDb((db) => {
-      const entry = createJournalEntry(db, {
-        ...parsed.data,
-        paymentId: null,
-        refundId: null,
-        entryType: "adjustment",
-        status: "posted",
-        postedAt: now(),
-      });
-      audit(db, req, {
-        module: "Accounting",
-        action: "manual_journal",
-        targetId: entry._id,
-        orderId: entry.orderId ?? null,
-        summary: `Manual journal ${entry.entryNumber} posted`,
-      });
-      return entry;
-    });
-    res.status(201).json(created);
-  });
-
-  app.post("/api/accounting/journal-entries/:id/void", requireRoles("admin", "finance"), async (req: AuthRequest, res) => {
-    const parsed = z.object({ reason: z.string().trim().min(1) }).safeParse(req.body);
-    if (!parsed.success) {
-      return res.status(400).json({ message: "Void reason is required" });
-    }
-    const user = ensureUser(req);
-    const result = await updateDb((db) => {
-      const entry = db.accountingJournalEntries.find((item) => item._id === req.params.id);
-      if (!entry) {
-        throw new Error("Journal entry not found");
-      }
-      if (entry.status === "void") {
-        return { entry, reversal: db.accountingJournalEntries.find((item) => item.reversalOfEntryId === entry._id) ?? null };
-      }
-      entry.status = "void";
-      entry.voidedBy = user._id;
-      entry.voidedAt = now();
-      entry.voidReason = parsed.data.reason;
-      entry.updatedAt = now();
-      const reversal = createJournalEntry(db, {
-        orderId: entry.orderId ?? null,
-        invoiceId: entry.invoiceId ?? null,
-        paymentId: entry.paymentId ?? null,
-        refundId: entry.refundId ?? null,
-        entryType: entry.entryType,
-        debitAccount: entry.creditAccount,
-        creditAccount: entry.debitAccount,
-        amount: entry.amount,
-        memo: `Reversal of ${entry.entryNumber}: ${parsed.data.reason}`,
-        status: "posted",
-        postedAt: now(),
-        reversalOfEntryId: entry._id,
-      });
-      audit(db, req, {
-        module: "Accounting",
-        action: "void_journal",
-        targetId: entry._id,
-        orderId: entry.orderId ?? null,
-        summary: `Journal ${entry.entryNumber} voided with reversal ${reversal.entryNumber}`,
-      });
-      return { entry, reversal };
-    }).catch((error: Error) => {
-      res.status(404).json({ message: error.message });
-      return null;
-    });
-    if (!result) return;
-    res.json(result);
-  });
-
-  app.get("/api/accounting/trial-balance", requireRoles("admin", "finance"), async (req: AuthRequest, res) => {
-    const db = scopeDbForUser(await loadDb(), ensureUser(req));
-    const rows = db.accountingAccounts.map((account) => {
-      const debits = db.accountingJournalEntries
-        .filter((entry) => entry.status === "posted" && entry.debitAccount === account.name)
-        .reduce((sum, entry) => sum + entry.amount, 0);
-      const credits = db.accountingJournalEntries
-        .filter((entry) => entry.status === "posted" && entry.creditAccount === account.name)
-        .reduce((sum, entry) => sum + entry.amount, 0);
-      const balance = account.normalBalance === "debit" ? debits - credits : credits - debits;
-      return { account, debits, credits, balance };
-    });
-    res.json({
-      currency: db.settings.currency,
-      rows,
-      totalDebits: rows.reduce((sum, row) => sum + row.debits, 0),
-      totalCredits: rows.reduce((sum, row) => sum + row.credits, 0),
-    });
-  });
-
   app.post("/api/refunds/:id/approve", requireRoles("admin", "finance"), async (req: AuthRequest, res) => {
     const user = ensureUser(req);
     const refund = await updateDb((db) => {
@@ -1052,23 +882,7 @@ export function registerOrderGovernanceRoutes(app: express.Express) {
         record.status = "approved";
         record.approvedBy = user._id;
         record.approvedAt = now();
-        if (!record.reversalJournalEntryId) {
-          const order = findOrder(db, record.orderId);
-          const entry = createJournalEntry(db, {
-            orderId: record.orderId,
-            invoiceId: record.invoiceId ?? null,
-            paymentId: null,
-            refundId: record._id,
-            entryType: record.type,
-            debitAccount: "Refunds and Adjustments",
-            creditAccount: record.type === "refund" ? "Cash and Bank" : "Accounts Receivable",
-            amount: record.amount,
-            memo: `${record.type === "refund" ? "Refund" : "Billing adjustment"} approved for ${order.orderNumber}`,
-            status: "posted",
-            postedAt: now(),
-          });
-          record.reversalJournalEntryId = entry._id;
-        }
+        record.reversalJournalEntryId = null;
       }
       record.updatedAt = now();
       audit(db, req, {
@@ -1077,7 +891,12 @@ export function registerOrderGovernanceRoutes(app: express.Express) {
         targetId: record._id,
         orderId: record.orderId,
         summary: `Approval recorded for ${record.type} ${record._id}`,
-        metadata: { approvals: record.approvals.length, requiredApprovals: record.requiredApprovals },
+        metadata: {
+          approvals: record.approvals.length,
+          requiredApprovals: record.requiredApprovals,
+          accountingProvider: "zoho_books",
+          zohoSyncReady: true,
+        },
       });
       return record;
     }).catch((error: Error) => {

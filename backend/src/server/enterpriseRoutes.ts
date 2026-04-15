@@ -218,7 +218,10 @@ function registerCollectionRoutes<T extends { _id: string; createdAt: string; up
   });
 }
 
-function moduleAuditEntries() {
+function moduleAuditEntries(db?: Database) {
+  const targets = new Map(
+    (db?.moduleAuditTargets ?? []).map((entry) => [entry.moduleNumber, entry.targetReleaseDate]),
+  );
   return [
     {
       number: 1,
@@ -234,7 +237,7 @@ function moduleAuditEntries() {
       status: "implemented",
       productionReady: false,
       notes:
-        "Pricing, invoices, refunds, financial clearance, two-person refund/adjustment approvals, internal accounting, journal reversals, monthly ECharts analytics, and export APIs are implemented. Live Maviance settlement still needs credentials and reconciliation validation.",
+        "Pricing, invoices, refunds, financial clearance, two-person refund/adjustment approvals, monthly ECharts analytics, and Zoho Books-ready sync APIs are implemented. Live Zoho OAuth, organization mapping, and Maviance settlement validation still need production credentials.",
     },
     {
       number: 3,
@@ -378,7 +381,7 @@ function moduleAuditEntries() {
       status: "partial",
       productionReady: false,
       notes:
-        "Vendor APIs, webhook endpoints, readiness checks, accounting export, notification hooks, AI hooks, offline sync, and chat streaming exist. Partner certification and secret rotation remain pending.",
+        "Vendor APIs, webhook endpoints, readiness checks, Zoho accounting hooks, notification hooks, AI hooks, offline sync, and chat streaming exist. Partner certification and secret rotation remain pending.",
     },
     {
       number: 21,
@@ -412,7 +415,10 @@ function moduleAuditEntries() {
       notes:
         "Site scoping, transfers, and cross-site dashboard API work. No-code site-specific workflow overrides still need expansion.",
     },
-  ];
+  ].map((entry) => ({
+    ...entry,
+    targetReleaseDate: targets.get(entry.number) ?? null,
+  }));
 }
 
 export function registerEnterpriseRoutes(app: express.Express) {
@@ -692,7 +698,59 @@ export function registerEnterpriseRoutes(app: express.Express) {
   });
 
   app.get("/api/module-audit", requireRoles("admin"), async (_req, res) => {
-    res.json(moduleAuditEntries());
+    const db = await loadDb();
+    res.json(moduleAuditEntries(db));
+  });
+
+  app.put("/api/module-audit/:number/target-release-date", requireRoles("admin"), async (req: AuthRequest, res) => {
+    const parsed = z
+      .object({
+        targetReleaseDate: z.string().trim().nullable(),
+      })
+      .safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ message: "Invalid target release date payload" });
+    }
+
+    const moduleNumber = Number(req.params.number);
+    if (!Number.isInteger(moduleNumber)) {
+      return res.status(400).json({ message: "Module number must be an integer" });
+    }
+    const normalizedDate =
+      parsed.data.targetReleaseDate && parsed.data.targetReleaseDate.trim().length
+        ? parsed.data.targetReleaseDate.trim()
+        : null;
+    if (normalizedDate && !/^\d{4}-\d{2}-\d{2}$/.test(normalizedDate)) {
+      return res.status(400).json({ message: "Use YYYY-MM-DD for the target release date" });
+    }
+
+    const entries = await updateDb((db) => {
+      const existing = db.moduleAuditTargets.find((entry) => entry.moduleNumber === moduleNumber);
+      if (existing) {
+        existing.targetReleaseDate = normalizedDate;
+        existing.updatedAt = now();
+      } else {
+        db.moduleAuditTargets.push({
+          _id: createId(),
+          moduleNumber,
+          targetReleaseDate: normalizedDate,
+          createdAt: now(),
+          updatedAt: now(),
+        });
+      }
+      logAudit(
+        db,
+        "Module Audit",
+        "target_release_date_update",
+        `module-${moduleNumber}`,
+        actorName(req),
+        normalizedDate
+          ? `Target release date set to ${normalizedDate} for module ${moduleNumber}`
+          : `Target release date cleared for module ${moduleNumber}`,
+      );
+      return moduleAuditEntries(db);
+    });
+    res.json(entries);
   });
 
   app.get("/api/order-amendments", async (_req, res) => {

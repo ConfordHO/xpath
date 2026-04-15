@@ -49,8 +49,6 @@ import {
 import { errorMessage, PageError, useActionLock, useLoadable } from './shared'
 
 import type {
-  AccountingAccount,
-  AccountingJournalEntry,
   FinanceSummary,
   FinanceMonthlyDashboard,
   HydratedOrder,
@@ -59,6 +57,10 @@ import type {
   NotificationEntry,
   Report,
   Sample,
+  Doctor,
+  ZohoBooksConfig,
+  ZohoBooksOrganization,
+  ZohoBooksSyncLog,
 } from '../types'
 
 import { downloadPathologyReportPdf, downloadPdfDocument, formatDate, formatDateTime, formatMoney, paymentMethodLabel } from '../utils'
@@ -715,178 +717,280 @@ export function FinancePage() {
   )
 }
 
-type TrialBalanceResponse = {
-  currency: 'USD' | 'EUR' | 'XAF'
-  rows: Array<{
-    account: AccountingAccount
-    debits: number
-    credits: number
-    balance: number
-  }>
-  totalDebits: number
-  totalCredits: number
-}
-
 export function AccountingPage() {
-  const accountsState = useLoadable<AccountingAccount[]>([], [], async () => {
-    const response = await api.get<AccountingAccount[]>('/accounting/accounts')
+  const configState = useLoadable<ZohoBooksConfig | null>(null, [], async () => {
+    const response = await api.get<ZohoBooksConfig>('/accounting/zoho/config')
     return response.data
   })
-  const ledgerState = useLoadable<AccountingJournalEntry[]>([], [], async () => {
-    const response = await api.get<AccountingJournalEntry[]>('/accounting/ledger')
+  const logsState = useLoadable<ZohoBooksSyncLog[]>([], [], async () => {
+    const response = await api.get<ZohoBooksSyncLog[]>('/accounting/zoho/sync-logs')
     return response.data
   })
-  const trialBalanceState = useLoadable<TrialBalanceResponse | null>(null, [], async () => {
-    const response = await api.get<TrialBalanceResponse>('/accounting/trial-balance')
+  const doctorsState = useLoadable<Doctor[]>([], [], async () => {
+    const response = await api.get<Doctor[]>('/doctors')
+    return response.data
+  })
+  const ordersState = useLoadable<{ data: HydratedOrder[] }>({ data: [] }, [], async () => {
+    const response = await api.get('/orders', { params: { limit: 100 } })
+    return response.data
+  })
+  const financeSummaryState = useLoadable<FinanceSummary | null>(null, [], async () => {
+    const response = await api.get<FinanceSummary>('/finance/summary')
     return response.data
   })
   const [feedback, setFeedback] = useState<{ kind: 'success' | 'error'; message: string } | null>(null)
-  const [journalForm, setJournalForm] = useState({
-    debitAccount: 'Cash and Bank',
-    creditAccount: 'Pathology Revenue',
-    amount: 0,
-    memo: '',
+  const [grantToken, setGrantToken] = useState('')
+  const [organizations, setOrganizations] = useState<ZohoBooksOrganization[]>([])
+  const [organizationError, setOrganizationError] = useState<string | null>(null)
+  const [syncSelection, setSyncSelection] = useState({
+    doctorId: '',
     orderId: '',
-    invoiceId: '',
+    paymentId: '',
   })
 
   const refresh = () => {
-    accountsState.refresh()
-    ledgerState.refresh()
-    trialBalanceState.refresh()
+    configState.refresh()
+    logsState.refresh()
+    doctorsState.refresh()
+    ordersState.refresh()
+    financeSummaryState.refresh()
   }
 
-  const submitJournal = async () => {
+  const openAuthorizeUrl = async () => {
     setFeedback(null)
     try {
-      await api.post('/accounting/journal-entries', {
-        ...journalForm,
-        orderId: journalForm.orderId || null,
-        invoiceId: journalForm.invoiceId || null,
-      })
-      setJournalForm((prev) => ({ ...prev, amount: 0, memo: '', orderId: '', invoiceId: '' }))
-      refresh()
-      setFeedback({ kind: 'success', message: 'Manual journal entry posted.' })
-    } catch (journalError) {
-      setFeedback({ kind: 'error', message: errorMessage(journalError) })
+      const response = await api.get<{ authorizeUrl: string }>('/accounting/zoho/authorize-url')
+      window.open(response.data.authorizeUrl, '_blank', 'noopener,noreferrer')
+      setFeedback({ kind: 'success', message: 'Opened the Zoho Books consent screen in a new tab.' })
+    } catch (authorizeError) {
+      setFeedback({ kind: 'error', message: errorMessage(authorizeError) })
     }
   }
 
-  const voidJournal = async (entry: AccountingJournalEntry) => {
-    const reason = window.prompt(`Reason for voiding ${entry.entryNumber}`)
-    if (!reason) return
+  const exchangeGrantToken = async () => {
+    if (!grantToken.trim()) return
     try {
-      await api.post(`/accounting/journal-entries/${entry._id}/void`, { reason })
+      const response = await api.post<{ message: string; refreshToken: string | null }>('/accounting/zoho/exchange-token', {
+        grantToken: grantToken.trim(),
+      })
+      setGrantToken('')
       refresh()
-      setFeedback({ kind: 'success', message: `${entry.entryNumber} voided with reversal entry.` })
-    } catch (voidError) {
-      setFeedback({ kind: 'error', message: errorMessage(voidError) })
+      setFeedback({
+        kind: 'success',
+        message: response.data.refreshToken
+          ? 'Grant token exchanged. Copy the returned refresh token into backend/.env as ZOHO_BOOKS_REFRESH_TOKEN and restart the backend.'
+          : response.data.message,
+      })
+    } catch (exchangeError) {
+      setFeedback({ kind: 'error', message: errorMessage(exchangeError) })
     }
   }
 
-  if (accountsState.loading || ledgerState.loading || trialBalanceState.loading) {
-    return <LoadingPanel label="Loading accounting…" />
+  const loadOrganizations = async () => {
+    setOrganizationError(null)
+    try {
+      const response = await api.get<ZohoBooksOrganization[]>('/accounting/zoho/organizations')
+      setOrganizations(response.data)
+      setFeedback({ kind: 'success', message: 'Zoho organizations loaded.' })
+    } catch (organizationLoadError) {
+      setOrganizationError(errorMessage(organizationLoadError))
+    }
   }
 
-  const balanceChart = {
-    tooltip: { trigger: 'axis' },
-    legend: { data: ['Debits', 'Credits'] },
-    xAxis: { type: 'category', data: trialBalanceState.data?.rows.map((row) => row.account.code) ?? [] },
-    yAxis: { type: 'value' },
-    series: [
-      { name: 'Debits', type: 'bar', data: trialBalanceState.data?.rows.map((row) => row.debits) ?? [] },
-      { name: 'Credits', type: 'bar', data: trialBalanceState.data?.rows.map((row) => row.credits) ?? [] },
-    ],
+  const runDoctorSync = async () => {
+    if (!syncSelection.doctorId) return
+    try {
+      await api.post(`/accounting/zoho/sync/doctor/${syncSelection.doctorId}`)
+      setFeedback({ kind: 'success', message: 'Referral doctor synced to Zoho Books contacts.' })
+      logsState.refresh()
+    } catch (syncError) {
+      setFeedback({ kind: 'error', message: errorMessage(syncError) })
+    }
   }
+
+  const runOrderSync = async () => {
+    if (!syncSelection.orderId) return
+    try {
+      await api.post('/accounting/zoho/sync/order', { orderId: syncSelection.orderId })
+      setFeedback({ kind: 'success', message: 'Order invoice synced to Zoho Books.' })
+      refresh()
+    } catch (syncError) {
+      setFeedback({ kind: 'error', message: errorMessage(syncError) })
+    }
+  }
+
+  const runPaymentSync = async () => {
+    if (!syncSelection.paymentId) return
+    try {
+      await api.post('/accounting/zoho/sync/payment', { paymentId: syncSelection.paymentId })
+      setFeedback({ kind: 'success', message: 'Payment synced to Zoho Books.' })
+      refresh()
+    } catch (syncError) {
+      setFeedback({ kind: 'error', message: errorMessage(syncError) })
+    }
+  }
+
+  if (
+    configState.loading
+    || logsState.loading
+    || doctorsState.loading
+    || ordersState.loading
+    || financeSummaryState.loading
+  ) {
+    return <LoadingPanel label="Loading Zoho Books…" />
+  }
+
+  const syncedInvoices = ordersState.data.data.filter((order) => order.financialClearance === 'cleared').length
+  const successfulInvoiceLogs = logsState.data.filter((entry) => entry.operation === 'sync_invoice' && entry.status === 'success').length
+  const successfulPaymentLogs = logsState.data.filter((entry) => entry.operation === 'sync_payment' && entry.status === 'success').length
+  const failedLogs = logsState.data.filter((entry) => entry.status === 'failed').length
+  const paymentOptions = financeSummaryState.data?.transactions.filter((entry) => entry.status === 'completed') ?? []
 
   return (
     <Stack spacing={3}>
       <PageHeader
         eyebrow="Accounting"
-        title="Internal accounting workspace"
-        description="A simple in-system accounting tool for chart of accounts, posted journals, trial balance, and controlled journal reversals."
+        title="Zoho Books integration workspace"
+        description="The LIMS no longer runs a separate internal ledger. Orders, invoices, payments, and referral contacts are prepared here for Zoho Books via OAuth, organization mapping, and sync logs."
         action={<Button onClick={refresh}>Refresh</Button>}
       />
       {feedback ? <Alert severity={feedback.kind}>{feedback.message}</Alert> : null}
-      {accountsState.error ? <Alert severity="error">{accountsState.error}</Alert> : null}
-      {ledgerState.error ? <Alert severity="error">{ledgerState.error}</Alert> : null}
-      {trialBalanceState.error ? <Alert severity="error">{trialBalanceState.error}</Alert> : null}
+      {configState.error ? <Alert severity="error">{configState.error}</Alert> : null}
+      {logsState.error ? <Alert severity="error">{logsState.error}</Alert> : null}
+      {doctorsState.error ? <Alert severity="error">{doctorsState.error}</Alert> : null}
+      {ordersState.error ? <Alert severity="error">{ordersState.error}</Alert> : null}
+      {financeSummaryState.error ? <Alert severity="error">{financeSummaryState.error}</Alert> : null}
 
       <Box sx={{ display: 'grid', gap: 2, gridTemplateColumns: { xs: '1fr', md: 'repeat(3, 1fr)' } }}>
-        <MetricCard label="Total debits" value={formatMoney(trialBalanceState.data?.totalDebits ?? 0, trialBalanceState.data?.currency ?? 'XAF')} />
-        <MetricCard label="Total credits" value={formatMoney(trialBalanceState.data?.totalCredits ?? 0, trialBalanceState.data?.currency ?? 'XAF')} />
-        <MetricCard label="Posted journals" value={String(ledgerState.data.filter((entry) => entry.status === 'posted').length)} />
+        <MetricCard label="OAuth ready" value={configState.data?.clientConfigured && configState.data?.redirectConfigured ? 'Yes' : 'No'} helper={configState.data?.organizationConfigured ? 'Organization set' : 'Set organization'} />
+        <MetricCard label="Invoice syncs" value={String(successfulInvoiceLogs)} helper={`${syncedInvoices} financially cleared orders`} />
+        <MetricCard label="Payment syncs" value={String(successfulPaymentLogs)} helper={`${failedLogs} failed sync attempts`} />
       </Box>
 
-      <SectionCard title="Trial balance" description="Debit and credit activity is visualized from posted journal entries. Voided entries are excluded and their reversals are posted separately.">
-        {trialBalanceState.data?.rows.length ? (
-          <ReactECharts option={balanceChart} style={{ height: 300, width: '100%' }} />
-        ) : (
-          <EmptyState title="No trial balance yet" body="Post payments, refunds, adjustments, or manual journals to populate the trial balance." />
-        )}
-      </SectionCard>
-
-      <SectionCard title="Post manual journal entry" description="Use for internal adjustments that are not generated by payments or refund approvals.">
+      <SectionCard title="OAuth and organization setup" description="Zoho Books uses the server-side OAuth flow. Generate consent, exchange the one-time grant token, then place the refresh token into backend/.env for long-lived syncs.">
         <Stack spacing={2}>
-          <Box sx={{ display: 'grid', gap: 2, gridTemplateColumns: { xs: '1fr', md: '1fr 1fr 0.6fr' } }}>
-            <FormControl>
-              <InputLabel>Debit account</InputLabel>
-              <Select label="Debit account" value={journalForm.debitAccount} onChange={(event) => setJournalForm((prev) => ({ ...prev, debitAccount: String(event.target.value) }))}>
-                {accountsState.data.map((account) => (
-                  <MenuItem key={account._id} value={account.name}>{account.code} · {account.name}</MenuItem>
-                ))}
-              </Select>
-            </FormControl>
-            <FormControl>
-              <InputLabel>Credit account</InputLabel>
-              <Select label="Credit account" value={journalForm.creditAccount} onChange={(event) => setJournalForm((prev) => ({ ...prev, creditAccount: String(event.target.value) }))}>
-                {accountsState.data.map((account) => (
-                  <MenuItem key={account._id} value={account.name}>{account.code} · {account.name}</MenuItem>
-                ))}
-              </Select>
-            </FormControl>
-            <TextField label="Amount" type="number" value={journalForm.amount} onChange={(event) => setJournalForm((prev) => ({ ...prev, amount: Number(event.target.value) }))} />
+          <Box sx={{ display: 'grid', gap: 2, gridTemplateColumns: { xs: '1fr', md: 'repeat(4, 1fr)' } }}>
+            <MetricCard label="Client" value={configState.data?.clientConfigured ? 'Configured' : 'Missing'} />
+            <MetricCard label="Redirect URI" value={configState.data?.redirectConfigured ? 'Configured' : 'Missing'} />
+            <MetricCard label="Refresh token" value={configState.data?.refreshTokenConfigured ? 'Configured' : 'Missing'} />
+            <MetricCard label="Organization" value={configState.data?.organizationConfigured ? (configState.data.organizationId ?? 'Configured') : 'Missing'} />
           </Box>
-          <TextField label="Memo" value={journalForm.memo} onChange={(event) => setJournalForm((prev) => ({ ...prev, memo: event.target.value }))} />
           <Box sx={{ display: 'grid', gap: 2, gridTemplateColumns: { xs: '1fr', md: '1fr 1fr' } }}>
-            <TextField label="Order ID (optional)" value={journalForm.orderId} onChange={(event) => setJournalForm((prev) => ({ ...prev, orderId: event.target.value }))} />
-            <TextField label="Invoice ID (optional)" value={journalForm.invoiceId} onChange={(event) => setJournalForm((prev) => ({ ...prev, invoiceId: event.target.value }))} />
+            <Button variant="contained" onClick={openAuthorizeUrl}>Open Zoho consent screen</Button>
+            <Button onClick={loadOrganizations}>Load organizations</Button>
           </Box>
-          <Button variant="contained" onClick={submitJournal}>Post journal entry</Button>
+          {organizationError ? <Alert severity="error">{organizationError}</Alert> : null}
+          {organizations.length ? (
+            <Stack spacing={1}>
+              {organizations.map((organization) => (
+                <Paper key={organization.organization_id} variant="outlined" sx={{ p: 2 }}>
+                  <Typography fontWeight={700}>{organization.name}</Typography>
+                  <Typography color="text.secondary">
+                    {organization.organization_id}
+                    {organization.country ? ` · ${organization.country}` : ''}
+                    {organization.currency_code ? ` · ${organization.currency_code}` : ''}
+                  </Typography>
+                </Paper>
+              ))}
+            </Stack>
+          ) : null}
+          <TextField
+            label="Grant token from Zoho consent redirect"
+            value={grantToken}
+            onChange={(event) => setGrantToken(event.target.value)}
+            helperText="Exchange once, then save the returned refresh token into backend/.env as ZOHO_BOOKS_REFRESH_TOKEN."
+          />
+          <Button variant="outlined" disabled={!grantToken.trim()} onClick={exchangeGrantToken}>
+            Exchange grant token
+          </Button>
         </Stack>
       </SectionCard>
 
-      <SectionCard title="Journal ledger and reversal controls" description="Voiding a journal creates a posted reversing entry and marks the original as void.">
+      <SectionCard title="Manual sync actions" description="Use these controls while onboarding Zoho Books or reconciling edge cases. Orders sync invoices, payments sync customer payments, and referral doctors sync as Zoho contacts.">
+        <Stack spacing={2}>
+          <FormControl fullWidth>
+            <InputLabel>Referral doctor</InputLabel>
+            <Select
+              label="Referral doctor"
+              value={syncSelection.doctorId}
+              onChange={(event) => setSyncSelection((prev) => ({ ...prev, doctorId: String(event.target.value) }))}
+            >
+              <MenuItem value="">Select doctor</MenuItem>
+              {doctorsState.data.map((doctor) => (
+                <MenuItem key={doctor._id} value={doctor._id}>
+                  {doctor.name} · {doctor.email}
+                </MenuItem>
+              ))}
+            </Select>
+          </FormControl>
+          <Button disabled={!syncSelection.doctorId} onClick={runDoctorSync}>Sync doctor contact</Button>
+
+          <FormControl fullWidth>
+            <InputLabel>Order invoice</InputLabel>
+            <Select
+              label="Order invoice"
+              value={syncSelection.orderId}
+              onChange={(event) => setSyncSelection((prev) => ({ ...prev, orderId: String(event.target.value) }))}
+            >
+              <MenuItem value="">Select order</MenuItem>
+              {ordersState.data.data.map((order) => (
+                <MenuItem key={order._id} value={order._id}>
+                  {order.orderNumber} · {order.patient.firstName} {order.patient.lastName}
+                </MenuItem>
+              ))}
+            </Select>
+          </FormControl>
+          <Button disabled={!syncSelection.orderId} onClick={runOrderSync}>Sync invoice to Zoho</Button>
+
+          <FormControl fullWidth>
+            <InputLabel>Completed payment</InputLabel>
+            <Select
+              label="Completed payment"
+              value={syncSelection.paymentId}
+              onChange={(event) => setSyncSelection((prev) => ({ ...prev, paymentId: String(event.target.value) }))}
+            >
+              <MenuItem value="">Select payment</MenuItem>
+              {paymentOptions.map((payment) => (
+                <MenuItem key={payment._id} value={payment._id}>
+                  {payment.order.orderNumber} · {formatMoney(payment.amount)} · {paymentMethodLabel(payment.method)}
+                </MenuItem>
+              ))}
+            </Select>
+          </FormControl>
+          <Button disabled={!syncSelection.paymentId} onClick={runPaymentSync}>Sync payment to Zoho</Button>
+        </Stack>
+      </SectionCard>
+
+      <SectionCard title="Zoho sync log" description="Every OAuth, contact, invoice, and payment action is tracked here for support and production validation.">
         <TableContainer sx={{ maxHeight: 520 }}>
           <Table stickyHeader>
             <TableHead>
               <TableRow>
-                <TableCell>Entry</TableCell>
-                <TableCell>Type</TableCell>
-                <TableCell>Debit</TableCell>
-                <TableCell>Credit</TableCell>
-                <TableCell>Amount</TableCell>
+                <TableCell>When</TableCell>
+                <TableCell>Operation</TableCell>
+                <TableCell>Entity</TableCell>
                 <TableCell>Status</TableCell>
-                <TableCell>Actions</TableCell>
+                <TableCell>Endpoint</TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
-              {ledgerState.data.map((entry) => (
+              {logsState.data.map((entry) => (
                 <TableRow key={entry._id}>
-                  <TableCell>{entry.entryNumber}</TableCell>
-                  <TableCell>{entry.entryType}</TableCell>
-                  <TableCell>{entry.debitAccount}</TableCell>
-                  <TableCell>{entry.creditAccount}</TableCell>
-                  <TableCell>{formatMoney(entry.amount, entry.currency)}</TableCell>
-                  <TableCell><Chip size="small" label={entry.status} color={entry.status === 'posted' ? 'success' : entry.status === 'void' ? 'default' : 'warning'} /></TableCell>
+                  <TableCell>{formatDateTime(entry.createdAt)}</TableCell>
+                  <TableCell>{entry.operation}</TableCell>
+                  <TableCell>{entry.entityType}{entry.orderId ? ` · ${entry.orderId}` : ''}</TableCell>
                   <TableCell>
-                    <Button size="small" disabled={entry.status === 'void'} onClick={() => voidJournal(entry)}>Void with reversal</Button>
+                    <Chip size="small" label={entry.status} color={entry.status === 'success' ? 'success' : entry.status === 'failed' ? 'error' : 'warning'} />
                   </TableCell>
+                  <TableCell>{entry.endpoint}</TableCell>
                 </TableRow>
               ))}
             </TableBody>
           </Table>
         </TableContainer>
+        {!logsState.data.length ? (
+          <EmptyState title="No Zoho sync activity yet" body="Generate an authorization URL or sync a doctor, order, or payment to populate this log." />
+        ) : null}
       </SectionCard>
     </Stack>
   )
@@ -899,6 +1003,14 @@ export function CourierPage() {
     return response.data
   })
   const [feedback, setFeedback] = useState<{ kind: 'success' | 'error'; message: string } | null>(null)
+  const [pickupDialog, setPickupDialog] = useState<{
+    orderId: string
+    paymentCollectionStatus: 'unpaid' | 'cash_with_courier' | 'paid_online'
+    paymentCollectionMethod: 'cash' | 'mtn_mobile_money' | 'orange_money' | 'card' | 'transfer' | 'other'
+    paymentCollectionAmount: number
+    paymentCollectionReference: string
+    temperatureCelsius: number | ''
+  } | null>(null)
 
   const queue = ordersState.data.data.filter((order) => order.courierStatus)
   const pickupRequests = queue.filter((order) => order.courierStatus === 'ready_for_pickup')
@@ -911,21 +1023,69 @@ export function CourierPage() {
         ? 'at_site_for_pickup'
         : order.courierStatus === 'at_site_for_pickup'
           ? 'picked_up_on_way_to_lab'
-          : order.courierStatus === 'picked_up_on_way_to_lab'
-            ? 'in_transit'
-            : 'received_at_lab'
+        : order.courierStatus === 'picked_up_on_way_to_lab'
+          ? 'in_transit'
+          : 'received_at_lab'
 
-  const advanceStatus = async (order: HydratedOrder) => {
+  const collectGeo = async () => {
+    if (typeof window === 'undefined' || !('geolocation' in navigator)) {
+      return {}
+    }
+    try {
+      const position = await new Promise<GeolocationPosition>((resolve, reject) => {
+        navigator.geolocation.getCurrentPosition(resolve, reject, {
+          enableHighAccuracy: true,
+          timeout: 5000,
+          maximumAge: 30000,
+        })
+      })
+      return {
+        lat: position.coords.latitude,
+        lng: position.coords.longitude,
+      }
+    } catch {
+      return {}
+    }
+  }
+
+  const submitCourierAdvance = async (order: HydratedOrder, extras: Record<string, unknown> = {}) => {
     const next = nextCourierStatus(order)
     await actionLock.runLocked(`courier-${order._id}-${next}`, async () => {
       try {
-        await api.post(`/orders/${order._id}/courier-status`, { courierStatus: next })
+        const geo = await collectGeo()
+        await api.post(`/orders/${order._id}/courier-status`, { courierStatus: next, ...geo, ...extras })
         setFeedback({ kind: 'success', message: `${order.orderNumber} advanced to the next courier step.` })
         ordersState.refresh()
       } catch (advanceError) {
         setFeedback({ kind: 'error', message: errorMessage(advanceError) })
       }
     })
+  }
+
+  const advanceStatus = async (order: HydratedOrder) => {
+    if (order.courierStatus === 'at_site_for_pickup') {
+      setPickupDialog({
+        orderId: order._id,
+        paymentCollectionStatus: order.paymentCollectionStatus === 'paid_online' ? 'paid_online' : 'unpaid',
+        paymentCollectionMethod:
+          order.paymentCollectionMethod === 'cash'
+            ? 'cash'
+            : order.paymentCollectionMethod === 'mtn_mobile_money'
+              ? 'mtn_mobile_money'
+              : order.paymentCollectionMethod === 'orange_money'
+                ? 'orange_money'
+                : order.paymentCollectionMethod === 'card'
+                  ? 'card'
+                  : order.paymentCollectionMethod === 'transfer'
+                    ? 'transfer'
+                    : 'other',
+        paymentCollectionAmount: order.paymentCollectionAmount ?? 0,
+        paymentCollectionReference: order.paymentCollectionReference ?? '',
+        temperatureCelsius: '',
+      })
+      return
+    }
+    await submitCourierAdvance(order)
   }
 
   const nextActionLabel = (order: HydratedOrder) => {
@@ -1045,6 +1205,110 @@ export function CourierPage() {
           <EmptyState title="No active courier jobs." body="Orders that have entered the courier lifecycle will appear here." />
         )}
       </SectionCard>
+      <Dialog open={!!pickupDialog} onClose={() => setPickupDialog(null)} maxWidth="sm" fullWidth>
+        <DialogTitle>Confirm sample pickup</DialogTitle>
+        <DialogContent>
+          <Stack spacing={2} sx={{ mt: 1 }}>
+            <FormControl fullWidth>
+              <InputLabel>Payment status at pickup</InputLabel>
+              <Select
+                label="Payment status at pickup"
+                value={pickupDialog?.paymentCollectionStatus ?? 'unpaid'}
+                onChange={(event) =>
+                  setPickupDialog((prev) =>
+                    prev
+                      ? {
+                          ...prev,
+                          paymentCollectionStatus: String(event.target.value) as 'unpaid' | 'cash_with_courier' | 'paid_online',
+                        }
+                      : null,
+                  )
+                }
+              >
+                <MenuItem value="unpaid">Not paid</MenuItem>
+                <MenuItem value="cash_with_courier">Cash handed to courier</MenuItem>
+                <MenuItem value="paid_online">Paid online already</MenuItem>
+              </Select>
+            </FormControl>
+            <FormControl fullWidth>
+              <InputLabel>Payment method</InputLabel>
+              <Select
+                label="Payment method"
+                value={pickupDialog?.paymentCollectionMethod ?? 'cash'}
+                onChange={(event) =>
+                  setPickupDialog((prev) =>
+                    prev
+                      ? {
+                          ...prev,
+                          paymentCollectionMethod: String(event.target.value) as 'cash' | 'mtn_mobile_money' | 'orange_money' | 'card' | 'transfer' | 'other',
+                        }
+                      : null,
+                  )
+                }
+              >
+                <MenuItem value="cash">Cash</MenuItem>
+                <MenuItem value="mtn_mobile_money">MTN Mobile Money</MenuItem>
+                <MenuItem value="orange_money">Orange Money</MenuItem>
+                <MenuItem value="card">Card</MenuItem>
+                <MenuItem value="transfer">Transfer</MenuItem>
+                <MenuItem value="other">Other</MenuItem>
+              </Select>
+            </FormControl>
+            <TextField
+              label="Amount collected"
+              type="number"
+              value={pickupDialog?.paymentCollectionAmount ?? 0}
+              onChange={(event) =>
+                setPickupDialog((prev) => (prev ? { ...prev, paymentCollectionAmount: Number(event.target.value) } : null))
+              }
+            />
+            <TextField
+              label="Payment reference"
+              value={pickupDialog?.paymentCollectionReference ?? ''}
+              onChange={(event) =>
+                setPickupDialog((prev) => (prev ? { ...prev, paymentCollectionReference: event.target.value } : null))
+              }
+            />
+            <TextField
+              label="Transport temperature (°C)"
+              type="number"
+              value={pickupDialog?.temperatureCelsius ?? ''}
+              onChange={(event) =>
+                setPickupDialog((prev) =>
+                  prev
+                    ? {
+                        ...prev,
+                        temperatureCelsius: event.target.value === '' ? '' : Number(event.target.value),
+                      }
+                    : null,
+                )
+              }
+            />
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setPickupDialog(null)}>Cancel</Button>
+          <Button
+            variant="contained"
+            disabled={!pickupDialog || actionLock.isPending(`courier-${pickupDialog.orderId}-picked_up_on_way_to_lab`)}
+            onClick={async () => {
+              if (!pickupDialog) return
+              const order = queue.find((entry) => entry._id === pickupDialog.orderId)
+              if (!order) return
+              await submitCourierAdvance(order, {
+                paymentCollectionStatus: pickupDialog.paymentCollectionStatus,
+                paymentCollectionMethod: pickupDialog.paymentCollectionMethod,
+                paymentCollectionAmount: pickupDialog.paymentCollectionAmount,
+                paymentCollectionReference: pickupDialog.paymentCollectionReference,
+                temperatureCelsius: pickupDialog.temperatureCelsius === '' ? undefined : pickupDialog.temperatureCelsius,
+              })
+              setPickupDialog(null)
+            }}
+          >
+            Confirm pickup
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Stack>
   )
 }

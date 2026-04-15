@@ -3,9 +3,6 @@ import { z } from "zod";
 
 import { requireRoles, type AuthRequest } from "../auth.js";
 import {
-  ACCOUNTING_API_BASE_URL,
-  ACCOUNTING_API_KEY,
-  ACCOUNTING_PROVIDER,
   AI_API_BASE_URL,
   AI_API_KEY,
   AI_PROVIDER,
@@ -18,11 +15,15 @@ import {
   WHATSAPP_API_BASE_URL,
   WHATSAPP_PHONE_NUMBER_ID,
   WHATSAPP_PROVIDER,
+  ZOHO_BOOKS_CLIENT_ID,
+  ZOHO_BOOKS_CLIENT_SECRET,
+  ZOHO_BOOKS_ENABLED,
+  ZOHO_BOOKS_ORGANIZATION_ID,
+  ZOHO_BOOKS_REDIRECT_URI,
+  ZOHO_BOOKS_REFRESH_TOKEN,
 } from "../config.js";
 import { loadDb, updateDb } from "../store.js";
 import type {
-  AccountingJournalEntry,
-  BarcodeRecord,
   Database,
   InternalChatMessage,
   InternalChatThread,
@@ -97,38 +98,6 @@ function lastTwelveMonths() {
   return months;
 }
 
-function nextJournalNumber(db: Database) {
-  const year = new Date().getUTCFullYear();
-  return `JE-${year}-${String(db.accountingJournalEntries.length + 1).padStart(6, "0")}`;
-}
-
-function buildPaymentJournal(db: Database, paymentId: string): AccountingJournalEntry | null {
-  const payment = db.payments.find((entry) => entry._id === paymentId);
-  if (!payment || payment.status !== "completed") {
-    return null;
-  }
-  const order = db.orders.find((entry) => entry._id === payment.orderId);
-  const timestamp = payment.createdAt ?? now();
-  return {
-    _id: createId(),
-    entryNumber: nextJournalNumber(db),
-    orderId: payment.orderId,
-    invoiceId: null,
-    paymentId: payment._id,
-    refundId: null,
-    entryType: "payment",
-    debitAccount: "Cash and Bank",
-    creditAccount: "Accounts Receivable",
-    amount: payment.amount,
-    currency: db.settings.currency,
-    memo: `Payment received${order ? ` for ${order.orderNumber}` : ""}`,
-    status: "posted",
-    postedAt: timestamp,
-    createdAt: timestamp,
-    updatedAt: timestamp,
-  };
-}
-
 function getValueByPath(source: unknown, path: string) {
   return path.split(".").reduce<unknown>((value, key) => {
     if (!value || typeof value !== "object") {
@@ -181,6 +150,11 @@ export function registerProductionRoutes(app: express.Express) {
       const db = scopeDbForUser(await loadDb(), ensureUser(req));
       const auditVerification = verifyAuditTrail(db.auditEvents);
       const tatDashboard = buildTatDashboard(db, { range: "monthly" });
+      const syncedInvoices = db.invoices.filter((entry) => entry.accountingSyncStatus === "success").length;
+      const pendingInvoices = db.invoices.filter((entry) => entry.accountingSyncStatus !== "success").length;
+      const syncedPayments = db.payments.filter((entry) => entry.accountingSyncStatus === "success").length;
+      const pendingPayments = db.payments.filter((entry) => entry.accountingSyncStatus !== "success").length;
+      const failedZohoSyncs = db.zohoBooksSyncLogs.filter((entry) => entry.status === "failed").length;
       res.json({
         generatedAt: now(),
         audit: {
@@ -189,10 +163,20 @@ export function registerProductionRoutes(app: express.Express) {
           latestSequence: auditVerification.latestSequence,
         },
         finance: {
-          postedJournalEntries: db.accountingJournalEntries.filter((entry) => entry.status === "posted").length,
-          exportBatches: db.accountingExportBatches.length,
-          provider: ACCOUNTING_PROVIDER,
-          providerConfigured: Boolean(ACCOUNTING_API_BASE_URL && ACCOUNTING_API_KEY),
+          provider: "zoho_books",
+          providerConfigured: Boolean(
+            ZOHO_BOOKS_ENABLED &&
+              ZOHO_BOOKS_CLIENT_ID &&
+              ZOHO_BOOKS_CLIENT_SECRET &&
+              ZOHO_BOOKS_REDIRECT_URI &&
+              ZOHO_BOOKS_REFRESH_TOKEN &&
+              ZOHO_BOOKS_ORGANIZATION_ID,
+          ),
+          syncedInvoices,
+          pendingInvoices,
+          syncedPayments,
+          pendingPayments,
+          failedZohoSyncs,
         },
         traceability: {
           chainOfCustodyEvents: db.chainOfCustody.length,
@@ -257,113 +241,6 @@ export function registerProductionRoutes(app: express.Express) {
       });
     },
   );
-
-  app.get("/api/accounting/ledger", requireRoles("admin", "finance"), async (req: AuthRequest, res) => {
-    const db = scopeDbForUser(await loadDb(), ensureUser(req));
-    res.json(db.accountingJournalEntries);
-  });
-
-  app.post(
-    "/api/accounting/rebuild-ledger",
-    requireRoles("admin", "finance"),
-    async (req: AuthRequest, res) => {
-      const entries = await updateDb((db) => {
-        const existingPaymentIds = new Set(
-          db.accountingJournalEntries.map((entry) => entry.paymentId).filter(Boolean),
-        );
-        for (const payment of db.payments) {
-          if (existingPaymentIds.has(payment._id)) {
-            continue;
-          }
-          const journal = buildPaymentJournal(db, payment._id);
-          if (journal) {
-            db.accountingJournalEntries.push(journal);
-          }
-        }
-        audit(db, req, {
-          module: "Accounting",
-          action: "rebuild_ledger",
-          targetId: "accounting-ledger",
-          summary: "Accounting ledger rebuilt from completed payment records",
-        });
-        return db.accountingJournalEntries;
-      });
-      res.json(entries);
-    },
-  );
-
-  app.post("/api/accounting/export", requireRoles("admin", "finance"), async (req: AuthRequest, res) => {
-    const parsed = z
-      .object({
-        entryIds: z.array(z.string().trim().min(1)).optional(),
-        provider: z.enum(["generic", "quickbooks", "sage", "odoo", "custom"]).default("generic"),
-      })
-      .safeParse(req.body);
-    if (!parsed.success) {
-      return res.status(400).json({ message: "Invalid accounting export payload" });
-    }
-
-    const batch = await updateDb(async (db) => {
-      const actor = ensureUser(req);
-      const entries = db.accountingJournalEntries.filter(
-        (entry) =>
-          entry.status === "posted" &&
-          (!parsed.data.entryIds?.length || parsed.data.entryIds.includes(entry._id)),
-      );
-      const payload = {
-        provider: parsed.data.provider,
-        currency: db.settings.currency,
-        generatedAt: now(),
-        entries,
-      };
-      const batchRecord: Database["accountingExportBatches"][number] = {
-        _id: createId(),
-        provider: parsed.data.provider,
-        status: "queued" as const,
-        entryIds: entries.map((entry) => entry._id),
-        endpoint: ACCOUNTING_API_BASE_URL || null,
-        requestPayload: JSON.stringify(payload),
-        responsePayload: null,
-        errorMessage: null,
-        exportedBy: actor._id,
-        exportedAt: null,
-        createdAt: now(),
-        updatedAt: now(),
-      };
-
-      if (ACCOUNTING_API_BASE_URL) {
-        try {
-          const response = await fetch(new URL("/journal-entries", ACCOUNTING_API_BASE_URL), {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              ...(ACCOUNTING_API_KEY ? { Authorization: `Bearer ${ACCOUNTING_API_KEY}` } : {}),
-            },
-            body: JSON.stringify(payload),
-          });
-          batchRecord.status = response.ok ? "sent" : "failed";
-          batchRecord.responsePayload = await response.text();
-          batchRecord.errorMessage = response.ok ? null : `Accounting API returned ${response.status}`;
-          batchRecord.exportedAt = now();
-        } catch (error) {
-          batchRecord.status = "failed";
-          batchRecord.errorMessage = (error as Error).message;
-        }
-      }
-
-      db.accountingExportBatches.unshift(batchRecord);
-      audit(db, req, {
-        module: "Accounting",
-        action: "export",
-        targetId: batchRecord._id,
-        summary: `Accounting export ${batchRecord.status}`,
-        metadata: { entryCount: entries.length, provider: batchRecord.provider },
-      });
-      return batchRecord;
-    });
-
-    res.status(201).json(batch);
-  });
 
   app.get("/api/validation-rules", requireRoles("admin"), async (req: AuthRequest, res) => {
     const db = scopeDbForUser(await loadDb(), ensureUser(req));
@@ -1161,9 +1038,25 @@ export function registerProductionRoutes(app: express.Express) {
   app.get("/api/integrations/provider-readiness", requireRoles("admin"), async (_req, res) => {
     res.json({
       accounting: {
-        provider: ACCOUNTING_PROVIDER,
-        configured: Boolean(ACCOUNTING_API_BASE_URL && ACCOUNTING_API_KEY),
-        requiredEnv: ["ACCOUNTING_API_BASE_URL", "ACCOUNTING_API_KEY"],
+        provider: "zoho_books",
+        configured: Boolean(
+          ZOHO_BOOKS_ENABLED &&
+            ZOHO_BOOKS_CLIENT_ID &&
+            ZOHO_BOOKS_CLIENT_SECRET &&
+            ZOHO_BOOKS_REDIRECT_URI &&
+            ZOHO_BOOKS_REFRESH_TOKEN &&
+            ZOHO_BOOKS_ORGANIZATION_ID,
+        ),
+        requiredEnv: [
+          "ZOHO_BOOKS_ENABLED",
+          "ZOHO_BOOKS_CLIENT_ID",
+          "ZOHO_BOOKS_CLIENT_SECRET",
+          "ZOHO_BOOKS_REDIRECT_URI",
+          "ZOHO_BOOKS_REFRESH_TOKEN",
+          "ZOHO_BOOKS_ORGANIZATION_ID",
+        ],
+        note:
+          "Zoho Books uses OAuth 2.0 plus organization-scoped contacts, invoices, and customer payments.",
       },
       ai: {
         provider: AI_PROVIDER,

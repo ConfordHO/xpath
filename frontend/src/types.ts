@@ -69,6 +69,25 @@ export interface OrderWorkflowPlan {
   stages: OrderWorkflowStageState[]
 }
 
+export interface OrderWorkflowRouteGuide {
+  key: string
+  testTypeId: string
+  testCode: string
+  testName: string
+  category: string
+  stages: OrderWorkflowStageId[]
+  routeTags: string[]
+  requiresAccession: boolean
+  primaryModule: OrderWorkflowModule
+}
+
+export interface OrderVisibilityBlocker {
+  code: string
+  ownerRole: string
+  title: string
+  message: string
+}
+
 export interface SafeUser {
   _id: string
   email: string
@@ -97,6 +116,8 @@ export interface Patient {
   address: string
   siteId?: string | null
   nationalId?: string
+  anonymized?: boolean
+  anonymousLabel?: string | null
   createdAt: string
   updatedAt: string
 }
@@ -324,6 +345,8 @@ export interface HydratedOrder {
   patient: Patient
   testTypes: TestType[]
   workflowPlan: OrderWorkflowPlan
+  workflowRoutes: OrderWorkflowRouteGuide[]
+  blockers: OrderVisibilityBlocker[]
   status: OrderStatus
   priority: 'normal' | 'urgent'
   referringDoctor: string | null
@@ -368,8 +391,39 @@ export interface HydratedOrder {
   pickupLat?: number | null
   pickupLng?: number | null
   receivedAt?: string | null
+  receivedByUserId?: string | null
   courierCheckedInAt?: string | null
   courierReceivedAt?: string | null
+  triagedAt?: string | null
+  triagedBy?: string | null
+  workflowReleasedAt?: string | null
+  workflowReleasedBy?: string | null
+  paymentCollectionStatus?:
+    | 'unpaid'
+    | 'cash_with_courier'
+    | 'paid_online'
+    | 'payment_prompt_sent'
+    | 'cash_received_at_reception'
+    | 'reconciled'
+  paymentCollectionMethod?:
+    | 'cash'
+    | 'card'
+    | 'mobile_money'
+    | 'bank_transfer'
+    | 'mtn_mobile_money'
+    | 'orange_money'
+    | 'transfer'
+    | 'other'
+    | null
+  paymentCollectionAmount?: number | null
+  paymentCollectionReference?: string | null
+  paymentCollectionDeclaredBy?: string | null
+  paymentCollectionDeclaredAt?: string | null
+  paymentPromptSentAt?: string | null
+  paymentPromptRecipient?: string | null
+  anonymousCaseCode?: string | null
+  requesterNotificationEmail?: string | null
+  requesterNotificationPhone?: string | null
   completedAt?: string | null
   releasedAt?: string | null
   lockStatus?: 'unlocked' | 'locked'
@@ -1037,6 +1091,7 @@ export interface ModuleAuditEntry {
   status: string
   productionReady: boolean
   notes: string
+  targetReleaseDate?: string | null
 }
 
 export interface TatSummary {
@@ -1087,7 +1142,11 @@ export interface NotificationEntry {
   title: string
   body: string
   read: boolean
+  audienceRoles?: UserRole[] | null
+  audienceUserIds?: string[] | null
+  siteId?: string | null
   createdAt: string
+  updatedAt?: string
 }
 
 export interface DashboardSummary {
@@ -1133,6 +1192,53 @@ export interface FinanceMonthlyDashboard {
     refunds: number
     netRevenue: number
   }
+}
+
+export interface ZohoBooksSyncLog {
+  _id: string
+  entityType: 'oauth' | 'organization' | 'contact' | 'invoice' | 'payment' | 'refund'
+  entityId?: string | null
+  orderId?: string | null
+  provider: 'zoho_books'
+  operation:
+    | 'authorize_url'
+    | 'token_exchange'
+    | 'list_organizations'
+    | 'sync_contact'
+    | 'sync_invoice'
+    | 'sync_payment'
+    | 'sync_refund'
+  status: 'queued' | 'success' | 'failed'
+  externalId?: string | null
+  endpoint: string
+  requestPayload?: string | null
+  responsePayload?: string | null
+  errorMessage?: string | null
+  siteId?: string | null
+  syncedBy?: string | null
+  syncedAt?: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export interface ZohoBooksConfig {
+  enabled: boolean
+  clientConfigured: boolean
+  redirectConfigured: boolean
+  refreshTokenConfigured: boolean
+  organizationConfigured: boolean
+  accountsBaseUrl: string
+  apiBaseUrl: string
+  organizationId: string | null
+  requiredEnv: string[]
+}
+
+export interface ZohoBooksOrganization {
+  organization_id: string
+  name: string
+  country?: string
+  currency_code?: string
+  time_zone?: string
 }
 
 export interface AccountingJournalEntry {

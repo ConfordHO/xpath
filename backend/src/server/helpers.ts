@@ -2,13 +2,15 @@ import { randomBytes } from "node:crypto";
 
 import type { AuthRequest } from "../auth.js";
 import { isSuperAdmin, normalizeSiteId } from "../auth.js";
-import { getOrderWorkflowPlan } from "./workflowPlans.js";
+import { describeOrderWorkflowRoutes, getOrderWorkflowPlan } from "./workflowPlans.js";
 import type {
   Accession,
   CourierStatus,
   Database,
   Doctor,
+  Notification,
   Order,
+  OrderVisibilityBlocker,
   PaymentMethod,
   Patient,
   Report,
@@ -152,6 +154,63 @@ export function userCanAccessPatient(actor: User, patient: Patient) {
   return normalizeSiteId(actor.siteId) === normalizeSiteId(patient.siteId);
 }
 
+function redactDateOfBirth(dateOfBirth: string) {
+  const year = dateOfBirth.slice(0, 4);
+  return /^\d{4}$/.test(year) ? `${year}-01-01` : dateOfBirth;
+}
+
+function projectPatientForActor(actor: User, patient: Patient, order: Order | null): Patient {
+  if (
+    isSuperAdmin(actor) ||
+    actor.role === "admin" ||
+    actor.role === "receptionist" ||
+    actor.role === "doctor"
+  ) {
+    return {
+      ...patient,
+      anonymized: false,
+      anonymousLabel: order?.anonymousCaseCode ?? null,
+    };
+  }
+
+  if (actor.role === "courier") {
+    return {
+      ...patient,
+      email: "",
+      anonymized: false,
+      anonymousLabel: order?.anonymousCaseCode ?? null,
+    };
+  }
+
+  const anonymousLabel = order?.anonymousCaseCode ?? `CASE-${patient._id.slice(-6).toUpperCase()}`;
+  return {
+    ...patient,
+    firstName: "Anonymous",
+    lastName: anonymousLabel,
+    dateOfBirth: redactDateOfBirth(patient.dateOfBirth),
+    phone: "",
+    email: "",
+    address: "Restricted to reception and requester roles",
+    anonymized: true,
+    anonymousLabel,
+  };
+}
+
+function notificationVisibleToUser(actor: User, notification: Notification) {
+  if (isSuperAdmin(actor)) {
+    return true;
+  }
+  if (notification.siteId && normalizeSiteId(notification.siteId) !== normalizeSiteId(actor.siteId)) {
+    return false;
+  }
+  const targetedByUser = notification.audienceUserIds?.includes(actor._id) ?? false;
+  const targetedByRole = notification.audienceRoles?.includes(actor.role) ?? false;
+  if (notification.audienceUserIds?.length || notification.audienceRoles?.length) {
+    return targetedByUser || targetedByRole;
+  }
+  return true;
+}
+
 export function userCanAccessOrder(db: Database, actor: User, order: Order) {
   if (isSuperAdmin(actor)) {
     return true;
@@ -160,7 +219,19 @@ export function userCanAccessOrder(db: Database, actor: User, order: Order) {
     const doctor = findDoctorByUserId(db, actor._id);
     return Boolean(doctor && order.referringDoctorId === doctor._id);
   }
-  return normalizeSiteId(actor.siteId) === normalizeSiteId(order.siteId);
+  if (normalizeSiteId(actor.siteId) !== normalizeSiteId(order.siteId)) {
+    return false;
+  }
+  if (actor.role === "courier") {
+    return Boolean(order.orderSource === "online" && order.courierStatus);
+  }
+  if (actor.role === "finance") {
+    return Boolean(order.receivedAt);
+  }
+  if (actor.role === "technician" || actor.role === "pathologist") {
+    return Boolean(order.workflowReleasedAt) && order.financialClearance === "cleared";
+  }
+  return true;
 }
 
 export function userCanAccessAccession(db: Database, actor: User, accession: Accession) {
@@ -179,6 +250,12 @@ export function scopeDbForUser(db: Database, actor: User): Database {
   const visibleOrders = db.orders.filter((order) => userCanAccessOrder(db, actor, order));
   const orderIds = new Set(visibleOrders.map((order) => order._id));
   const patientIds = new Set(visibleOrders.map((order) => order.patientId));
+  const orderByPatientId = new Map<string, Order>();
+  for (const order of visibleOrders) {
+    if (!orderByPatientId.has(order.patientId)) {
+      orderByPatientId.set(order.patientId, order);
+    }
+  }
   const actorSiteId = normalizeSiteId(actor.siteId);
   const sitePatientIds = new Set(
     db.patients
@@ -238,6 +315,9 @@ export function scopeDbForUser(db: Database, actor: User): Database {
           visibleDoctors.some((doctor) => normalizeSiteId(doctor.siteId) === entry._id),
         )
       : db.sites.filter((entry) => entry._id === actorSiteId);
+  const visibleNotifications = db.notifications.filter((entry) =>
+    notificationVisibleToUser(actor, entry),
+  );
 
   return {
     ...db,
@@ -245,11 +325,15 @@ export function scopeDbForUser(db: Database, actor: User): Database {
     doctors: visibleDoctors,
     patients:
       actor.role === "doctor"
-        ? db.patients.filter((entry) => patientIds.has(entry._id))
-        : db.patients.filter(
-            (entry) =>
-              normalizeSiteId(entry.siteId) === actorSiteId || patientIds.has(entry._id),
-          ),
+        ? db.patients
+            .filter((entry) => patientIds.has(entry._id))
+            .map((entry) => projectPatientForActor(actor, entry, orderByPatientId.get(entry._id) ?? null))
+        : db.patients
+            .filter(
+              (entry) =>
+                normalizeSiteId(entry.siteId) === actorSiteId || patientIds.has(entry._id),
+            )
+            .map((entry) => projectPatientForActor(actor, entry, orderByPatientId.get(entry._id) ?? null)),
     hl7Messages:
       actor.role === "doctor"
         ? db.hl7Messages.filter((entry) =>
@@ -296,6 +380,12 @@ export function scopeDbForUser(db: Database, actor: User): Database {
         actor.role === "finance",
     ),
     accountingExportBatches: db.accountingExportBatches,
+    zohoBooksSyncLogs: db.zohoBooksSyncLogs.filter(
+      (entry) =>
+        actor.role === "admin" ||
+        actor.role === "finance" ||
+        orderIds.has(entry.orderId ?? ""),
+    ),
     accessions,
     samples,
     barcodes: db.barcodes.filter(
@@ -345,6 +435,7 @@ export function scopeDbForUser(db: Database, actor: User): Database {
     workflowHistory: db.workflowHistory.filter(
       (entry) => !entry.orderId || orderIds.has(entry.orderId),
     ),
+    notifications: visibleNotifications,
     communicationLogs: db.communicationLogs.filter((entry) => orderIds.has(entry.orderId)),
     tatAlerts: db.tatAlerts.filter((entry) => !entry.orderId || orderIds.has(entry.orderId)),
     archiveRecords: db.archiveRecords.filter(
@@ -529,6 +620,56 @@ export function buildTimeline(db: Database, order: Order) {
   return timeline.sort((a, b) => a.at.localeCompare(b.at));
 }
 
+export function getOrderBlockers(db: Database, order: Order): OrderVisibilityBlocker[] {
+  const blockers: OrderVisibilityBlocker[] = [];
+  if (order.orderSource === "online" && order.courierStatus && order.courierStatus !== "received_at_lab") {
+    blockers.push({
+      code: "courier_delivery_pending",
+      ownerRole: "courier",
+      title: "Courier delivery still pending",
+      message: "The courier must complete pickup and mark the sample as delivered to the reception desk.",
+    });
+  }
+  if (!order.receivedAt) {
+    blockers.push({
+      code: "reception_confirmation_pending",
+      ownerRole: "receptionist",
+      title: "Reception confirmation pending",
+      message: "Reception must confirm the sample was physically received before the lab can act on it.",
+    });
+  }
+  if (order.financialClearance !== "cleared") {
+    blockers.push({
+      code: "financial_clearance_pending",
+      ownerRole: "receptionist/finance",
+      title: "Financial clearance pending",
+      message: "Payment or reconciliation is still pending, so downstream lab users should not continue yet.",
+    });
+  }
+  if (!order.workflowReleasedAt && !["completed", "released", "cancelled"].includes(order.status)) {
+    blockers.push({
+      code: "workflow_release_pending",
+      ownerRole: "receptionist",
+      title: "Workflow routing pending",
+      message: "Reception must route the tests to the correct workflow(s) before technicians and pathologists can proceed.",
+    });
+  }
+  if (
+    order.workflowReleasedAt &&
+    getOrderWorkflowPlan(db, order).requiresTechnician &&
+    !order.assignedTechnicianId &&
+    order.status !== "review"
+  ) {
+    blockers.push({
+      code: "technician_assignment_pending",
+      ownerRole: "receptionist",
+      title: "Technician assignment pending",
+      message: "A technician still needs to be assigned for the laboratory workflow to continue cleanly.",
+    });
+  }
+  return blockers;
+}
+
 export function hydrateDoctor(doctor: Doctor, db: Database) {
   const linkedUser = findUser(db, doctor.userId);
   return {
@@ -550,12 +691,15 @@ export function hydrateOrder(db: Database, order: Order) {
   const assignedPathologist = findUser(db, order.assignedPathologistId);
   const report = getReportByOrder(db, order._id);
   const workflowPlan = getOrderWorkflowPlan(db, order);
+  const workflowRoutes = describeOrderWorkflowRoutes(db, order);
   return {
     ...order,
     courierStatus: normalizeCourierStatus(order.courierStatus),
     patient,
     testTypes: getOrderTestTypes(db, order),
     workflowPlan,
+    workflowRoutes,
+    blockers: getOrderBlockers(db, order),
     referringDoctor: doctor?.name ?? order.referringDoctorName ?? null,
     referringDoctorId: doctor
       ? {

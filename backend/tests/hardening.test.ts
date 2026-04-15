@@ -152,11 +152,44 @@ describe("production hardening", () => {
     assert.equal(orderCreate.status, 201);
     createdOrderId = orderCreate.body._id as string;
 
-    const markReceived = await request
-      .post(`/api/orders/${createdOrderId}/mark-received`)
+    const orderTotal = 1000000;
+
+    const payment = await request
+      .post(`/api/orders/${createdOrderId}/payment`)
       .set("Authorization", `Bearer ${authToken}`)
-      .send({});
-    assert.equal(markReceived.status, 200);
+      .send({
+        amount: orderTotal,
+        method: "cash",
+        status: "completed",
+      });
+    assert.equal(payment.status, 201);
+
+    const receptionIntake = await request
+      .post(`/api/orders/${createdOrderId}/reception-intake`)
+      .set("Authorization", `Bearer ${authToken}`)
+      .send({
+        paymentCollectionStatus: "reconciled",
+        paymentCollectionMethod: "cash",
+        paymentCollectionAmount: orderTotal,
+        paymentCollectionReference: "TEST-RECEPTION",
+        transportTemperature: "ambient",
+        transportCondition: "stable",
+        sampleCondition: "Received intact at reception",
+      });
+    assert.equal(receptionIntake.status, 200);
+
+    const users = await request
+      .get("/api/users")
+      .set("Authorization", `Bearer ${authToken}`);
+    assert.equal(users.status, 200);
+    const technician = users.body.find((entry: { role: string }) => entry.role === "technician");
+    assert.ok(technician);
+
+    const releaseToLab = await request
+      .post(`/api/orders/${createdOrderId}/release-to-lab`)
+      .set("Authorization", `Bearer ${authToken}`)
+      .send({ technicianId: technician._id });
+    assert.equal(releaseToLab.status, 200);
 
     const startProcessing = await request
       .post(`/api/orders/${createdOrderId}/start-processing`)
@@ -246,18 +279,17 @@ describe("production hardening", () => {
     assert.equal(monthlyFinance.status, 200);
     assert.ok(Array.isArray(monthlyFinance.body.rows));
 
-    const rebuildLedger = await request
-      .post("/api/accounting/rebuild-ledger")
+    const zohoConfig = await request
+      .get("/api/accounting/zoho/config")
       .set("Authorization", `Bearer ${authToken}`)
-      .send({});
-    assert.equal(rebuildLedger.status, 200);
-    assert.ok(Array.isArray(rebuildLedger.body));
+    assert.equal(zohoConfig.status, 200);
+    assert.equal(typeof zohoConfig.body.clientConfigured, "boolean");
 
-    const ledger = await request
-      .get("/api/accounting/ledger")
+    const zohoLogs = await request
+      .get("/api/accounting/zoho/sync-logs")
       .set("Authorization", `Bearer ${authToken}`);
-    assert.equal(ledger.status, 200);
-    assert.ok(Array.isArray(ledger.body));
+    assert.equal(zohoLogs.status, 200);
+    assert.ok(Array.isArray(zohoLogs.body));
 
     const validation = await request
       .post(`/api/orders/${createdOrderId}/validation/evaluate`)
@@ -427,7 +459,7 @@ describe("production hardening", () => {
       .send({});
     assert.equal(secondApproval.status, 200);
     assert.equal(secondApproval.body.status, "approved");
-    assert.ok(secondApproval.body.reversalJournalEntryId);
+    assert.equal(secondApproval.body.reversalJournalEntryId ?? null, null);
 
     const completed = await request
       .post(`/api/refunds/${refund.body._id}/complete`)
@@ -436,25 +468,11 @@ describe("production hardening", () => {
     assert.equal(completed.status, 200);
     assert.equal(completed.body.status, "completed");
 
-    const journal = await request
-      .post("/api/accounting/journal-entries")
-      .set("Authorization", `Bearer ${financeToken}`)
-      .send({
-        debitAccount: "Cash and Bank",
-        creditAccount: "Pathology Revenue",
-        amount: 5,
-        memo: "Automated manual journal",
-      });
-    assert.equal(journal.status, 201);
-    assert.equal(journal.body.status, "posted");
-
-    const voidJournal = await request
-      .post(`/api/accounting/journal-entries/${journal.body._id}/void`)
-      .set("Authorization", `Bearer ${financeToken}`)
-      .send({ reason: "Automated reversal control" });
-    assert.equal(voidJournal.status, 200);
-    assert.equal(voidJournal.body.entry.status, "void");
-    assert.equal(voidJournal.body.reversal.reversalOfEntryId, journal.body._id);
+    const zohoConfig = await request
+      .get("/api/accounting/zoho/config")
+      .set("Authorization", `Bearer ${financeToken}`);
+    assert.equal(zohoConfig.status, 200);
+    assert.equal(typeof zohoConfig.body.organizationConfigured, "boolean");
 
     const ruleDelete = await request
       .delete(`/api/validation-rules/${ruleCreate.body._id}`)

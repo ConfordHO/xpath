@@ -98,23 +98,49 @@ export function ReceptionistWorkflowPage() {
   })
 
   const technicians = usersState.data.filter((user) => user.role === 'technician')
-  const receiveOrders = ordersState.data.data.filter((order) => order.status === 'draft')
-  const paymentOrders = ordersState.data.data.filter((order) => order.status === 'received' || order.status === 'draft')
-  const courierOrders = ordersState.data.data
-  const assignOrders = ordersState.data.data.filter(
+  const receiveOrders = ordersState.data.data.filter((order) => !order.receivedAt && order.status !== 'cancelled')
+  const paymentOrders = ordersState.data.data.filter(
     (order) =>
-      order.status === 'received' &&
-      ((!order.assignedTechnician && order.workflowPlan.requiresTechnician) || order.workflowPlan.reviewReady),
+      Boolean(order.receivedAt) &&
+      order.status !== 'cancelled' &&
+      order.financialClearance !== 'cleared',
+  )
+  const courierOrders = ordersState.data.data.filter(
+    (order) => order.orderSource === 'online' || Boolean(order.courierStatus),
+  )
+  const assignOrders = ordersState.data.data.filter(
+    (order) => Boolean(order.receivedAt) && order.status !== 'cancelled' && !['completed', 'released'].includes(order.status),
   )
   const resultOrders = ordersState.data.data.filter((order) => ['completed', 'released'].includes(order.status))
 
   const [paymentDialog, setPaymentDialog] = useState<{
     orderId: string
     amount: number
-    method: 'cash' | 'card' | 'mobile_money' | 'bank_transfer'
+    method: 'cash' | 'card' | 'mobile_money' | 'bank_transfer' | 'mtn_mobile_money' | 'orange_money' | 'transfer' | 'other'
     status: 'pending' | 'completed' | 'failed'
+    gatewayReference: string
   } | null>(null)
+  const [intakeDialog, setIntakeDialog] = useState<{
+    orderId: string
+    paymentCollectionStatus: HydratedOrder['paymentCollectionStatus']
+    paymentCollectionMethod: HydratedOrder['paymentCollectionMethod']
+    paymentCollectionAmount: number
+    paymentCollectionReference: string
+    transportTemperature: string
+    transportCondition: string
+    sampleCondition: string
+  } | null>(null)
+  const [promptDialog, setPromptDialog] = useState<{
+    orderId: string
+    amount: number
+    method: 'mtn_mobile_money' | 'orange_money' | 'cash' | 'card' | 'transfer' | 'other'
+    phone: string
+    email: string
+    note: string
+  } | null>(null)
+  const [releaseDialog, setReleaseDialog] = useState<{ orderId: string; technicianId: string }>({ orderId: '', technicianId: '' })
   const [assignment, setAssignment] = useState<Record<string, string>>({})
+  const [blockerDialog, setBlockerDialog] = useState<{ orderNumber: string; blockers: HydratedOrder['blockers'] } | null>(null)
   const [feedback, setFeedback] = useState<{ kind: 'success' | 'error'; message: string } | null>(null)
 
   const visible = [receiveOrders, paymentOrders, courierOrders, assignOrders, resultOrders][tab]
@@ -136,11 +162,31 @@ export function ReceptionistWorkflowPage() {
     })
   }
 
+  const openIntakeDialog = (order: HydratedOrder) => {
+    setIntakeDialog({
+      orderId: order._id,
+      paymentCollectionStatus: order.paymentCollectionStatus ?? 'unpaid',
+      paymentCollectionMethod: order.paymentCollectionMethod ?? 'cash',
+      paymentCollectionAmount: order.paymentCollectionAmount ?? Math.max(0, order.testTypes.reduce((sum, item) => sum + item.price, 0)),
+      paymentCollectionReference: order.paymentCollectionReference ?? '',
+      transportTemperature: 'ambient',
+      transportCondition: 'stable',
+      sampleCondition: 'Received intact at reception',
+    })
+  }
+
+  const blockerListForRelease = (order: HydratedOrder, technicianId?: string) =>
+    order.blockers.filter((blocker) => {
+      if (blocker.code === 'workflow_release_pending') return false
+      if (blocker.code === 'technician_assignment_pending' && technicianId) return false
+      return true
+    })
+
   return (
     <Stack spacing={3}>
       <PageHeader
         title="Receptionist workflow"
-        description="Receive orders (web or walk-in) → Confirm payment → Add courier if needed → Route each case to the correct lab workflow or straight to pathologist review."
+        description="Receive orders, reconcile payment, coordinate courier collection and delivery, then release each test to its correct workflow only when every prerequisite has been satisfied."
         action={<Button component={RouterLink} to="/orders/create" variant="contained">Create order</Button>}
       />
       {feedback ? <Alert severity={feedback.kind}>{feedback.message}</Alert> : null}
@@ -159,6 +205,7 @@ export function ReceptionistWorkflowPage() {
                 <TableCell>Tests</TableCell>
                 <TableCell>Status</TableCell>
                 <TableCell>Next step</TableCell>
+                <TableCell>Blockers</TableCell>
                 <TableCell>Actions</TableCell>
               </TableRow>
             </TableHead>
@@ -170,14 +217,15 @@ export function ReceptionistWorkflowPage() {
                   <TableCell>{order.testTypes.map((item) => item.code).join(', ')}</TableCell>
                   <TableCell><StatusChip status={order.status} /></TableCell>
                   <TableCell>{order.workflowPlan.nextStageLabel ?? 'Completed'}</TableCell>
+                  <TableCell>{order.blockers.length ? `${order.blockers.length} open` : 'Clear'}</TableCell>
                   <TableCell>
                     {tab === 0 ? (
                       <Stack direction={{ xs: 'column', md: 'row' }} spacing={1}>
                         <Button
                           disabled={actionLock.isPending(`receive-${order._id}`)}
-                          onClick={() => runOrderAction(`receive-${order._id}`, () => api.post(`/orders/${order._id}/mark-received`), `${order.orderNumber} marked as received.`)}
+                          onClick={() => openIntakeDialog(order)}
                         >
-                          Mark received
+                          Confirm sample receipt
                         </Button>
                         <Button component={RouterLink} to={`/orders/${order._id}`}>
                           View order
@@ -192,9 +240,22 @@ export function ReceptionistWorkflowPage() {
                             amount: order.testTypes.reduce((sum, item) => sum + item.price, 0),
                             method: 'cash',
                             status: 'completed',
+                            gatewayReference: order.paymentCollectionReference ?? '',
                           })}
                         >
                           Process payment
+                        </Button>
+                        <Button
+                          onClick={() => setPromptDialog({
+                            orderId: order._id,
+                            amount: Math.max(0, order.testTypes.reduce((sum, item) => sum + item.price, 0)),
+                            method: 'mtn_mobile_money',
+                            phone: order.requesterNotificationPhone ?? order.patient.phone,
+                            email: order.requesterNotificationEmail ?? order.patient.email,
+                            note: 'Please complete payment so the lab can continue processing your sample.',
+                          })}
+                        >
+                          Send payment prompt
                         </Button>
                         <Button component={RouterLink} to={`/orders/${order._id}`}>
                           View order
@@ -203,65 +264,91 @@ export function ReceptionistWorkflowPage() {
                     ) : null}
                     {tab === 2 ? (
                       <Stack direction={{ xs: 'column', md: 'row' }} spacing={1}>
-                        <Button
-                          disabled={actionLock.isPending(`courier-${order._id}`)}
-                          onClick={() => runOrderAction(`courier-${order._id}`, () => api.post(`/orders/${order._id}/check-in-courier`), `${order.orderNumber} added to the courier queue.`)}
-                        >
-                          Add courier
-                        </Button>
+                        {!order.courierStatus ? (
+                          <Button
+                            disabled={actionLock.isPending(`courier-${order._id}`)}
+                            onClick={() => runOrderAction(`courier-${order._id}`, () => api.post(`/orders/${order._id}/check-in-courier`), `${order.orderNumber} added to the courier queue.`)}
+                          >
+                            Activate courier
+                          </Button>
+                        ) : null}
                         <Button component={RouterLink} to="/courier">
                           Open courier board
+                        </Button>
+                        <Button onClick={() => setBlockerDialog({ orderNumber: order.orderNumber, blockers: order.blockers })}>
+                          View blockers
                         </Button>
                       </Stack>
                     ) : null}
                     {tab === 3 ? (
-                      order.workflowPlan.requiresTechnician ? (
-                        <Stack direction="row" spacing={1}>
-                          <FormControl size="small" sx={{ minWidth: 180 }}>
-                            <Select
-                              value={assignment[order._id] ?? ''}
-                              displayEmpty
-                              onChange={(event) => setAssignment((prev) => ({ ...prev, [order._id]: String(event.target.value) }))}
+                      <Stack spacing={1}>
+                        <Typography variant="body2" color="text.secondary">
+                          {order.workflowRoutes.map((route) => `${route.testCode}: ${route.stages.join(' → ')}`).join(' | ')}
+                        </Typography>
+                        {order.workflowPlan.requiresTechnician ? (
+                          <Stack direction="row" spacing={1}>
+                            <FormControl size="small" sx={{ minWidth: 180 }}>
+                              <Select
+                                value={assignment[order._id] ?? (releaseDialog.orderId === order._id ? releaseDialog.technicianId : '')}
+                                displayEmpty
+                                onChange={(event) => {
+                                  const value = String(event.target.value)
+                                  setAssignment((prev) => ({ ...prev, [order._id]: value }))
+                                  setReleaseDialog((prev) => ({ ...prev, orderId: order._id, technicianId: value }))
+                                }}
+                              >
+                                <MenuItem value="">Select technician</MenuItem>
+                                {technicians.map((tech) => (
+                                  <MenuItem key={tech._id} value={tech._id}>{tech.name}</MenuItem>
+                                ))}
+                              </Select>
+                            </FormControl>
+                            <Button
+                              disabled={actionLock.isPending(`release-${order._id}`)}
+                              onClick={async () => {
+                                const technicianId = assignment[order._id] ?? releaseDialog.technicianId
+                                const blockers = blockerListForRelease(order, technicianId)
+                                if (blockers.length) {
+                                  setBlockerDialog({ orderNumber: order.orderNumber, blockers })
+                                  return
+                                }
+                                await runOrderAction(
+                                  `release-${order._id}`,
+                                  () => api.post(`/orders/${order._id}/release-to-lab`, { technicianId: technicianId || null }),
+                                  `${order.orderNumber} released to the lab workflow.`,
+                                )
+                                setAssignment((prev) => ({ ...prev, [order._id]: '' }))
+                                setReleaseDialog({ orderId: '', technicianId: '' })
+                              }}
                             >
-                              <MenuItem value="">Select technician</MenuItem>
-                              {technicians.map((tech) => (
-                                <MenuItem key={tech._id} value={tech._id}>{tech.name}</MenuItem>
-                              ))}
-                            </Select>
-                          </FormControl>
-                          <Button
-                            disabled={!assignment[order._id] || actionLock.isPending(`assign-${order._id}`)}
-                            onClick={async () => {
-                              await runOrderAction(
-                                `assign-${order._id}`,
-                                () => api.post(`/orders/${order._id}/assign-technician`, { technicianId: assignment[order._id] }),
-                                `${order.orderNumber} assigned to technician.`,
-                              )
-                              setAssignment((prev) => ({ ...prev, [order._id]: '' }))
-                            }}
-                          >
-                            Assign
-                          </Button>
-                        </Stack>
-                      ) : (
-                        <Stack direction={{ xs: 'column', md: 'row' }} spacing={1}>
-                          <Button
-                            disabled={order.workflowPlan.nextStageId !== 'pathologist_review' || actionLock.isPending(`direct-review-${order._id}`)}
-                            onClick={() =>
-                              runOrderAction(
-                                `direct-review-${order._id}`,
-                                () => api.post(`/orders/${order._id}/ready-for-review`, {}),
-                                `${order.orderNumber} sent directly to pathologist review.`,
-                              )
-                            }
-                          >
-                            Send to pathologist
-                          </Button>
-                          <Button component={RouterLink} to={`/orders/${order._id}`}>
-                            View order
-                          </Button>
-                        </Stack>
-                      )
+                              Release to lab
+                            </Button>
+                          </Stack>
+                        ) : (
+                          <Stack direction={{ xs: 'column', md: 'row' }} spacing={1}>
+                            <Button
+                              disabled={actionLock.isPending(`release-${order._id}`)}
+                              onClick={async () => {
+                                const blockers = blockerListForRelease(order)
+                                if (blockers.length) {
+                                  setBlockerDialog({ orderNumber: order.orderNumber, blockers })
+                                  return
+                                }
+                                await runOrderAction(
+                                  `release-${order._id}`,
+                                  () => api.post(`/orders/${order._id}/release-to-lab`, {}),
+                                  `${order.orderNumber} released to the lab workflow.`,
+                                )
+                              }}
+                            >
+                              Release to pathologist workflow
+                            </Button>
+                            <Button onClick={() => setBlockerDialog({ orderNumber: order.orderNumber, blockers: order.blockers })}>
+                              Review blockers
+                            </Button>
+                          </Stack>
+                        )}
+                      </Stack>
                     ) : null}
                     {tab === 4 ? (
                       <Button component={RouterLink} to={`/orders/${order._id}`}>
@@ -271,10 +358,129 @@ export function ReceptionistWorkflowPage() {
                   </TableCell>
                 </TableRow>
               ))}
+              {!visible.length ? (
+                <TableRow>
+                  <TableCell colSpan={7}>
+                    <Typography color="text.secondary">No orders in this queue right now.</Typography>
+                  </TableCell>
+                </TableRow>
+              ) : null}
             </TableBody>
           </Table>
         </TableContainer>
       </SectionCard>
+
+      <Dialog open={!!intakeDialog} onClose={() => setIntakeDialog(null)} maxWidth="sm" fullWidth>
+        <DialogTitle>Confirm reception intake</DialogTitle>
+        <DialogContent>
+          <Stack spacing={2} sx={{ mt: 1 }}>
+            <FormControl fullWidth>
+              <InputLabel>Payment collection status</InputLabel>
+              <Select
+                label="Payment collection status"
+                value={intakeDialog?.paymentCollectionStatus ?? 'unpaid'}
+                onChange={(event) =>
+                  setIntakeDialog((prev) =>
+                    prev
+                      ? {
+                          ...prev,
+                          paymentCollectionStatus: String(event.target.value) as NonNullable<HydratedOrder['paymentCollectionStatus']>,
+                        }
+                      : null,
+                  )
+                }
+              >
+                <MenuItem value="unpaid">Unpaid</MenuItem>
+                <MenuItem value="cash_with_courier">Cash with courier</MenuItem>
+                <MenuItem value="paid_online">Paid online</MenuItem>
+                <MenuItem value="payment_prompt_sent">Payment prompt already sent</MenuItem>
+                <MenuItem value="cash_received_at_reception">Cash received at reception</MenuItem>
+                <MenuItem value="reconciled">Already reconciled</MenuItem>
+              </Select>
+            </FormControl>
+            <FormControl fullWidth>
+              <InputLabel>Payment method</InputLabel>
+              <Select
+                label="Payment method"
+                value={intakeDialog?.paymentCollectionMethod ?? 'cash'}
+                onChange={(event) =>
+                  setIntakeDialog((prev) =>
+                    prev
+                      ? {
+                          ...prev,
+                          paymentCollectionMethod: String(event.target.value) as NonNullable<HydratedOrder['paymentCollectionMethod']>,
+                        }
+                      : null,
+                  )
+                }
+              >
+                <MenuItem value="cash">Cash</MenuItem>
+                <MenuItem value="card">Card</MenuItem>
+                <MenuItem value="mobile_money">Mobile money</MenuItem>
+                <MenuItem value="mtn_mobile_money">MTN Mobile Money</MenuItem>
+                <MenuItem value="orange_money">Orange Money</MenuItem>
+                <MenuItem value="bank_transfer">Bank transfer</MenuItem>
+                <MenuItem value="transfer">Transfer</MenuItem>
+                <MenuItem value="other">Other</MenuItem>
+              </Select>
+            </FormControl>
+            <TextField
+              label="Amount collected / expected"
+              type="number"
+              value={intakeDialog?.paymentCollectionAmount ?? 0}
+              onChange={(event) =>
+                setIntakeDialog((prev) => (prev ? { ...prev, paymentCollectionAmount: Number(event.target.value) } : null))
+              }
+            />
+            <TextField
+              label="Reference"
+              value={intakeDialog?.paymentCollectionReference ?? ''}
+              onChange={(event) =>
+                setIntakeDialog((prev) => (prev ? { ...prev, paymentCollectionReference: event.target.value } : null))
+              }
+            />
+            <TextField
+              label="Transport temperature"
+              value={intakeDialog?.transportTemperature ?? ''}
+              onChange={(event) =>
+                setIntakeDialog((prev) => (prev ? { ...prev, transportTemperature: event.target.value } : null))
+              }
+            />
+            <TextField
+              label="Transport condition"
+              value={intakeDialog?.transportCondition ?? ''}
+              onChange={(event) =>
+                setIntakeDialog((prev) => (prev ? { ...prev, transportCondition: event.target.value } : null))
+              }
+            />
+            <TextField
+              label="Sample condition at reception"
+              value={intakeDialog?.sampleCondition ?? ''}
+              onChange={(event) =>
+                setIntakeDialog((prev) => (prev ? { ...prev, sampleCondition: event.target.value } : null))
+              }
+            />
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setIntakeDialog(null)}>Cancel</Button>
+          <Button
+            variant="contained"
+            disabled={!intakeDialog || actionLock.isPending(`receive-${intakeDialog.orderId}`)}
+            onClick={async () => {
+              if (!intakeDialog) return
+              await runOrderAction(
+                `receive-${intakeDialog.orderId}`,
+                () => api.post(`/orders/${intakeDialog.orderId}/reception-intake`, intakeDialog),
+                'Reception intake saved.',
+              )
+              setIntakeDialog(null)
+            }}
+          >
+            Save intake
+          </Button>
+        </DialogActions>
+      </Dialog>
 
       <Dialog open={!!paymentDialog} onClose={() => setPaymentDialog(null)} maxWidth="xs" fullWidth>
         <DialogTitle>Process payment</DialogTitle>
@@ -292,12 +498,22 @@ export function ReceptionistWorkflowPage() {
               <Select
                 label="Method"
                 value={paymentDialog?.method ?? 'cash'}
-                onChange={(event) => setPaymentDialog((prev) => (prev ? { ...prev, method: String(event.target.value) as 'cash' | 'card' | 'mobile_money' | 'bank_transfer' } : null))}
+                onChange={(event) =>
+                  setPaymentDialog((prev) =>
+                    prev
+                      ? { ...prev, method: String(event.target.value) as NonNullable<typeof prev.method> }
+                      : null,
+                  )
+                }
               >
                 <MenuItem value="cash">Cash</MenuItem>
                 <MenuItem value="card">Card</MenuItem>
                 <MenuItem value="mobile_money">Mobile money</MenuItem>
+                <MenuItem value="mtn_mobile_money">MTN Mobile Money</MenuItem>
+                <MenuItem value="orange_money">Orange Money</MenuItem>
                 <MenuItem value="bank_transfer">Bank transfer</MenuItem>
+                <MenuItem value="transfer">Transfer</MenuItem>
+                <MenuItem value="other">Other</MenuItem>
               </Select>
             </FormControl>
             <FormControl fullWidth>
@@ -312,6 +528,13 @@ export function ReceptionistWorkflowPage() {
                 <MenuItem value="failed">Failed</MenuItem>
               </Select>
             </FormControl>
+            <TextField
+              label="Gateway / transaction reference"
+              value={paymentDialog?.gatewayReference ?? ''}
+              onChange={(event) =>
+                setPaymentDialog((prev) => (prev ? { ...prev, gatewayReference: event.target.value } : null))
+              }
+            />
           </Stack>
         </DialogContent>
         <DialogActions>
@@ -331,6 +554,102 @@ export function ReceptionistWorkflowPage() {
           >
             Save
           </Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog open={!!promptDialog} onClose={() => setPromptDialog(null)} maxWidth="sm" fullWidth>
+        <DialogTitle>Send payment prompt</DialogTitle>
+        <DialogContent>
+          <Stack spacing={2} sx={{ mt: 1 }}>
+            <TextField
+              label="Amount"
+              type="number"
+              value={promptDialog?.amount ?? 0}
+              onChange={(event) =>
+                setPromptDialog((prev) => (prev ? { ...prev, amount: Number(event.target.value) } : null))
+              }
+            />
+            <FormControl fullWidth>
+              <InputLabel>Method</InputLabel>
+              <Select
+                label="Method"
+                value={promptDialog?.method ?? 'mtn_mobile_money'}
+                onChange={(event) =>
+                  setPromptDialog((prev) =>
+                    prev
+                      ? {
+                          ...prev,
+                          method: String(event.target.value) as 'mtn_mobile_money' | 'orange_money' | 'cash' | 'card' | 'transfer' | 'other',
+                        }
+                      : null,
+                  )
+                }
+              >
+                <MenuItem value="mtn_mobile_money">MTN Mobile Money</MenuItem>
+                <MenuItem value="orange_money">Orange Money</MenuItem>
+                <MenuItem value="cash">Cash</MenuItem>
+                <MenuItem value="card">Card</MenuItem>
+                <MenuItem value="transfer">Transfer</MenuItem>
+                <MenuItem value="other">Other</MenuItem>
+              </Select>
+            </FormControl>
+            <TextField
+              label="Phone"
+              value={promptDialog?.phone ?? ''}
+              onChange={(event) => setPromptDialog((prev) => (prev ? { ...prev, phone: event.target.value } : null))}
+            />
+            <TextField
+              label="Email"
+              value={promptDialog?.email ?? ''}
+              onChange={(event) => setPromptDialog((prev) => (prev ? { ...prev, email: event.target.value } : null))}
+            />
+            <TextField
+              label="Note"
+              multiline
+              minRows={3}
+              value={promptDialog?.note ?? ''}
+              onChange={(event) => setPromptDialog((prev) => (prev ? { ...prev, note: event.target.value } : null))}
+            />
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setPromptDialog(null)}>Cancel</Button>
+          <Button
+            variant="contained"
+            disabled={!promptDialog || actionLock.isPending(`payment-prompt-${promptDialog.orderId}`)}
+            onClick={async () => {
+              if (!promptDialog) return
+              await runOrderAction(
+                `payment-prompt-${promptDialog.orderId}`,
+                () => api.post(`/orders/${promptDialog.orderId}/send-payment-prompt`, promptDialog),
+                'Payment prompt sent to the requester.',
+              )
+              setPromptDialog(null)
+            }}
+          >
+            Send prompt
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog open={!!blockerDialog} onClose={() => setBlockerDialog(null)} maxWidth="sm" fullWidth>
+        <DialogTitle>Skipped step reminder</DialogTitle>
+        <DialogContent>
+          <Stack spacing={2} sx={{ mt: 1 }}>
+            <Typography>
+              {blockerDialog?.orderNumber} still has prerequisite steps that must be completed before this action can continue.
+            </Typography>
+            {blockerDialog?.blockers.map((blocker) => (
+              <Paper key={blocker.code} variant="outlined" sx={{ p: 2 }}>
+                <Typography fontWeight={700}>{blocker.title}</Typography>
+                <Typography color="text.secondary">Owner: {blocker.ownerRole}</Typography>
+                <Typography sx={{ mt: 0.75 }}>{blocker.message}</Typography>
+              </Paper>
+            ))}
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setBlockerDialog(null)}>Close</Button>
         </DialogActions>
       </Dialog>
     </Stack>

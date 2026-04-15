@@ -160,10 +160,23 @@ export const S3_REGION = process.env.S3_REGION?.trim() || "";
 export const S3_ENDPOINT = process.env.S3_ENDPOINT?.trim() || "";
 export const S3_ACCESS_KEY_ID = process.env.S3_ACCESS_KEY_ID?.trim() || "";
 export const S3_SECRET_ACCESS_KEY = process.env.S3_SECRET_ACCESS_KEY?.trim() || "";
-export const ACCOUNTING_PROVIDER =
-  process.env.ACCOUNTING_PROVIDER?.trim().toLowerCase() || "generic";
-export const ACCOUNTING_API_BASE_URL = process.env.ACCOUNTING_API_BASE_URL?.trim() || "";
-export const ACCOUNTING_API_KEY = process.env.ACCOUNTING_API_KEY?.trim() || "";
+export const ZOHO_BOOKS_ENABLED =
+  process.env.ZOHO_BOOKS_ENABLED?.trim().toLowerCase() === "true";
+export const ZOHO_BOOKS_ACCOUNTS_BASE_URL =
+  process.env.ZOHO_BOOKS_ACCOUNTS_BASE_URL?.trim() || "https://accounts.zoho.com";
+export const ZOHO_BOOKS_API_BASE_URL =
+  process.env.ZOHO_BOOKS_API_BASE_URL?.trim() || "https://www.zohoapis.com/books/v3";
+export const ZOHO_BOOKS_CLIENT_ID = process.env.ZOHO_BOOKS_CLIENT_ID?.trim() || "";
+export const ZOHO_BOOKS_CLIENT_SECRET =
+  process.env.ZOHO_BOOKS_CLIENT_SECRET?.trim() || "";
+export const ZOHO_BOOKS_REDIRECT_URI =
+  process.env.ZOHO_BOOKS_REDIRECT_URI?.trim() || "";
+export const ZOHO_BOOKS_REFRESH_TOKEN =
+  process.env.ZOHO_BOOKS_REFRESH_TOKEN?.trim() || "";
+export const ZOHO_BOOKS_ORGANIZATION_ID =
+  process.env.ZOHO_BOOKS_ORGANIZATION_ID?.trim() || "";
+export const ZOHO_BOOKS_WEBHOOK_SECRET =
+  process.env.ZOHO_BOOKS_WEBHOOK_SECRET?.trim() || "";
 export const MFA_TOTP_ISSUER = process.env.MFA_TOTP_ISSUER?.trim() || "X.PATH LIMS";
 export const MFA_ENFORCED =
   process.env.MFA_ENFORCED?.trim().toLowerCase() === "true";

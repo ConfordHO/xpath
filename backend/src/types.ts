@@ -96,6 +96,25 @@ export interface OrderWorkflowPlan {
   stages: OrderWorkflowStageState[];
 }
 
+export interface OrderWorkflowRouteGuide {
+  key: string;
+  testTypeId: string;
+  testCode: string;
+  testName: string;
+  category: string;
+  stages: OrderWorkflowStageId[];
+  routeTags: string[];
+  requiresAccession: boolean;
+  primaryModule: OrderWorkflowModule;
+}
+
+export interface OrderVisibilityBlocker {
+  code: string;
+  ownerRole: string;
+  title: string;
+  message: string;
+}
+
 export type MavianceTransactionState =
   | "quote_created"
   | "collection_requested"
@@ -150,6 +169,8 @@ export interface Patient {
   siteId?: string | null;
   externalPatientId?: string | null;
   nationalId?: string;
+  anonymized?: boolean;
+  anonymousLabel?: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -252,6 +273,9 @@ export interface Payment {
   createdAt: string;
   updatedAt: string;
   confirmedWithPatientAt?: string | null;
+  externalAccountingId?: string | null;
+  accountingSyncStatus?: "pending" | "success" | "failed";
+  accountingSyncedAt?: string | null;
 }
 
 export interface MavianceTransaction {
@@ -432,7 +456,15 @@ export interface Notification {
   title: string;
   body: string;
   read: boolean;
+  audienceRoles?: UserRole[] | null;
+  audienceUserIds?: string[] | null;
+  siteId?: string | null;
+  readBy?: Array<{
+    userId: string;
+    readAt: string;
+  }> | null;
   createdAt: string;
+  updatedAt?: string;
 }
 
 export interface Order {
@@ -464,8 +496,30 @@ export interface Order {
   pickupLng?: number | null;
   requisitionForm?: RequisitionForm | null;
   receivedAt?: string | null;
+  receivedByUserId?: string | null;
   courierCheckedInAt?: string | null;
   courierReceivedAt?: string | null;
+  triagedAt?: string | null;
+  triagedBy?: string | null;
+  workflowReleasedAt?: string | null;
+  workflowReleasedBy?: string | null;
+  paymentCollectionStatus?:
+    | "unpaid"
+    | "cash_with_courier"
+    | "paid_online"
+    | "payment_prompt_sent"
+    | "cash_received_at_reception"
+    | "reconciled";
+  paymentCollectionMethod?: PaymentMethod | null;
+  paymentCollectionAmount?: number | null;
+  paymentCollectionReference?: string | null;
+  paymentCollectionDeclaredBy?: string | null;
+  paymentCollectionDeclaredAt?: string | null;
+  paymentPromptSentAt?: string | null;
+  paymentPromptRecipient?: string | null;
+  anonymousCaseCode?: string | null;
+  requesterNotificationEmail?: string | null;
+  requesterNotificationPhone?: string | null;
   completedAt?: string | null;
   releasedAt?: string | null;
   lockStatus?: "unlocked" | "locked";
@@ -588,6 +642,10 @@ export interface Invoice {
     | "maviance"
     | "bank_transfer"
     | "insurance";
+  externalAccountingId?: string | null;
+  externalCustomerId?: string | null;
+  accountingSyncStatus?: "pending" | "success" | "failed";
+  accountingSyncedAt?: string | null;
   issuedAt: string;
   createdAt: string;
   updatedAt: string;
@@ -661,6 +719,39 @@ export interface AccountingExportBatch {
   errorMessage?: string | null;
   exportedBy: string;
   exportedAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ZohoBooksSyncLog {
+  _id: string;
+  entityType:
+    | "oauth"
+    | "organization"
+    | "contact"
+    | "invoice"
+    | "payment"
+    | "refund";
+  entityId?: string | null;
+  orderId?: string | null;
+  provider: "zoho_books";
+  operation:
+    | "authorize_url"
+    | "token_exchange"
+    | "list_organizations"
+    | "sync_contact"
+    | "sync_invoice"
+    | "sync_payment"
+    | "sync_refund";
+  status: "queued" | "success" | "failed";
+  externalId?: string | null;
+  endpoint: string;
+  requestPayload?: string | null;
+  responsePayload?: string | null;
+  errorMessage?: string | null;
+  siteId?: string | null;
+  syncedBy?: string | null;
+  syncedAt?: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -1372,6 +1463,15 @@ export interface SiteTransfer {
   updatedAt: string;
 }
 
+export interface ModuleAuditTarget {
+  _id: string;
+  moduleNumber: number;
+  targetReleaseDate: string | null;
+  updatedBy?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface Settings {
   _id: string;
   language: "english" | "french";
@@ -1416,6 +1516,7 @@ export interface Database {
   accountingAccounts: AccountingAccount[];
   accountingJournalEntries: AccountingJournalEntry[];
   accountingExportBatches: AccountingExportBatch[];
+  zohoBooksSyncLogs: ZohoBooksSyncLog[];
   accessions: Accession[];
   samples: Sample[];
   barcodes: BarcodeRecord[];
@@ -1462,5 +1563,6 @@ export interface Database {
   recoveryRecords: RecoveryRecord[];
   sites: Site[];
   siteTransfers: SiteTransfer[];
+  moduleAuditTargets: ModuleAuditTarget[];
   settings: Settings;
 }

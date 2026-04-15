@@ -4,6 +4,7 @@ import type {
   Order,
   OrderWorkflowModule,
   OrderWorkflowPlan,
+  OrderWorkflowRouteGuide,
   OrderWorkflowStageId,
   OrderWorkflowStageState,
 } from "../types.js";
@@ -397,6 +398,29 @@ function getRouteTags(stageIds: OrderWorkflowStageId[]) {
   };
 
   return modules.map((module) => labels[module]);
+}
+
+export function describeOrderWorkflowRoutes(db: Database, order: Order): OrderWorkflowRouteGuide[] {
+  return order.testTypeIds
+    .map((testTypeId) => {
+      const testType = db.testTypes.find((entry) => entry._id === testTypeId);
+      if (!testType) {
+        return null;
+      }
+      const stages = workflowByTestId[testTypeId] ?? ["pathologist_review", "report_signout", "result_release"];
+      return {
+        key: `${order._id}:${testTypeId}`,
+        testTypeId,
+        testCode: testType.code,
+        testName: testType.name,
+        category: testType.category,
+        stages,
+        routeTags: getRouteTags(stages),
+        requiresAccession: stages.includes("accessioning"),
+        primaryModule: stageMeta[stages[0]].module,
+      } satisfies OrderWorkflowRouteGuide;
+    })
+    .filter((entry): entry is OrderWorkflowRouteGuide => Boolean(entry));
 }
 
 export function getOrderWorkflowPlan(db: Database, order: Order): OrderWorkflowPlan {
