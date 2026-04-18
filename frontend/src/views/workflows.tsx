@@ -44,7 +44,9 @@ import { useActionLock, useLoadable } from './shared'
 
 import type {
   Accession,
+  AiModelRegistryRecord,
   CytologyCase,
+  DigitalSlideRecord,
   HydratedOrder,
   OrderWorkflowStageId,
   SafeUser,
@@ -66,6 +68,8 @@ function nextWorkflowActionLabel(order: HydratedOrder) {
       return 'Start histology case'
     case 'cytology_case':
       return 'Initialize cytology case'
+    case 'cytology_screening':
+      return 'Open cytology screening'
     case 'cytology_qc':
       return 'Open cytology QC'
     case 'ihc':
@@ -129,6 +133,7 @@ export function ReceptionistWorkflowPage() {
     transportTemperature: string
     transportCondition: string
     sampleCondition: string
+    scannedCode: string
   } | null>(null)
   const [promptDialog, setPromptDialog] = useState<{
     orderId: string
@@ -172,6 +177,7 @@ export function ReceptionistWorkflowPage() {
       transportTemperature: 'ambient',
       transportCondition: 'stable',
       sampleCondition: 'Received intact at reception',
+      scannedCode: order.orderNumber,
     })
   }
 
@@ -314,7 +320,7 @@ export function ReceptionistWorkflowPage() {
                                 }
                                 await runOrderAction(
                                   `release-${order._id}`,
-                                  () => api.post(`/orders/${order._id}/release-to-lab`, { technicianId: technicianId || null }),
+                                  () => api.post(`/orders/${order._id}/release-to-lab`, { technicianId: technicianId || null, scannedCode: order.orderNumber }),
                                   `${order.orderNumber} released to the lab workflow.`,
                                 )
                                 setAssignment((prev) => ({ ...prev, [order._id]: '' }))
@@ -336,7 +342,7 @@ export function ReceptionistWorkflowPage() {
                                 }
                                 await runOrderAction(
                                   `release-${order._id}`,
-                                  () => api.post(`/orders/${order._id}/release-to-lab`, {}),
+                                  () => api.post(`/orders/${order._id}/release-to-lab`, { scannedCode: order.orderNumber }),
                                   `${order.orderNumber} released to the lab workflow.`,
                                 )
                               }}
@@ -437,6 +443,14 @@ export function ReceptionistWorkflowPage() {
               value={intakeDialog?.paymentCollectionReference ?? ''}
               onChange={(event) =>
                 setIntakeDialog((prev) => (prev ? { ...prev, paymentCollectionReference: event.target.value } : null))
+              }
+            />
+            <TextField
+              label="Scan order/case barcode"
+              value={intakeDialog?.scannedCode ?? ''}
+              helperText="Required before receipt can be confirmed."
+              onChange={(event) =>
+                setIntakeDialog((prev) => (prev ? { ...prev, scannedCode: event.target.value } : null))
               }
             />
             <TextField
@@ -742,7 +756,7 @@ export function TechnicianWorkflowPage() {
                           disabled={actionLock.isPending(`start-${order._id}`)}
                           onClick={() => runOrderAction(
                             `start-${order._id}`,
-                            () => api.post(`/orders/${order._id}/start-processing`),
+                            () => api.post(`/orders/${order._id}/start-processing`, { scannedCode: order.orderNumber }),
                             order.workflowPlan.nextStageId === 'cytology_case'
                               ? `${order.orderNumber} initialized in the cytology queue.`
                               : `${order.orderNumber} accessioned and moved to histology.`,
@@ -760,6 +774,7 @@ export function TechnicianWorkflowPage() {
                               () =>
                                 api.post(`/orders/${order._id}/complete-technical-step`, {
                                   stageId: order.workflowPlan.nextStageId,
+                                  scannedCode: accessionByOrderId.get(order._id)?.accessionId ?? order.orderNumber,
                                 }),
                               `${order.orderNumber} completed ${order.workflowPlan.nextStageLabel?.toLowerCase() ?? 'the technical step'}.`,
                             )
@@ -784,9 +799,9 @@ export function TechnicianWorkflowPage() {
                           Record IHC
                         </Button>
                       ) : null}
-                      {order.workflowPlan.nextStageId === 'cytology_qc' ? (
+                      {order.workflowPlan.nextStageId === 'cytology_screening' || order.workflowPlan.nextStageId === 'cytology_qc' ? (
                         <Button component={RouterLink} to={`/cytology/cases?order=${encodeURIComponent(order._id)}`}>
-                          Open cytology QC
+                          {order.workflowPlan.nextStageId === 'cytology_screening' ? 'Open cytology screening' : 'Open cytology QC'}
                         </Button>
                       ) : null}
                       {order.workflowPlan.reviewReady ? (
@@ -828,7 +843,14 @@ export function TechnicianWorkflowPage() {
             onClick={async () => {
               await runOrderAction(
                 `review-${reviewDialog.orderId}`,
-                () => api.post(`/orders/${reviewDialog.orderId}/ready-for-review`, { pathologistId: reviewDialog.pathologistId || null }),
+                () => {
+                  const accession = accessionByOrderId.get(reviewDialog.orderId)
+                  const order = ordersState.data.data.find((entry) => entry._id === reviewDialog.orderId)
+                  return api.post(`/orders/${reviewDialog.orderId}/ready-for-review`, {
+                    pathologistId: reviewDialog.pathologistId || null,
+                    scannedCode: accession?.accessionId ?? order?.orderNumber ?? '',
+                  })
+                },
                 'Case sent to pathologist review queue.',
               )
               setReviewDialog({ orderId: '', pathologistId: '' })
@@ -1138,7 +1160,17 @@ export function IhcPage() {
     antigenRetrieval: '',
     detection: '',
     counterstain: '',
+    lotNumber: '',
+    controlSlideStatus: 'pass' as 'pass' | 'pending' | 'fail',
+    quantity: 1,
     qcNotes: '',
+  })
+  const [specialForm, setSpecialForm] = useState({
+    requestType: 'special_stain' as 'recut' | 'special_stain' | 'ihc',
+    stainName: 'PAS',
+    reason: '',
+    lotNumber: '',
+    billingReference: '',
   })
   const [feedback, setFeedback] = useState<{ kind: 'success' | 'error'; message: string } | null>(null)
 
@@ -1203,6 +1235,16 @@ export function IhcPage() {
             <TextField label="Antigen retrieval" value={form.antigenRetrieval} onChange={(event) => setForm((prev) => ({ ...prev, antigenRetrieval: event.target.value }))} />
             <TextField label="Detection" value={form.detection} onChange={(event) => setForm((prev) => ({ ...prev, detection: event.target.value }))} />
             <TextField label="Counterstain" value={form.counterstain} onChange={(event) => setForm((prev) => ({ ...prev, counterstain: event.target.value }))} />
+            <TextField label="Antibody lot number" value={form.lotNumber} onChange={(event) => setForm((prev) => ({ ...prev, lotNumber: event.target.value }))} />
+            <FormControl>
+              <InputLabel>Control slide result</InputLabel>
+              <Select label="Control slide result" value={form.controlSlideStatus} onChange={(event) => setForm((prev) => ({ ...prev, controlSlideStatus: String(event.target.value) as 'pass' | 'pending' | 'fail' }))}>
+                <MenuItem value="pass">Pass</MenuItem>
+                <MenuItem value="pending">Pending</MenuItem>
+                <MenuItem value="fail">Fail</MenuItem>
+              </Select>
+            </FormControl>
+            <TextField label="Inventory quantity used" type="number" value={form.quantity} onChange={(event) => setForm((prev) => ({ ...prev, quantity: Number(event.target.value) }))} />
             <TextField label="QC notes" multiline minRows={3} value={form.qcNotes} onChange={(event) => setForm((prev) => ({ ...prev, qcNotes: event.target.value }))} />
             <Button
               disabled={!slideId || !form.antibody.trim() || !form.clone.trim() || actionLock.isPending(`ihc-${slideId}`)}
@@ -1220,6 +1262,9 @@ export function IhcPage() {
                       antigenRetrieval: '',
                       detection: '',
                       counterstain: '',
+                      lotNumber: '',
+                      controlSlideStatus: 'pass',
+                      quantity: 1,
                       qcNotes: '',
                     })
                     setFeedback({ kind: 'success', message: `IHC stain recorded for ${slideId}.` })
@@ -1248,6 +1293,39 @@ export function IhcPage() {
               ) : (
                 <EmptyState title="No IHC entries yet." body="Record the first IHC result for the selected slide above." />
               )}
+            </SectionCard>
+            <SectionCard title="Request recut or special stain" description="Creates a controlled request with approval, billing reference, worklist, and inventory drawdown when completed.">
+              <Stack spacing={2}>
+                <FormControl>
+                  <InputLabel>Request type</InputLabel>
+                  <Select label="Request type" value={specialForm.requestType} onChange={(event) => setSpecialForm((prev) => ({ ...prev, requestType: String(event.target.value) as 'recut' | 'special_stain' | 'ihc' }))}>
+                    <MenuItem value="recut">Re-cut</MenuItem>
+                    <MenuItem value="special_stain">Special stain</MenuItem>
+                    <MenuItem value="ihc">IHC add-on</MenuItem>
+                  </Select>
+                </FormControl>
+                <TextField label="Stain / recut name" value={specialForm.stainName} onChange={(event) => setSpecialForm((prev) => ({ ...prev, stainName: event.target.value }))} />
+                <TextField label="Reason / approval note" multiline minRows={2} value={specialForm.reason} onChange={(event) => setSpecialForm((prev) => ({ ...prev, reason: event.target.value }))} />
+                <TextField label="Lot number" value={specialForm.lotNumber} onChange={(event) => setSpecialForm((prev) => ({ ...prev, lotNumber: event.target.value }))} />
+                <TextField label="Billing reference" value={specialForm.billingReference} onChange={(event) => setSpecialForm((prev) => ({ ...prev, billingReference: event.target.value }))} />
+                <Button
+                  variant="outlined"
+                  disabled={!slideId || !specialForm.stainName.trim() || !specialForm.reason.trim() || actionLock.isPending(`special-${slideId}`)}
+                  onClick={async () => {
+                    await actionLock.runLocked(`special-${slideId}`, async () => {
+                      try {
+                        await api.post(`/slides/${slideId}/special-stains`, specialForm)
+                        setSpecialForm({ requestType: 'special_stain', stainName: 'PAS', reason: '', lotNumber: '', billingReference: '' })
+                        setFeedback({ kind: 'success', message: `Controlled stain request created for ${slideId}.` })
+                      } catch (saveError) {
+                        setFeedback({ kind: 'error', message: errorMessage(saveError) })
+                      }
+                    })
+                  }}
+                >
+                  Create controlled request
+                </Button>
+              </Stack>
             </SectionCard>
           </Stack>
         ) : (
@@ -1334,6 +1412,44 @@ export function CytologyCasesPage() {
     }
   }
 
+  const saveScreening = async () => {
+    if (!editing) return
+    try {
+      await api.post(`/cytology/cases/${editing._id}/screening`, {
+        scannedCode: editing.caseNumber,
+        adequacyStatus: editing.adequacyStatus && editing.adequacyStatus !== 'pending' ? editing.adequacyStatus : 'satisfactory',
+        adequacyCriteriaMet: editing.adequacyCriteriaMet ?? [],
+        adequacyExceptions: editing.adequacyExceptions ?? [],
+        bethesdaCategory: editing.bethesdaCategory ?? '',
+        screeningNotes: editing.screeningNotes ?? editing.remarks ?? 'Screening completed.',
+      })
+      setFeedback({ kind: 'success', message: `${editing.caseNumber} screening saved.` })
+      setEditing(null)
+      casesState.refresh()
+      ordersState.refresh()
+    } catch (saveError) {
+      setFeedback({ kind: 'error', message: errorMessage(saveError) })
+    }
+  }
+
+  const saveQualityGate = async () => {
+    if (!editing) return
+    try {
+      await api.post(`/cytology/cases/${editing._id}/quality-gate`, {
+        qcStatus: editing.qcStatus && editing.qcStatus !== 'pending' ? editing.qcStatus : 'pass',
+        qcNotes: editing.qcNotes ?? 'QC gate completed.',
+        adequacyScore: editing.adequacyStatus === 'unsatisfactory' ? 0 : 95,
+        unsatisfactoryReason: editing.adequacyStatus === 'unsatisfactory' ? (editing.screeningNotes ?? 'Unsatisfactory adequacy') : '',
+      })
+      setFeedback({ kind: 'success', message: `${editing.caseNumber} QC gate saved.` })
+      setEditing(null)
+      casesState.refresh()
+      ordersState.refresh()
+    } catch (saveError) {
+      setFeedback({ kind: 'error', message: errorMessage(saveError) })
+    }
+  }
+
   return (
     <Stack spacing={3}>
       <PageHeader title="Cytology" description="Only cytology-routed orders appear here. Capture preparation details and QC so the case can move to review safely." />
@@ -1409,10 +1525,51 @@ export function CytologyCasesPage() {
                 onChange={(event) => setEditing((prev) => (prev ? { ...prev, status: String(event.target.value) as CytologyCase['status'] } : prev))}
               >
                 <MenuItem value="open">Open</MenuItem>
+                <MenuItem value="screening">Screening</MenuItem>
                 <MenuItem value="review">Review</MenuItem>
+                <MenuItem value="escalated">Escalated</MenuItem>
                 <MenuItem value="complete">Complete</MenuItem>
               </Select>
             </FormControl>
+            <FormControl>
+              <InputLabel>Adequacy</InputLabel>
+              <Select
+                label="Adequacy"
+                value={editing?.adequacyStatus ?? 'pending'}
+                onChange={(event) => setEditing((prev) => (prev ? { ...prev, adequacyStatus: String(event.target.value) as CytologyCase['adequacyStatus'] } : prev))}
+              >
+                <MenuItem value="pending">Pending</MenuItem>
+                <MenuItem value="satisfactory">Satisfactory</MenuItem>
+                <MenuItem value="limited">Limited but acceptable</MenuItem>
+                <MenuItem value="unsatisfactory">Unsatisfactory</MenuItem>
+              </Select>
+            </FormControl>
+            <TextField
+              label="Bethesda / cytology category"
+              value={editing?.bethesdaCategory ?? ''}
+              onChange={(event) => setEditing((prev) => (prev ? { ...prev, bethesdaCategory: event.target.value } : prev))}
+            />
+            <TextField
+              label="Adequacy criteria met (comma-separated)"
+              value={(editing?.adequacyCriteriaMet ?? []).join(', ')}
+              onChange={(event) =>
+                setEditing((prev) => (prev ? { ...prev, adequacyCriteriaMet: event.target.value.split(',').map((item) => item.trim()).filter(Boolean) } : prev))
+              }
+            />
+            <TextField
+              label="Adequacy exceptions (comma-separated)"
+              value={(editing?.adequacyExceptions ?? []).join(', ')}
+              onChange={(event) =>
+                setEditing((prev) => (prev ? { ...prev, adequacyExceptions: event.target.value.split(',').map((item) => item.trim()).filter(Boolean) } : prev))
+              }
+            />
+            <TextField
+              label="Cytotechnologist screening notes"
+              multiline
+              minRows={3}
+              value={editing?.screeningNotes ?? ''}
+              onChange={(event) => setEditing((prev) => (prev ? { ...prev, screeningNotes: event.target.value } : prev))}
+            />
             <FormControl>
               <InputLabel>Route type</InputLabel>
               <Select
@@ -1466,6 +1623,8 @@ export function CytologyCasesPage() {
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setEditing(null)}>Cancel</Button>
+          <Button onClick={saveScreening}>Save screening</Button>
+          <Button onClick={saveQualityGate}>Save QC gate</Button>
           <Button variant="contained" onClick={saveEdit}>Save</Button>
         </DialogActions>
       </Dialog>
@@ -1479,6 +1638,15 @@ export function DigitalPathologyPage() {
   const [progress, setProgress] = useState(0)
   const [images, setImages] = useState<string[]>([])
   const [feedback, setFeedback] = useState<{ kind: 'success' | 'error'; message: string } | null>(null)
+  const digitalSlidesState = useLoadable<DigitalSlideRecord[]>([], [], async () => {
+    const response = await api.get('/digital-slides')
+    return response.data
+  })
+  const aiModelsState = useLoadable<AiModelRegistryRecord[]>([], [], async () => {
+    const response = await api.get('/ai/models')
+    return response.data
+  })
+  const selectedDigitalSlide = digitalSlidesState.data.find((entry) => entry.slideId === slideId || entry._id === slideId)
 
   const simulate = async () => {
     if (!slideId.trim()) {
@@ -1498,6 +1666,7 @@ export function DigitalPathologyPage() {
       const response = await api.post('/slide-images/simulate', { slideId })
       setImages(response.data.imageUrls)
       setFeedback({ kind: 'success', message: `Digital image set generated for ${slideId}.` })
+      digitalSlidesState.refresh()
     } catch (simulationError) {
       setFeedback({ kind: 'error', message: errorMessage(simulationError) })
     } finally {
@@ -1514,10 +1683,72 @@ export function DigitalPathologyPage() {
       <SectionCard>
         <Stack spacing={2}>
           <TextField label="Stained sample ID / Slide ID" value={slideId} onChange={(event) => setSlideId(event.target.value)} />
+          <FormControl>
+            <InputLabel>Existing digital slide</InputLabel>
+            <Select label="Existing digital slide" value={selectedDigitalSlide?._id ?? ''} onChange={(event) => {
+              const selected = digitalSlidesState.data.find((entry) => entry._id === String(event.target.value))
+              setSlideId(selected?.slideId ?? '')
+            }}>
+              <MenuItem value="">Select slide record</MenuItem>
+              {digitalSlidesState.data.map((slide) => (
+                <MenuItem key={slide._id} value={slide._id}>{slide.slideId} · {slide.signOutStatus}</MenuItem>
+              ))}
+            </Select>
+          </FormControl>
           {running ? <LinearProgress variant="determinate" value={progress} /> : null}
           <Button disabled={!slideId || running} variant="contained" startIcon={<PlayArrowRoundedIcon />} onClick={simulate}>
             Simulate processing (about 5 sec demo)
           </Button>
+          <Stack direction={{ xs: 'column', md: 'row' }} spacing={1}>
+            <Button
+              disabled={!selectedDigitalSlide}
+              onClick={async () => {
+                if (!selectedDigitalSlide) return
+                try {
+                  await api.post(`/digital-slides/${selectedDigitalSlide._id}/claim`, { reason: 'Pathologist review ownership' })
+                  digitalSlidesState.refresh()
+                  setFeedback({ kind: 'success', message: `${selectedDigitalSlide.slideId} claimed for digital review.` })
+                } catch (lockError) {
+                  setFeedback({ kind: 'error', message: errorMessage(lockError) })
+                }
+              }}
+            >
+              Claim ownership lock
+            </Button>
+            <Button
+              disabled={!selectedDigitalSlide}
+              onClick={async () => {
+                if (!selectedDigitalSlide) return
+                try {
+                  await api.post(`/digital-slides/${selectedDigitalSlide._id}/signout-lock`, { reason: 'Ready for report sign-out' })
+                  digitalSlidesState.refresh()
+                  setFeedback({ kind: 'success', message: `${selectedDigitalSlide.slideId} sign-out locked.` })
+                } catch (lockError) {
+                  setFeedback({ kind: 'error', message: errorMessage(lockError) })
+                }
+              }}
+            >
+              Lock sign-out
+            </Button>
+            <Button
+              disabled={!selectedDigitalSlide || !aiModelsState.data.length}
+              onClick={async () => {
+                if (!selectedDigitalSlide) return
+                try {
+                  await api.post(`/ai/slides/${selectedDigitalSlide.slideId}/run`, {
+                    modelId: aiModelsState.data[0]?._id,
+                    analysisType: 'qc',
+                    clinicalUseRequested: false,
+                  })
+                  setFeedback({ kind: 'success', message: 'AI QC record created as non-diagnostic/free-mode output.' })
+                } catch (aiError) {
+                  setFeedback({ kind: 'error', message: errorMessage(aiError) })
+                }
+              }}
+            >
+              Run AI QC
+            </Button>
+          </Stack>
         </Stack>
       </SectionCard>
       {images.length ? (

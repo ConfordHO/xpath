@@ -175,6 +175,7 @@ describe("production hardening", () => {
         transportTemperature: "ambient",
         transportCondition: "stable",
         sampleCondition: "Received intact at reception",
+        scannedCode: orderCreate.body.orderNumber,
       });
     assert.equal(receptionIntake.status, 200);
 
@@ -188,13 +189,13 @@ describe("production hardening", () => {
     const releaseToLab = await request
       .post(`/api/orders/${createdOrderId}/release-to-lab`)
       .set("Authorization", `Bearer ${authToken}`)
-      .send({ technicianId: technician._id });
+      .send({ technicianId: technician._id, scannedCode: orderCreate.body.orderNumber });
     assert.equal(releaseToLab.status, 200);
 
     const startProcessing = await request
       .post(`/api/orders/${createdOrderId}/start-processing`)
       .set("Authorization", `Bearer ${authToken}`)
-      .send({});
+      .send({ scannedCode: orderCreate.body.orderNumber });
     assert.equal(startProcessing.status, 200);
 
     const accessionLookup = await request

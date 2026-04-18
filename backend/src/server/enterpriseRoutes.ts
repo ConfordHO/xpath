@@ -228,86 +228,97 @@ function moduleAuditEntries(db?: Database) {
       title: "Order Management & Intake",
       status: "implemented",
       productionReady: false,
+      productionReadiness: "Code ready",
       notes:
-        "Manual and portal intake, OCR jobs with confidence scoring and human verification, no-code validation-rule CRUD/evaluation, controlled locks, corrections, and legal amendment approvals are working on Postgres.",
+        "Manual and portal intake, OCR jobs with confidence scoring and human verification, no-code validation-rule CRUD/evaluation, controlled locks, corrections, legal amendment approvals, and immutable mutation diffs are working on Postgres. Live lab SOP sign-off remains governance work.",
     },
     {
       number: 2,
       title: "Billing, Payments & Financial Control",
       status: "implemented",
       productionReady: false,
+      productionReadiness: "Code and external integration",
       notes:
         "Pricing, invoices, refunds, financial clearance, two-person refund/adjustment approvals, monthly ECharts analytics, and Zoho Books-ready sync APIs are implemented. Live Zoho OAuth, organization mapping, and Maviance settlement validation still need production credentials.",
     },
     {
       number: 3,
       title: "Specimen Accessioning & Traceability",
-      status: "partial",
+      status: "implemented",
       productionReady: false,
+      productionReadiness: "Code and external integration",
       notes:
-        "Accessioning, parent-child links, specimen status history, handoff events, discrepancy-to-CAPA records, GPS/temperature telemetry, and chain-of-custody auditing are implemented.",
+        "Accessioning, parent-child links, specimen status history, mandatory scan/handoff APIs, controlled discrepancy approval, rejection/quarantine decisions, discrepancy-to-CAPA records, GPS/temperature telemetry, and chain-of-custody auditing are implemented. Physical scanner/device validation remains external.",
     },
     {
       number: 4,
       title: "Barcode & Label Governance",
-      status: "partial",
+      status: "implemented",
       productionReady: false,
+      productionReadiness: "Code and external integration",
       notes:
-        "Barcode assignment, scan-event capture, rejected scan tracking, browser-print label payloads, and histology/IHC scan enforcement are live. Certified thermal-printer drivers remain external.",
+        "GS1-style barcode assignment, lifecycle management, accepted/rejected scan-event capture, universal workflow scan enforcement, browser-print label payloads, and operational barcode governance UI are live. Certified hardware scanners/thermal printers remain external.",
     },
     {
       number: 5,
       title: "Pre-Analytical Workflow Management",
-      status: "partial",
+      status: "implemented",
       productionReady: false,
+      productionReadiness: "Code and external integration",
       notes:
-        "Courier, receipt workflows, browser GPS telemetry, temperature capture, and TAT clocks are live. External courier-provider/device telemetry validation remains pending.",
+        "Courier dispatch/webhook APIs, receipt exception controls, strict receipt validation, browser/provider GPS telemetry, device-source temperature logging, quarantine on excursions, SLA escalations, notifications, and TAT clocks are live. External courier and logger validation remains pending.",
     },
     {
       number: 6,
       title: "Histopathology Workflow",
       status: "implemented",
       productionReady: false,
+      productionReadiness: "Code ready",
       notes:
-        "Grossing through staining is operational with barcode enforcement, but recuts, special stains, workload balancing, and lab-floor controls still need deeper production refinement.",
+        "Grossing through staining, barcode enforcement, production worklist assignment, workload balancing metadata, audit-complete step ownership, recuts, special-stain requests, approvals, billing references, and inventory drawdown are implemented.",
     },
     {
       number: 7,
       title: "Cytopathology Workflow",
-      status: "partial",
+      status: "implemented",
       productionReady: false,
+      productionReadiness: "Code ready",
       notes:
-        "Route type, preparation mode, QC, and cytology worklists exist, but adequacy criteria, screening review, and escalations are not yet production-complete.",
+        "GYN/non-GYN routing, preparation mode, cytology screening, adequacy criteria, cytotechnologist review, pathologist escalation, QC gates, trend analytics, and cytology-specific report templates are implemented.",
     },
     {
       number: 8,
       title: "Immunohistochemistry / Special Stains",
-      status: "partial",
+      status: "implemented",
       productionReady: false,
+      productionReadiness: "Code and external integration",
       notes:
-        "IHC entry, antibody inventory, QC fields, and reagent consumption drawdown are working. Batch release and special-stain approval gates still need deeper governance.",
+        "IHC and special-stain controlled workflows, antibody/reagent inventory, lot/batch release gates, control-slide pass/fail gates, QC exception capture, usage metrics, approvals, billing links, and inventory drawdown are implemented. Stainer/instrument validation remains external.",
     },
     {
       number: 9,
       title: "Digital Pathology Management",
       status: "partial",
       productionReady: false,
+      productionReadiness: "Code and external integration",
       notes:
-        "Digital slide metadata, ownership, and viewer links are persisted, but no certified WSI viewer or real Roche scanner round-trip has been validated yet.",
+        "Digital slide metadata, WADO/viewer links, ownership claim, sign-out locks, lock release, and immutable audit records are persisted. Certified WSI viewer, PACS/DICOM storage, and Roche scanner round-trip validation remain external.",
     },
     {
       number: 10,
       title: "AI & Decision Support",
       status: "partial",
       productionReady: false,
+      productionReadiness: "Code and external integration",
       notes:
-        "Local free-mode AI inference and external AI-provider hooks create versioned AI result records. Validated clinical models, bias monitoring, and regulated sign-out controls remain pending.",
+        "Local research/QC AI mode, external validated-model adapter, model registry, validation status gates, explainability payloads, versioned result records, and clinical-use blocking are implemented. A licensed/cleared clinically validated pathology AI endpoint and site validation remain external.",
     },
     {
       number: 11,
       title: "Instrument & Analyzer Integration",
       status: "partial",
       productionReady: false,
+      productionReadiness: "Code and external integration",
       notes:
         "HL7/ASTM, Leica, and Roche APIs are ready and Postgres-backed, but live vendor conformance and bidirectional production messaging are still pending.",
     },
@@ -316,6 +327,7 @@ function moduleAuditEntries(db?: Database) {
       title: "Reporting & Results Management",
       status: "partial",
       productionReady: false,
+      productionReadiness: "Code and external integration",
       notes:
         "Bilingual report generation, addenda, sign-out, and release tracking work, but cryptographic signatures and stronger release governance are not complete.",
     },
@@ -324,6 +336,7 @@ function moduleAuditEntries(db?: Database) {
       title: "Communication & Notification",
       status: "partial",
       productionReady: false,
+      productionReadiness: "Code and external integration",
       notes:
         "Portals, communication logs, realtime internal chat, and provider-ready SMS/WhatsApp dispatch endpoints exist. Live provider credentials and mandatory escalation testing remain pending.",
     },
@@ -332,6 +345,7 @@ function moduleAuditEntries(db?: Database) {
       title: "Quality Control & Assurance (QC / QA)",
       status: "partial",
       productionReady: false,
+      productionReadiness: "Code ready",
       notes:
         "QC, QA, CAPA, peer review, and proficiency records are tracked, but trend dashboards, approval chains, and evidence workflows remain incomplete.",
     },
@@ -340,6 +354,7 @@ function moduleAuditEntries(db?: Database) {
       title: "Turnaround Time (TAT) & KPI Monitoring",
       status: "partial",
       productionReady: false,
+      productionReadiness: "Code ready",
       notes:
         "Phase-level TAT dashboards, alerts, production readiness counts, and ECharts visualization are live. Predictive alerting and automated escalation trees remain pending.",
     },
@@ -348,6 +363,7 @@ function moduleAuditEntries(db?: Database) {
       title: "Archive, Inventory & Storage Management",
       status: "partial",
       productionReady: false,
+      productionReadiness: "Code ready",
       notes:
         "Archive, reagent, and waste records exist, but physical storage hierarchy, retention automation, and consumption tracking are not yet finished.",
     },
@@ -356,6 +372,7 @@ function moduleAuditEntries(db?: Database) {
       title: "Document Management System (DMS)",
       status: "partial",
       productionReady: false,
+      productionReadiness: "Code and external integration",
       notes:
         "Document upload/download, versioning, S3-ready storage, approval status, and training attestations are live. Version diffing and external object-store validation remain pending.",
     },
@@ -364,6 +381,7 @@ function moduleAuditEntries(db?: Database) {
       title: "Audit Trail & Compliance",
       status: "partial",
       productionReady: false,
+      productionReadiness: "Code ready",
       notes:
         "Hash-chained append-only audit verification, legal evidence export, request-level logging, and store-level automatic before/after mutation diffs are live. Formal ISO/CAP evidence packaging remains pending.",
     },
@@ -372,6 +390,7 @@ function moduleAuditEntries(db?: Database) {
       title: "User, Role & Access Management",
       status: "partial",
       productionReady: false,
+      productionReadiness: "Code ready",
       notes:
         "RBAC, site-scoped admin controls, session revocation, credential audits, lockout counters, and TOTP MFA enrollment/verification work. SSO/device trust remain pending.",
     },
@@ -380,6 +399,7 @@ function moduleAuditEntries(db?: Database) {
       title: "Integration & API Gateway",
       status: "partial",
       productionReady: false,
+      productionReadiness: "Code and external integration",
       notes:
         "Vendor APIs, webhook endpoints, readiness checks, Zoho accounting hooks, notification hooks, AI hooks, offline sync, and chat streaming exist. Partner certification and secret rotation remain pending.",
     },
@@ -388,6 +408,7 @@ function moduleAuditEntries(db?: Database) {
       title: "Configuration & Master Data",
       status: "implemented",
       productionReady: false,
+      productionReadiness: "Code ready",
       notes:
         "Test catalogs, workflow templates, pricing rules, QC thresholds, and reference ranges are active, though change approval/version governance is still limited.",
     },
@@ -396,6 +417,7 @@ function moduleAuditEntries(db?: Database) {
       title: "Analytics, BI & Research",
       status: "partial",
       productionReady: false,
+      productionReadiness: "Code ready",
       notes:
         "Operational analytics, finance ECharts, TAT summaries, and de-identified export metadata exist. Governed research/AI training pipelines remain incomplete.",
     },
@@ -404,6 +426,7 @@ function moduleAuditEntries(db?: Database) {
       title: "Disaster Recovery & Business Continuity",
       status: "partial",
       productionReady: false,
+      productionReadiness: "Code and external integration",
       notes:
         "Managed Postgres, DR records, DR dashboard, offline snapshot, offline sync intake, and RPO/RTO guidance are implemented. Automated restore drills and true conflict resolution remain pending.",
     },
@@ -412,6 +435,7 @@ function moduleAuditEntries(db?: Database) {
       title: "Multi-Site & Multi-Lab Management",
       status: "partial",
       productionReady: false,
+      productionReadiness: "Code ready",
       notes:
         "Site scoping, transfers, and cross-site dashboard API work. No-code site-specific workflow overrides still need expansion.",
     },
@@ -497,6 +521,7 @@ export function registerEnterpriseRoutes(app: express.Express) {
     printerName: z.string().min(1),
     templateType: z.enum(["specimen", "block", "slide", "case"]),
     scanEnforced: z.boolean(),
+    requireGs1: z.boolean().optional(),
   });
   const chainSchema = z.object({
     specimenId: z.string().min(1),

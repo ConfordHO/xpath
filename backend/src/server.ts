@@ -105,6 +105,7 @@ import { applySecurity, authLimiter } from "./server/security.js";
 import { registerProductionRoutes } from "./server/productionRoutes.js";
 import { orderIsLockedForDirectEdit, registerOrderGovernanceRoutes } from "./server/orderGovernanceRoutes.js";
 import { ensureInvoiceForOrder, registerZohoBooksRoutes, syncPaymentToZoho } from "./server/zohoBooks.js";
+import { registerModuleHardeningRoutes } from "./server/moduleHardeningRoutes.js";
 import { loadDb, updateDb } from "./store.js";
 import type {
   Accession,
@@ -2509,6 +2510,7 @@ app.post(
         transportTemperature: z.string().trim().default("ambient"),
         transportCondition: z.string().trim().default("stable"),
         sampleCondition: z.string().trim().default("Received at reception"),
+        scannedCode: z.string().trim().optional(),
         lat: z.number().optional(),
         lng: z.number().optional(),
         temperatureCelsius: z.number().optional(),
@@ -2521,6 +2523,24 @@ app.post(
     const result = await updateDb((db) => {
       const order = getAccessibleOrderOrThrow(db, req, req.params.id);
       const timestamp = now();
+      const missingReceiptFields = [
+        ["order/case barcode scan", parsed.data.scannedCode],
+        ["sample condition", parsed.data.sampleCondition],
+        ["transport condition", parsed.data.transportCondition],
+        ["transport temperature", parsed.data.transportTemperature],
+      ]
+        .filter(([, value]) => !trimText(String(value ?? "")))
+        .map(([label]) => label);
+      if (missingReceiptFields.length) {
+        throw new Error(`Receipt validation failed. Missing: ${missingReceiptFields.join(", ")}`);
+      }
+      const caseBarcode = enforceBarcodeScan(db, "case", order._id, parsed.data.scannedCode, {
+        preferredCode: order.orderNumber,
+        scannedBy: req.user?.name ?? req.user?.email ?? "reception",
+        workflowStep: "reception_intake",
+        sourceScreen: "receptionist_workflow",
+        requireGs1: false,
+      });
       const normalizedMethod = parsed.data.paymentCollectionMethod
         ? normalizePaymentMethod(parsed.data.paymentCollectionMethod)
         : null;
@@ -2567,6 +2587,9 @@ app.post(
         existingPreAnalytics.transportTemperature = parsed.data.transportTemperature;
         existingPreAnalytics.transportCondition = parsed.data.transportCondition;
         existingPreAnalytics.receiptValidated = true;
+        existingPreAnalytics.receiptException = null;
+        existingPreAnalytics.validatedBy = req.user?._id ?? null;
+        existingPreAnalytics.validatedAt = timestamp;
         existingPreAnalytics.tatMinutes = tatMinutes;
         existingPreAnalytics.updatedAt = timestamp;
       } else {
@@ -2580,6 +2603,9 @@ app.post(
           transportTemperature: parsed.data.transportTemperature,
           transportCondition: parsed.data.transportCondition,
           receiptValidated: true,
+          receiptException: null,
+          validatedBy: req.user?._id ?? null,
+          validatedAt: timestamp,
           tatMinutes,
           createdAt: timestamp,
           updatedAt: timestamp,
@@ -2666,6 +2692,7 @@ app.post(
           paymentCollectionStatus: order.paymentCollectionStatus,
           paymentCollectionAmount: order.paymentCollectionAmount,
           financialClearance: order.financialClearance,
+          caseBarcode: caseBarcode.code,
         },
       });
       return order;
@@ -2800,6 +2827,7 @@ app.post(
     const parsed = z
       .object({
         technicianId: z.string().trim().nullable().optional(),
+        scannedCode: z.string().trim().optional(),
       })
       .safeParse(req.body);
     if (!parsed.success) {
@@ -2817,6 +2845,13 @@ app.post(
       if (order.financialClearance !== "cleared") {
         throw new Error("Financial clearance is still pending. Reception or finance must reconcile payment first");
       }
+      enforceBarcodeScan(db, "case", order._id, parsed.data.scannedCode, {
+        preferredCode: order.orderNumber,
+        scannedBy: req.user?.name ?? req.user?.email ?? "reception",
+        workflowStep: "release_to_lab",
+        sourceScreen: "receptionist_workflow",
+        requireGs1: false,
+      });
       const workflowPlan = getOrderWorkflowPlan(db, order);
       order.triagedAt = order.triagedAt ?? now();
       order.triagedBy = order.triagedBy ?? (req.user?._id ?? null);
@@ -3126,6 +3161,14 @@ app.post(
       return { order, accession: getAccessionByOrder(db, order._id), sample: getSampleByOrder(db, order._id) };
     }
 
+    enforceBarcodeScan(db, "case", order._id, parsed.data.scannedCode, {
+      preferredCode: order.orderNumber,
+      scannedBy: currentUser.name ?? currentUser.email,
+      workflowStep: workflowPlan.nextStageId,
+      sourceScreen: "technician_workflow",
+      requireGs1: false,
+    });
+
     order.status = order.status === "review" ? order.status : "in_progress";
     order.receivedAt = order.receivedAt ?? timestamp;
     order.updatedAt = timestamp;
@@ -3201,10 +3244,24 @@ app.post(
         preparationType: defaults.preparationType,
         qcStatus: "pending" as const,
         qcNotes: "",
+        screeningStatus: "pending" as const,
+        adequacyStatus: "pending" as const,
+        adequacyCriteriaMet: [],
+        adequacyExceptions: [],
+        cytotechnologistId: null,
+        screenedAt: null,
+        pathologistEscalatedAt: null,
+        pathologistEscalationReason: null,
+        bethesdaCategory: null,
+        screeningNotes: null,
         createdAt: timestamp,
         updatedAt: timestamp,
       };
       db.cytologyCases.push(cytologyCase);
+      ensureBarcodeAssigned(db, "case", cytologyCase._id, {
+        preferredCode: cytologyCase.caseNumber,
+        justification: "Cytology case setup",
+      });
       appendRequestAudit(db, req, {
         module: "Cytology",
         action: "create_case",
@@ -3240,6 +3297,7 @@ app.post(
     .object({
       stageId: z.enum(["analyzer_run", "molecular_sendout"]),
       notes: z.string().trim().optional(),
+      scannedCode: z.string().trim().optional(),
     })
     .safeParse(req.body);
   if (!parsed.success) {
@@ -3253,6 +3311,14 @@ app.post(
     if (workflowPlan.nextStageId !== parsed.data.stageId) {
       throw new Error(`This order is currently awaiting ${workflowPlan.nextStageLabel ?? "another workflow step"}`);
     }
+    const sample = getSampleByOrder(db, order._id);
+    enforceBarcodeScan(db, sample ? "specimen" : "case", sample?._id ?? order._id, parsed.data.scannedCode, {
+      preferredCode: sample?.label ?? order.orderNumber,
+      scannedBy: currentUser.name ?? currentUser.email,
+      workflowStep: parsed.data.stageId,
+      sourceScreen: "technician_workflow",
+      requireGs1: Boolean(sample),
+    });
 
     const timestamp = now();
     const runType =
@@ -3324,6 +3390,7 @@ app.post(
   const parsed = z
     .object({
       pathologistId: z.string().nullable().optional(),
+      scannedCode: z.string().trim().optional(),
     })
     .safeParse(req.body);
   if (!parsed.success) {
@@ -3339,6 +3406,20 @@ app.post(
     if (workflowPlan.nextStageId && workflowPlan.nextStageId !== "pathologist_review") {
       throw new Error(`Complete ${workflowPlan.nextStageLabel ?? "the required workflow step"} before review`);
     }
+    const sampleForReview = getSampleByOrder(db, order._id);
+    enforceBarcodeScan(
+      db,
+      sampleForReview ? "specimen" : "case",
+      sampleForReview?._id ?? order._id,
+      parsed.data.scannedCode,
+      {
+        preferredCode: sampleForReview?.label ?? order.orderNumber,
+        scannedBy: req.user?.name ?? req.user?.email ?? "technician",
+        workflowStep: "pathologist_review",
+        sourceScreen: "technician_workflow",
+        requireGs1: Boolean(sampleForReview),
+      },
+    );
     if (
       ["review", "completed", "released"].includes(order.status) &&
       (parsed.data.pathologistId ?? order.assignedPathologistId ?? null) === (order.assignedPathologistId ?? null)
@@ -3879,6 +3960,9 @@ app.post("/api/slides/:slideId/ihc", requireRoles("admin", "technician"), async 
       detection: z.string().min(1),
       counterstain: z.string().min(1),
       qcNotes: z.string().optional(),
+      lotNumber: z.string().trim().optional(),
+      controlSlideStatus: z.enum(["pending", "pass", "fail"]).default("pass"),
+      quantity: z.number().positive().default(1),
       scannedCode: z.string().trim().optional(),
     })
     .safeParse(req.body);
@@ -3918,8 +4002,67 @@ app.post("/api/slides/:slideId/ihc", requireRoles("admin", "technician"), async 
             "slide",
             slide.slideId,
             parsed.data.scannedCode,
-            { preferredCode: slide.slideId },
+            {
+              preferredCode: slide.slideId,
+              scannedBy: req.user?.name ?? req.user?.email ?? "technician",
+              workflowStep: "ihc",
+              sourceScreen: "ihc",
+            },
           );
+          if (parsed.data.controlSlideStatus !== "pass") {
+            const qualityEventId = createId();
+            db.qualityEvents.unshift({
+              _id: qualityEventId,
+              module: "Immunohistochemistry / Special Stains",
+              eventType: "qc",
+              status: "open",
+              summary: `Control slide failed for ${parsed.data.antibody} on ${slide.slideId}`,
+              owner: "technician",
+              linkedOrderId: order._id,
+              linkedSampleId: getSampleByOrder(db, order._id)?._id ?? null,
+              linkedDiscrepancyId: null,
+              rootCause: null,
+              correctiveAction: null,
+              preventiveAction: null,
+              approvedBy: null,
+              approvedAt: null,
+              createdAt: now(),
+              updatedAt: now(),
+            });
+            appendRequestAudit(db, req, {
+              module: "IHC",
+              action: "control_slide_fail",
+              targetId: slide._id,
+              orderId: order._id,
+              summary: `IHC control slide failed for ${slide.slideId}`,
+              metadata: {
+                qualityEventId,
+                antibody: parsed.data.antibody,
+              },
+            });
+            return Object.assign(slide, {
+              qcBlocked: true,
+              message: "Control slide failed. QC event created and IHC entry is blocked until resolved.",
+            });
+          }
+          const inventory = db.antibodyInventory.find(
+            (entry) =>
+              sameTrimmedText(entry.antibody, parsed.data.antibody) &&
+              sameTrimmedText(entry.clone, parsed.data.clone) &&
+              (!parsed.data.lotNumber || sameTrimmedText(entry.lotNumber, parsed.data.lotNumber)),
+          );
+          if (!inventory) {
+            throw new Error("Released antibody inventory lot is required before IHC can be recorded");
+          }
+          if (inventory.qcStatus !== "pass" || inventory.batchReleaseStatus === "held" || inventory.batchReleaseStatus === "rejected") {
+            throw new Error("IHC antibody lot is not released for clinical use");
+          }
+          if (inventory.quantity < parsed.data.quantity) {
+            throw new Error("Insufficient antibody inventory for this IHC stain");
+          }
+          inventory.quantity = Number((inventory.quantity - parsed.data.quantity).toFixed(4));
+          inventory.usageCount += 1;
+          inventory.updatedAt = now();
           slide.ihcEntries.push({
             _id: createId(),
             antibody: parsed.data.antibody,
@@ -3927,6 +4070,23 @@ app.post("/api/slides/:slideId/ihc", requireRoles("admin", "technician"), async 
             antigenRetrieval: parsed.data.antigenRetrieval,
             detection: parsed.data.detection,
             counterstain: parsed.data.counterstain,
+            stainKind: "ihc",
+            stainName: parsed.data.antibody,
+            lotNumber: inventory.lotNumber,
+            batchReleased: true,
+            controlSlideStatus: parsed.data.controlSlideStatus,
+            qcExceptionId: null,
+            inventoryDrawdowns: [
+              {
+                inventoryId: inventory._id,
+                name: `${inventory.antibody} ${inventory.clone}`,
+                quantity: parsed.data.quantity,
+                unit: inventory.unit,
+              },
+            ],
+            approvedBy: req.user?._id ?? null,
+            approvedAt: now(),
+            billingReference: null,
             qcNotes: parsed.data.qcNotes,
             createdAt: now(),
           });
@@ -4258,10 +4418,24 @@ app.post("/api/cytology/cases", requireRoles("admin", "technician"), async (req:
       preparationType: parsed.data.preparationType ?? defaults.preparationType,
       qcStatus: "pending" as const,
       qcNotes: "",
+      screeningStatus: "pending" as const,
+      adequacyStatus: "pending" as const,
+      adequacyCriteriaMet: [],
+      adequacyExceptions: [],
+      cytotechnologistId: null,
+      screenedAt: null,
+      pathologistEscalatedAt: null,
+      pathologistEscalationReason: null,
+      bethesdaCategory: null,
+      screeningNotes: null,
       createdAt: timestamp,
       updatedAt: timestamp,
     };
     db.cytologyCases.push(entry);
+    ensureBarcodeAssigned(db, "case", entry._id, {
+      preferredCode: entry.caseNumber,
+      justification: "Cytology case setup",
+    });
     return entry;
   });
 
@@ -4272,12 +4446,18 @@ app.put("/api/cytology/cases/:id", requireRoles("admin", "technician", "patholog
   const parsed = z
     .object({
       specimenType: z.string().optional(),
-      status: z.enum(["open", "review", "complete"]).optional(),
+      status: z.enum(["open", "screening", "review", "escalated", "complete"]).optional(),
       remarks: z.string().optional(),
       routeType: z.enum(["gyn", "non_gyn"]).optional(),
       preparationType: z.enum(["smear", "cell_block", "liquid_based"]).optional(),
       qcStatus: z.enum(["pending", "pass", "fail"]).optional(),
       qcNotes: z.string().optional(),
+      screeningStatus: z.enum(["pending", "in_progress", "adequate", "inadequate", "escalated"]).optional(),
+      adequacyStatus: z.enum(["pending", "satisfactory", "limited", "unsatisfactory"]).optional(),
+      adequacyCriteriaMet: z.array(z.string()).optional(),
+      adequacyExceptions: z.array(z.string()).optional(),
+      bethesdaCategory: z.string().nullable().optional(),
+      screeningNotes: z.string().nullable().optional(),
     })
     .safeParse(req.body);
   if (!parsed.success) {
@@ -4633,6 +4813,7 @@ registerEnterpriseRoutes(app);
 registerProductionRoutes(app);
 registerOrderGovernanceRoutes(app);
 registerZohoBooksRoutes(app);
+registerModuleHardeningRoutes(app);
 registerHl7IntegrationRoutes(app);
 registerMaviancePaymentRoutes(app);
 

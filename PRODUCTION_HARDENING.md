@@ -1,6 +1,20 @@
 # Production Hardening Update
 
-Updated: 2026-04-10
+Updated: 2026-04-18
+
+## 2026-04-18 Modules 1-10 Hardening
+
+- Universal barcode scan enforcement now covers reception intake, lab release, processing start, technical workflow transitions, cytology screening, IHC, special stains, and digital sign-out controls.
+- GS1-style barcode handling now includes application-identifier parsing, scan rejection capture, and dedicated operational lifecycle controls for assignment, browser-print, reprint audit, and archive justification.
+- Sample rejection now uses a controlled discrepancy workflow with severity, quarantine/rejection/accept-with-deviation decisions, supervisor approval, chain-of-custody exception events, and CAPA links.
+- Courier and temperature integrations are API-ready through dispatch/webhook endpoints, provider event telemetry, device-source logger ingestion, excursion detection, and automatic quarantine alerts.
+- SLA escalation automation now converts TAT risk/breach alerts into operational notifications for the responsible role.
+- Recuts and special stains now have request/approval/completion flows, billing references, control-slide gates, QC blocks, and inventory drawdown.
+- Histology worklists now support assignment queues, workload metadata, completion ownership, and audit capture.
+- Cytology now includes GYN/non-GYN screening, adequacy criteria, Bethesda-style result category fields, cytotechnologist review, pathologist escalation, QC gates, trend analytics, and template metadata.
+- IHC/special stains now enforce batch/lot release, control-slide pass/fail gates, QC exceptions, and reagent usage metrics.
+- Digital pathology now has ownership claims, sign-out locks, lock release, and stricter audit trails.
+- AI now has a model registry, external validated-model adapter, clinical-use blocking, and local research/QC-only fallback. No free local model is marked clinically diagnostic without regulatory/site validation.
 
 ## What Was Hardened In Code
 
@@ -105,6 +119,22 @@ Backend:
 - `ROCHE_SCANNER_WEBHOOK_SECRET`
 - `VENDOR_INTEGRATION_TIMEOUT_MS`
 
+### Required for live courier and temperature telemetry
+
+- `COURIER_PROVIDER`
+- `COURIER_API_BASE_URL`
+- `COURIER_API_KEY`
+- `COURIER_WEBHOOK_SECRET`
+- `TEMPERATURE_LOGGER_PROVIDER`
+- `TEMPERATURE_LOGGER_WEBHOOK_SECRET`
+- `SPECIMEN_TEMP_MIN_CELSIUS`
+- `SPECIMEN_TEMP_MAX_CELSIUS`
+
+### Required for clinical AI provider integration
+
+- `AI_VALIDATED_MODEL_ENDPOINT`
+- `AI_VALIDATED_MODEL_API_KEY`
+
 ### Required for durable document storage
 
 If you want object storage:
@@ -166,3 +196,10 @@ If you stay on filesystem storage:
   - https://diagnostics.roche.com/global/en/products/instruments/ventana-dp-200-ins-6320.html
   - https://www.leicabiosystems.com/en-at/histology-equipment/tissue-processors/histocore-peloris-3/
   - https://www.leicabiosystems.com/fr/equipement-dhistologie/coloration-et-montage-de-la-lamelle-de-routine/automate-de-coloration-histocore-spectra-st/
+- Standards and clinical governance references used for the 2026-04-18 hardening pass:
+  - https://www.gs1us.org/industries-and-insights/healthcare
+  - https://extranet.who.int/prequal/immunization-devices/e006-temperature-monitoring-devices
+  - https://www.iso.org/standard/76677.html
+  - https://www.ncbi.nlm.nih.gov/books/NBK269610/
+  - https://www.fda.gov/medical-devices/software-medical-device-samd/artificial-intelligence-software-medical-device
+  - https://www.fda.gov/medical-devices/software-medical-device-samd/artificial-intelligence-enabled-medical-devices

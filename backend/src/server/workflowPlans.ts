@@ -48,6 +48,11 @@ const stageMeta: Record<
     description: "Create the cytology case and route it to the proper preparation type.",
     module: "cytology",
   },
+  cytology_screening: {
+    label: "Cytotechnologist screening",
+    description: "Record adequacy criteria, screening notes, and escalation before QC.",
+    module: "cytology",
+  },
   cytology_qc: {
     label: "Cytology QC",
     description: "Capture route-specific QC before the case can move to review.",
@@ -86,9 +91,10 @@ const stageMeta: Record<
 };
 
 const workflowByTestId: Record<string, OrderWorkflowStageId[]> = {
-  "test-pap": ["cytology_case", "cytology_qc", "pathologist_review", "report_signout", "result_release"],
+  "test-pap": ["cytology_case", "cytology_screening", "cytology_qc", "pathologist_review", "report_signout", "result_release"],
   "test-body-fluids": [
     "cytology_case",
+    "cytology_screening",
     "cytology_qc",
     "pathologist_review",
     "report_signout",
@@ -146,6 +152,7 @@ const workflowByTestId: Record<string, OrderWorkflowStageId[]> = {
   "test-tumor-marker": ["analyzer_run", "pathologist_review", "report_signout", "result_release"],
   "test-peripheral-blood": [
     "cytology_case",
+    "cytology_screening",
     "cytology_qc",
     "pathologist_review",
     "report_signout",
@@ -153,6 +160,7 @@ const workflowByTestId: Record<string, OrderWorkflowStageId[]> = {
   ],
   "test-bone-marrow-cytology": [
     "cytology_case",
+    "cytology_screening",
     "cytology_qc",
     "pathologist_review",
     "report_signout",
@@ -178,6 +186,7 @@ const workflowByTestId: Record<string, OrderWorkflowStageId[]> = {
     "sectioning",
     "staining",
     "cytology_case",
+    "cytology_screening",
     "cytology_qc",
     "ihc",
     "pathologist_review",
@@ -231,6 +240,14 @@ function cytologyQcPassed(entry: CytologyCase | null) {
   return entry.status === "complete";
 }
 
+function cytologyScreeningComplete(entry: CytologyCase | null) {
+  return Boolean(
+    entry &&
+      ["adequate", "escalated"].includes(entry.screeningStatus ?? "") &&
+      ["satisfactory", "limited"].includes(entry.adequacyStatus ?? ""),
+  );
+}
+
 function getHistologyArtifacts(db: Database, orderId: string) {
   const accession = db.accessions.find((entry) => entry.orderId === orderId) ?? null;
   const ihcDone = Boolean(
@@ -271,7 +288,7 @@ export function orderHasHistologyWorkflow(order: Order) {
 
 export function orderHasCytologyWorkflow(order: Order) {
   return getRequiredWorkflowStages(order).some((stageId) =>
-    ["cytology_case", "cytology_qc"].includes(stageId),
+    ["cytology_case", "cytology_screening", "cytology_qc"].includes(stageId),
   );
 }
 
@@ -364,6 +381,8 @@ function isStageComplete(db: Database, order: Order, stageId: OrderWorkflowStage
       return Boolean(accession?.stainedAt);
     case "cytology_case":
       return Boolean(cytologyCase);
+    case "cytology_screening":
+      return cytologyScreeningComplete(cytologyCase);
     case "cytology_qc":
       return cytologyQcPassed(cytologyCase);
     case "ihc":

@@ -189,8 +189,23 @@ export const AI_PROVIDER =
   process.env.AI_PROVIDER?.trim().toLowerCase() || "local";
 export const AI_API_BASE_URL = process.env.AI_API_BASE_URL?.trim() || "";
 export const AI_API_KEY = process.env.AI_API_KEY?.trim() || "";
+export const AI_VALIDATED_MODEL_ENDPOINT =
+  process.env.AI_VALIDATED_MODEL_ENDPOINT?.trim() || AI_API_BASE_URL;
+export const AI_VALIDATED_MODEL_API_KEY =
+  process.env.AI_VALIDATED_MODEL_API_KEY?.trim() || AI_API_KEY;
 export const GPS_PROVIDER =
   process.env.GPS_PROVIDER?.trim().toLowerCase() || "browser_geolocation";
+export const COURIER_PROVIDER =
+  process.env.COURIER_PROVIDER?.trim().toLowerCase() || "generic_webhook";
+export const COURIER_API_BASE_URL = process.env.COURIER_API_BASE_URL?.trim() || "";
+export const COURIER_API_KEY = process.env.COURIER_API_KEY?.trim() || "";
+export const COURIER_WEBHOOK_SECRET = process.env.COURIER_WEBHOOK_SECRET?.trim() || "";
+export const TEMPERATURE_LOGGER_PROVIDER =
+  process.env.TEMPERATURE_LOGGER_PROVIDER?.trim().toLowerCase() || "generic_webhook";
+export const TEMPERATURE_LOGGER_WEBHOOK_SECRET =
+  process.env.TEMPERATURE_LOGGER_WEBHOOK_SECRET?.trim() || "";
+export const SPECIMEN_TEMP_MIN_CELSIUS = Number(process.env.SPECIMEN_TEMP_MIN_CELSIUS ?? 2);
+export const SPECIMEN_TEMP_MAX_CELSIUS = Number(process.env.SPECIMEN_TEMP_MAX_CELSIUS ?? 30);
 export const SMS_PROVIDER = process.env.SMS_PROVIDER?.trim().toLowerCase() || "generic";
 export const SMS_API_BASE_URL = process.env.SMS_API_BASE_URL?.trim() || "";
 export const SMS_API_KEY = process.env.SMS_API_KEY?.trim() || "";

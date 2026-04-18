@@ -1,6 +1,6 @@
 # X.PATH LIMS Production Readiness Assessment
 
-Updated: 2026-04-15
+Updated: 2026-04-18
 
 ## Executive Summary
 
@@ -8,7 +8,28 @@ The system has broad functional coverage for the requested LIMS modules: core or
 
 As of 2026-04-10, runtime persistence has been migrated from the prior Mongo-backed state store to the Render-hosted PostgreSQL database. The current live state in Postgres contains the migrated users, patients, and orders from the earlier environment, and the legacy Mongo application-state document has been cleared.
 
-It is **closer to production, but still not fully production-ready for a regulated pathology laboratory**. The strongest areas are workflow demonstration, role separation, seeded credentials, public requisition flow, Postgres-backed persistence, report generation, session revocation, hash-chained audit capture with automatic mutation diffs, barcode enforcement in histology/IHC, DMS file handling, Zoho-ready accounting sync controls, internal communication, offline/DR scaffolding, and backend regression tests. The remaining production gaps are SSO/device trust, live vendor/payment validation with real credentials, durable object-storage configuration in production, operational observability, validated AI governance, automated restore drills, and formal compliance sign-off.
+It is **closer to production, but still not fully production-ready for a regulated pathology laboratory**. The strongest areas are workflow demonstration, role separation, seeded credentials, public requisition flow, Postgres-backed persistence, report generation, session revocation, hash-chained audit capture with automatic mutation diffs, universal barcode scan enforcement, controlled specimen discrepancy/CAPA workflows, DMS file handling, Zoho-ready accounting sync controls, internal communication, courier/temperature provider hooks, offline/DR scaffolding, and backend regression tests. The remaining production gaps are SSO/device trust, live vendor/payment validation with real credentials, durable object-storage configuration in production, operational observability, certified WSI/PACS validation, clinically validated AI endpoint onboarding, automated restore drills, and formal compliance sign-off.
+
+## 2026-04-18 Modules 1-10 Hardening Update
+
+Implemented in this pass:
+- Added GS1-style barcode generation, GS1 application-identifier parsing, universal accepted/rejected scan-event logging, and workflow scan enforcement beyond histology/IHC.
+- Added dedicated barcode governance operations for assignment, browser-print labels, lifecycle archiving, print audit, scan verification, and label-template GS1 enforcement flags.
+- Added controlled specimen discrepancy workflow with severity, quarantine/rejection/accept-with-deviation decisions, supervisor approval, chain-of-custody exception events, and CAPA links.
+- Added live-ready courier provider dispatch/webhook APIs, courier event telemetry, device-source temperature logger ingestion, excursion detection, and automatic specimen quarantine alerts.
+- Added stricter reception receipt validation for scan, sample condition, transport condition, and temperature before release to the lab.
+- Added SLA escalation automation that converts risk/breach TAT alerts into role-targeted operational notifications.
+- Added recut and special-stain request/approval/completion workflows with billing references, slide barcode enforcement, control-slide pass/fail gates, QC blocks, and reagent inventory drawdown.
+- Added production worklist assignment endpoints, workload-balancing metadata, and completion ownership/audit capture.
+- Added cytology screening controls for GYN/non-GYN cases, adequacy criteria, Bethesda-style category capture, cytotechnologist review, pathologist escalation, QC gates, trend analytics, and report template metadata.
+- Added IHC/special-stain batch/lot release checks, control-slide gates, QC exception capture, and automatic usage metrics.
+- Added digital pathology ownership claiming, sign-out locks, lock release, and stricter audit trails around digital slide control.
+- Added AI model registry, external validated-model adapter, clinical-use gating, explainability payload capture, and local research/QC-only AI fallback. Clinical diagnostic AI remains blocked unless a validated model is configured and approved.
+
+Readiness labels now used in the app and this document:
+- `Code ready`: the code-side workflow is present and can be tested internally, but the lab still needs SOP/UAT/compliance sign-off.
+- `Code and external integration`: the code-side workflow is present, but production readiness also requires credentials, certified devices, vendor endpoints, or live conformance testing.
+- `External integration`: the main remaining technical work is connecting/validating an external service or instrument.
 
 ## 2026-04-15 Zoho, Intake, and Privacy Update
 
@@ -98,106 +119,118 @@ Incomplete / pending:
 
 ### 3. Specimen Accessioning & Traceability
 
-Status: **Working demo / Partial production**
+Status: **Implemented**
+
+Production readiness: **Code and external integration**
 
 Implemented:
 - Accession ID generation, sample creation, block/slide creation, and histology sample lifecycle.
-- Specimen records, status history, HL7 specimen APIs, chain-of-custody collection, and sample rejection/discrepancy flags.
+- Specimen records, status history, HL7 specimen APIs, chain-of-custody collection, mandatory scan/handoff enforcement APIs, and accepted/rejected barcode scan events.
 - Parent-child relationships exist through accession, sample, block, and slide records.
+- Controlled discrepancy workflow with severity, quarantine/rejection decisions, supervisor approval, corrective action, CAPA link, and chain-of-custody exception logging.
 
 Incomplete / pending:
-- Chain-of-custody handoff endpoint exists; every physical workflow screen still needs mandatory scan/handoff gating.
-- GS1 barcode use is modeled but not scanner-enforced in all screens.
-- Sample rejection requires more controlled discrepancy workflows, approvals, and corrective action links.
+- External scanner/device validation and live SOP sign-off are still required before production use.
 
 ### 4. Barcode & Label Governance
 
-Status: **Partial**
+Status: **Implemented**
+
+Production readiness: **Code and external integration**
 
 Implemented:
-- Barcode records with symbology, entity type, status, template ID, and reprint justification endpoint.
-- Label template records and scan-enforced configuration fields.
+- Barcode records with symbology, entity type, status, template ID, GS1 metadata, assignment, print/reprint, and archive lifecycle controls.
+- Label template records with scan-enforced and GS1-required configuration fields.
 - Automatic specimen/block/slide barcode assignment during histology workflow creation.
-- Barcode scan enforcement on grossing, processing, embedding, sectioning, staining, and IHC entry.
+- Barcode scan enforcement on reception intake, lab release, processing start, all technical workflow transitions, cytology screening, IHC, special stains, and digital sign-out controls.
+- Dedicated operational UI for printing, reprinting, archiving, and verifying scans.
 
 Incomplete / pending:
-- Browser-print label payload endpoint exists; certified thermal-printer integration and visual template designer remain pending.
-- Scan enforcement rules are still not universal across every workflow transition outside the enforced histology/IHC path.
-- Barcode lifecycle is data-supported but not fully managed through a dedicated operational UI.
+- Certified physical scanner validation and certified thermal-printer driver validation remain external integration tasks.
 
 ### 5. Pre-Analytical Workflow Management
 
-Status: **Partial**
+Status: **Implemented**
+
+Production readiness: **Code and external integration**
 
 Implemented:
 - Courier workflow, pickup status, public online pickup metadata, sample receipt validation, and pre-analytical logs.
 - Transport temperature/condition fields and TAT alert records.
 - TAT dashboard endpoints with pre-analytical and phase averages.
+- Courier provider dispatch/webhook APIs, courier telemetry dashboard, device-source temperature log ingestion, temperature-excursion quarantine, and SLA escalation notifications.
+- Stricter receipt validation requires scan, sample condition, transport condition, and temperature before release to the lab.
 
 Incomplete / pending:
-- Browser GPS/temperature telemetry endpoint exists; live courier provider and device-sourced temperature logger integrations remain pending.
-- Pre-analytical TAT exists, but SLA escalation and alerts still need broader operational automation.
-- Receipt validation needs stricter required fields and exception handling.
+- Live courier-provider credentials, GPS device certification, and temperature logger device validation remain external integration tasks.
 
 ### 6. Histopathology Workflow
 
-Status: **Working demo**
+Status: **Implemented**
+
+Production readiness: **Code ready**
 
 Implemented:
 - Grossing, processing, embedding, sectioning, staining, block/slide generation, and histology worklists.
 - Idempotency safeguards exist on several lab actions to reduce duplicate steps.
+- Production worklist assignment queues, workload metadata, complete-step ownership, audit capture, recut requests, special-stain requests, approvals, billing references, and inventory drawdown.
 
 Incomplete / pending:
-- Re-cuts and special stains need deeper UI, approvals, billing links, and inventory drawdown.
-- Production worklists need assignment queues, workload balancing, and audit-complete step ownership.
+- Lab SOP/user-acceptance validation and equipment-specific work instructions remain governance tasks.
 
 ### 7. Cytopathology Workflow
 
-Status: **Partial**
+Status: **Implemented**
+
+Production readiness: **Code ready**
 
 Implemented:
 - Cytology cases, GYN vs non-GYN routing, preparation type defaults, QC records, and cytology worklist UI.
+- GYN screening workflow, adequacy criteria, cytotechnologist review, pathologist escalation, Bethesda-style category capture, QC gates, QC trend dashboard, and cytology-specific reporting template metadata.
 
 Incomplete / pending:
-- GYN screening workflow, adequacy criteria, cytotechnologist review, and pathologist escalation are not production-complete.
-- QC trend analytics and cytology-specific reporting templates need expansion.
+- Final template language, lab medical-director approval, and local SOP sign-off remain governance tasks.
 
 ### 8. Immunohistochemistry / Special Stains
 
-Status: **Partial**
+Status: **Implemented**
+
+Production readiness: **Code and external integration**
 
 Implemented:
 - IHC slide entries, antibody inventory records, lot/control slide fields, QC status, and usage count fields.
+- Batch/lot release gates, antibody/reagent inventory drawdown, control slide pass/fail gates, QC exception blocking, special-stain requests, approvals, billing references, and usage metrics.
 
 Incomplete / pending:
-- Reagent usage can now be decremented through the IHC consumption endpoint.
-- Batch/lot release, control slide pass/fail gates, and QC exception handling need enforcement.
-- Special stains need the same controlled workflow as IHC.
+- Live stainer/processor integration validation and local batch-release SOP approval remain external/governance tasks.
 
 ### 9. Digital Pathology Management
 
 Status: **Partial**
 
+Production readiness: **Code and external integration**
+
 Implemented:
 - Digital slide records, simulated image creation, viewer URL/metadata fields, Roche scanner vendor connector scaffolding, and WADO-style image reference support.
+- Digital ownership claim, sign-out locks, lock release, and immutable audit capture for slide ownership/sign-out controls.
 
 Incomplete / pending:
 - No real WSI viewer integration has been certified.
 - DICOM/PACS storage is referenced but not deployed.
 - Scanner worklist round-trip must be validated with Roche equipment/navify.
-- Digital ownership/sign-out needs stricter locks and audit trails.
 
 ### 10. AI & Decision Support
 
-Status: **Pending production implementation**
+Status: **Partial**
+
+Production readiness: **Code and external integration**
 
 Implemented:
 - AI result records for QC, Ki67, IHC scoring, tumor detection, versions, explainability, and accept/reject status.
+- AI model registry, local research/QC-only inference fallback, external validated-model adapter, validation status gates, versioned explainability payloads, and clinical-use blocking unless a validated model is approved.
 
 Incomplete / pending:
-- Local free-mode AI inference and external-provider hook are connected; clinically validated AI model inference remains pending.
-- No image preprocessing, model validation, result comparison, bias monitoring, or regulatory controls.
-- Acceptance/rejection is data-level, not integrated into sign-out policy.
+- A free local model cannot be honestly marked clinically validated without regulatory clearance or site validation. Production diagnostic AI requires a licensed/cleared endpoint, model documentation, local validation, bias/performance monitoring, and medical-director approval.
 
 ### 11. Instrument & Analyzer Integration
 
@@ -312,7 +345,7 @@ Implemented:
 - Rate limiting and security headers on the backend.
 
 Incomplete / pending:
-- MFA/SSO is not implemented.
+- TOTP MFA enrollment/verification is implemented; SSO remains pending.
 - Session management is better, but still not fully backed by refresh-token rotation, device trust, or anomaly detection.
 - Password policy, lockout thresholds, and security monitoring still need deeper hardening.
 
@@ -402,9 +435,9 @@ Priority 0 - Required before real patient/lab production:
 - Run end-to-end vendor/payment testing with Maviance, Roche/navify, Leica/CEREBRO, and any EMR/HIS.
 
 Priority 1 - Required for controlled pilot:
-- Extend barcode enforcement beyond histology/IHC into accessioning, sample handoff, and release.
-- Turn the current TAT dashboards into full SLA alerting with notifications and bottleneck views.
-- Complete finance ledger, invoice/refund approval, and reconciliation.
+- Validate barcode enforcement on the lab's actual scanners/printers and approved label stock.
+- Validate TAT SLA escalation recipients and escalation windows against final SOPs.
+- Validate Zoho/Maviance finance settlement, invoice sync, refund approval, and reconciliation with live credentials.
 - Complete structured reporting templates and real digital signature controls.
 - Complete DMS approval workflow, training attestation, and controlled document access.
 - Complete CAPA, peer review, proficiency testing, and QA trend workflows.
@@ -414,6 +447,15 @@ Priority 2 - Required for scale:
 - Research export/de-identification pipeline.
 - AI model integration governance and validation.
 - Observability: structured logs, error tracking, health dashboards, alerting, and uptime monitoring.
+
+## External References Used For This Hardening Pass
+
+- GS1 healthcare standards and point-of-care scanning guidance informed the barcode/scan enforcement posture: https://www.gs1us.org/industries-and-insights/healthcare
+- WHO temperature monitoring device guidance informed the device-source logger and temperature excursion model: https://extranet.who.int/prequal/immunization-devices/e006-temperature-monitoring-devices
+- ISO 15189:2022 scope informed the continued distinction between code readiness and accredited laboratory production readiness: https://www.iso.org/standard/76677.html
+- WHO/NCBI Bethesda cytology terminology informed the cytology adequacy and reporting fields: https://www.ncbi.nlm.nih.gov/books/NBK269610/
+- FDA AI/ML SaMD and AI-enabled medical device guidance informed the clinical-use gate: https://www.fda.gov/medical-devices/software-medical-device-samd/artificial-intelligence-software-medical-device
+- FDA AI-enabled medical device list informed the decision to require a cleared/licensed external model before clinical AI sign-out: https://www.fda.gov/medical-devices/software-medical-device-samd/artificial-intelligence-enabled-medical-devices
 
 ## Information Needed To Finish Production Hardening
 

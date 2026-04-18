@@ -39,12 +39,14 @@ import {
 } from '../components'
 import type {
   AiAnalysisResult,
+  AiModelRegistryRecord,
   AntibodyInventoryItem,
   ArchiveRecord,
   AuditEvent,
   BarcodeRecord,
   ChainOfCustodyEvent,
   CommunicationLog,
+  CourierProviderEvent,
   CredentialAuditRecord,
   CytologyCase,
   CytologyQualityRecord,
@@ -74,11 +76,14 @@ import type {
   ReportTemplateRecord,
   ResearchDataset,
   Sample,
+  SampleDiscrepancyCase,
   SessionRecord,
+  SpecialStainRequest,
   Site,
   SiteTransfer,
   TatAlert,
   TatSummary,
+  TemperatureLogRecord,
   ValidationRule,
   WasteLog,
 } from '../types'
@@ -173,6 +178,36 @@ function formatFieldValue(value: unknown, field: FieldConfig): string | number |
     return Number(value ?? 0)
   }
   return String(value ?? '')
+}
+
+function printBarcodeLabel(row: BarcodeRecord) {
+  const popup = window.open('', '_blank', 'width=420,height=520')
+  if (!popup) return
+  popup.document.write(`
+    <html>
+      <head>
+        <title>XPath Label ${row.code}</title>
+        <style>
+          body { font-family: Arial, sans-serif; padding: 24px; }
+          .label { border: 2px solid #111; border-radius: 12px; padding: 18px; width: 320px; }
+          .brand { font-weight: 800; letter-spacing: .08em; }
+          .code { font-family: monospace; font-size: 14px; word-break: break-all; margin-top: 12px; }
+          .meta { margin-top: 10px; font-size: 12px; color: #333; }
+          @media print { button { display: none; } }
+        </style>
+      </head>
+      <body>
+        <div class="label">
+          <div class="brand">XPATH LIMS</div>
+          <div class="code">${row.code}</div>
+          <div class="meta">${row.entityType.toUpperCase()} · ${row.entityId ?? 'UNASSIGNED'}</div>
+          <div class="meta">Status: ${row.status}</div>
+        </div>
+        <button onclick="window.print()">Print label</button>
+      </body>
+    </html>
+  `)
+  popup.document.close()
 }
 
 function FieldEditor({
@@ -444,8 +479,14 @@ export function ModuleAuditPage() {
                   </TableCell>
                   <TableCell>
                     <Chip
-                      label={entry.productionReady ? 'Yes' : 'No'}
-                      color={entry.productionReady ? 'success' : 'warning'}
+                      label={entry.productionReadiness ?? (entry.productionReady ? 'Code ready' : 'Code and external integration')}
+                      color={
+                        (entry.productionReadiness ?? '').toLowerCase().includes('external')
+                          ? 'warning'
+                          : entry.productionReady
+                            ? 'success'
+                            : 'info'
+                      }
                       size="small"
                     />
                   </TableCell>
@@ -547,6 +588,14 @@ export function ClinicalOperationsPage() {
     const response = await api.get<ValidationRule[]>('/validation-rules')
     return response.data
   })
+  const discrepancyState = useLoadable<SampleDiscrepancyCase[]>([], [], async () => {
+    const response = await api.get<SampleDiscrepancyCase[]>('/sample-discrepancies')
+    return response.data
+  })
+  const courierTelemetryState = useLoadable<{ provider: string; dispatchConfigured: boolean; events: CourierProviderEvent[]; temperatureLogs: TemperatureLogRecord[] }>({ provider: '', dispatchConfigured: false, events: [], temperatureLogs: [] }, [], async () => {
+    const response = await api.get('/integrations/courier/telemetry')
+    return response.data
+  })
   const [ocrText, setOcrText] = useState(
     'Name: Jane Doe\nDOB: 1989-05-14\nPhone: +254711222333\nEmail: jane@example.com\nAddress: Westlands Nairobi\nHistory: Persistent abnormal bleeding\nRequested tests: HE, IHC',
   )
@@ -575,6 +624,9 @@ export function ClinicalOperationsPage() {
   const [corrections, setCorrections] = useState<OrderCorrection[]>([])
   const [sampleRejectId, setSampleRejectId] = useState('')
   const [sampleRejectReason, setSampleRejectReason] = useState('')
+  const [discrepancyType, setDiscrepancyType] = useState<SampleDiscrepancyCase['discrepancyType']>('identity_mismatch')
+  const [discrepancySeverity, setDiscrepancySeverity] = useState<SampleDiscrepancyCase['severity']>('major')
+  const [discrepancyAction, setDiscrepancyAction] = useState<SampleDiscrepancyCase['immediateAction']>('quarantine')
 
   const orderOptions = ordersState.data.data.map((order) => ({
     label: `${order.orderNumber} · ${order.patient.firstName} ${order.patient.lastName}`,
@@ -744,9 +796,24 @@ export function ClinicalOperationsPage() {
 
   const rejectSample = async () => {
     if (!sampleRejectId) return
-    await api.post(`/samples/${sampleRejectId}/reject`, { reason: sampleRejectReason })
+    await api.post(`/samples/${sampleRejectId}/discrepancies`, {
+      discrepancyType,
+      severity: discrepancySeverity,
+      description: sampleRejectReason,
+      immediateAction: discrepancyAction,
+      correctiveAction: 'Awaiting approval and CAPA owner review',
+    })
     setSampleRejectId('')
     setSampleRejectReason('')
+    samplesState.refresh()
+    discrepancyState.refresh()
+  }
+
+  const decideDiscrepancy = async (entry: SampleDiscrepancyCase, decision: 'approve' | 'reject') => {
+    const comment = window.prompt(`${decision === 'approve' ? 'Approval' : 'Rejection'} comment`)
+    if (!comment) return
+    await api.post(`/sample-discrepancies/${entry._id}/decision`, { decision, comment })
+    discrepancyState.refresh()
     samplesState.refresh()
   }
 
@@ -1302,7 +1369,6 @@ export function ClinicalOperationsPage() {
           },
           { key: 'templateId', label: 'Template ID', type: 'text' },
           { key: 'justification', label: 'Justification', type: 'textarea' },
-          { key: 'printedAt', label: 'Printed at', type: 'date' },
         ]}
         columns={[
           { label: 'Code', render: (row) => row.code },
@@ -1320,6 +1386,25 @@ export function ClinicalOperationsPage() {
               })
             },
           },
+          {
+            label: 'Print',
+            onClick: async (row) => {
+              await api.post(`/barcodes/${row._id}/print`, {
+                justification: 'Browser print from barcode governance center',
+              })
+              printBarcodeLabel(row)
+            },
+          },
+          {
+            label: 'Archive',
+            color: 'error',
+            disabled: (row) => row.status === 'archived',
+            onClick: async (row) => {
+              const justification = window.prompt('Archive justification')
+              if (!justification) return
+              await api.post(`/barcodes/${row._id}/archive`, { justification })
+            },
+          },
         ]}
       />
 
@@ -1332,6 +1417,7 @@ export function ClinicalOperationsPage() {
           printerName: '',
           templateType: 'specimen',
           scanEnforced: true,
+          requireGs1: true,
         }}
         fields={[
           { key: 'name', label: 'Template name', type: 'text' },
@@ -1348,12 +1434,13 @@ export function ClinicalOperationsPage() {
             ],
           },
           { key: 'scanEnforced', label: 'Scan enforced', type: 'checkbox' },
+          { key: 'requireGs1', label: 'Require GS1 Application Identifiers', type: 'checkbox' },
         ]}
         columns={[
           { label: 'Template', render: (row) => row.name },
           { label: 'Printer', render: (row) => row.printerName },
           { label: 'Type', render: (row) => row.templateType },
-          { label: 'Scan rule', render: (row) => (row.scanEnforced ? 'Enforced' : 'Optional') },
+          { label: 'Scan rule', render: (row) => `${row.scanEnforced ? 'Enforced' : 'Optional'} · ${row.requireGs1 ? 'GS1' : 'Non-GS1 allowed'}` },
         ]}
       />
 
@@ -1397,7 +1484,7 @@ export function ClinicalOperationsPage() {
         ]}
       />
 
-      <SectionCard title="3. Sample rejection and discrepancy handling" description="Reject a sample and automatically append a rejection event to the chain of custody.">
+      <SectionCard title="3. Sample rejection and discrepancy handling" description="Open controlled discrepancy cases with severity, required approvals, CAPA linkage, and chain-of-custody impact.">
         <Stack spacing={2}>
           <FormControl>
             <InputLabel>Sample</InputLabel>
@@ -1407,10 +1494,68 @@ export function ClinicalOperationsPage() {
               ))}
             </Select>
           </FormControl>
-          <TextField label="Rejection reason" value={sampleRejectReason} onChange={(event) => setSampleRejectReason(event.target.value)} />
+          <FormControl>
+            <InputLabel>Discrepancy type</InputLabel>
+            <Select label="Discrepancy type" value={discrepancyType} onChange={(event) => setDiscrepancyType(String(event.target.value) as SampleDiscrepancyCase['discrepancyType'])}>
+              {['identity_mismatch', 'unlabeled', 'leaking_container', 'insufficient_volume', 'temperature_excursion', 'transport_delay', 'wrong_container', 'missing_requisition', 'other'].map((value) => (
+                <MenuItem key={value} value={value}>{value.replaceAll('_', ' ')}</MenuItem>
+              ))}
+            </Select>
+          </FormControl>
+          <FormControl>
+            <InputLabel>Severity</InputLabel>
+            <Select label="Severity" value={discrepancySeverity} onChange={(event) => setDiscrepancySeverity(String(event.target.value) as SampleDiscrepancyCase['severity'])}>
+              <MenuItem value="minor">Minor</MenuItem>
+              <MenuItem value="major">Major</MenuItem>
+              <MenuItem value="critical">Critical</MenuItem>
+            </Select>
+          </FormControl>
+          <FormControl>
+            <InputLabel>Immediate action</InputLabel>
+            <Select label="Immediate action" value={discrepancyAction} onChange={(event) => setDiscrepancyAction(String(event.target.value) as SampleDiscrepancyCase['immediateAction'])}>
+              <MenuItem value="quarantine">Quarantine</MenuItem>
+              <MenuItem value="reject">Reject</MenuItem>
+              <MenuItem value="accept_with_deviation">Accept with deviation</MenuItem>
+              <MenuItem value="request_recollection">Request recollection</MenuItem>
+            </Select>
+          </FormControl>
+          <TextField label="Discrepancy description" value={sampleRejectReason} onChange={(event) => setSampleRejectReason(event.target.value)} />
           <Button variant="contained" color="error" onClick={rejectSample}>
-            Reject sample
+            Open discrepancy case
           </Button>
+          {discrepancyState.data.length ? (
+            <TableContainer sx={{ maxHeight: 360 }}>
+              <Table stickyHeader>
+                <TableHead>
+                  <TableRow>
+                    <TableCell>Sample</TableCell>
+                    <TableCell>Type</TableCell>
+                    <TableCell>Severity</TableCell>
+                    <TableCell>Status</TableCell>
+                    <TableCell>Approvals</TableCell>
+                    <TableCell>Actions</TableCell>
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {discrepancyState.data.slice(0, 10).map((entry) => (
+                    <TableRow key={entry._id}>
+                      <TableCell>{entry.sampleId}</TableCell>
+                      <TableCell>{entry.discrepancyType}</TableCell>
+                      <TableCell>{entry.severity}</TableCell>
+                      <TableCell>{entry.status}</TableCell>
+                      <TableCell>{entry.approvals.length}/{entry.requiredApprovals}</TableCell>
+                      <TableCell>
+                        <Stack direction="row" spacing={1}>
+                          <Button size="small" disabled={entry.status !== 'awaiting_approval'} onClick={() => decideDiscrepancy(entry, 'approve')}>Approve</Button>
+                          <Button size="small" color="error" disabled={entry.status !== 'awaiting_approval'} onClick={() => decideDiscrepancy(entry, 'reject')}>Reject</Button>
+                        </Stack>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </TableContainer>
+          ) : null}
         </Stack>
       </SectionCard>
 
@@ -1447,6 +1592,54 @@ export function ClinicalOperationsPage() {
           { label: 'TAT', render: (row) => `${row.tatMinutes} min` },
         ]}
       />
+
+      <SectionCard title="5. Courier provider and temperature telemetry" description="Live-provider dispatch and device-sourced temperature logs land here through integration webhooks. Lists are capped to keep the card scrollable.">
+        <Box sx={{ display: 'grid', gap: 2, gridTemplateColumns: { xs: '1fr', md: 'repeat(3, 1fr)' } }}>
+          <Paper sx={{ p: 2 }}>
+            <Typography variant="overline">Provider</Typography>
+            <Typography variant="h6">{courierTelemetryState.data.provider || 'generic_webhook'}</Typography>
+            <Typography color="text.secondary">{courierTelemetryState.data.dispatchConfigured ? 'Dispatch endpoint configured' : 'Awaiting provider URL/API key'}</Typography>
+          </Paper>
+          <Paper sx={{ p: 2 }}>
+            <Typography variant="overline">Courier events</Typography>
+            <Typography variant="h6">{courierTelemetryState.data.events.length}</Typography>
+          </Paper>
+          <Paper sx={{ p: 2 }}>
+            <Typography variant="overline">Temperature logs</Typography>
+            <Typography variant="h6">{courierTelemetryState.data.temperatureLogs.length}</Typography>
+          </Paper>
+        </Box>
+        <TableContainer sx={{ mt: 2, maxHeight: 340 }}>
+          <Table stickyHeader>
+            <TableHead>
+              <TableRow>
+                <TableCell>Type</TableCell>
+                <TableCell>Order / sample</TableCell>
+                <TableCell>Status / temp</TableCell>
+                <TableCell>When</TableCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {courierTelemetryState.data.events.slice(0, 10).map((event) => (
+                <TableRow key={event._id}>
+                  <TableCell>{event.eventType}</TableCell>
+                  <TableCell>{event.orderId}</TableCell>
+                  <TableCell>{event.status}</TableCell>
+                  <TableCell>{formatDateTime(event.createdAt)}</TableCell>
+                </TableRow>
+              ))}
+              {courierTelemetryState.data.temperatureLogs.slice(0, 10).map((log) => (
+                <TableRow key={log._id}>
+                  <TableCell>temperature</TableCell>
+                  <TableCell>{log.orderId ?? log.sampleId ?? '—'}</TableCell>
+                  <TableCell>{log.temperatureCelsius}C · {log.withinRange ? 'within range' : 'excursion'}</TableCell>
+                  <TableCell>{formatDateTime(log.recordedAt)}</TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </TableContainer>
+      </SectionCard>
 
       <Dialog open={Boolean(ocrVerifyJob)} onClose={() => setOcrVerifyJob(null)} maxWidth="md" fullWidth>
         <DialogTitle>Human verification for OCR intake</DialogTitle>
@@ -1489,6 +1682,14 @@ export function AnalyticalOperationsPage() {
     const response = await api.get<DigitalSlideRecord[]>('/digital-slides')
     return response.data
   })
+  const specialStainState = useLoadable<SpecialStainRequest[]>([], [], async () => {
+    const response = await api.get<SpecialStainRequest[]>('/special-stains')
+    return response.data
+  })
+  const aiModelsState = useLoadable<AiModelRegistryRecord[]>([], [], async () => {
+    const response = await api.get<AiModelRegistryRecord[]>('/ai/models')
+    return response.data
+  })
 
   const accessionOptions = accessionsState.data.map((accession) => ({
     label: accession.accessionId,
@@ -1502,6 +1703,22 @@ export function AnalyticalOperationsPage() {
     label: entry.slideId,
     value: entry.slideId,
   }))
+
+  const approveSpecialStain = async (request: SpecialStainRequest) => {
+    await api.post(`/special-stains/${request._id}/approve`, { decision: 'approve', reason: 'Approved from analytical operations' })
+    specialStainState.refresh()
+  }
+
+  const completeSpecialStain = async (request: SpecialStainRequest) => {
+    await api.post(`/special-stains/${request._id}/complete`, {
+      controlSlideStatus: 'pass',
+      lotNumber: request.lotNumber ?? '',
+      quantity: 1,
+      scannedCode: request.slideId,
+      qcNotes: 'Completed from analytical operations work queue',
+    })
+    specialStainState.refresh()
+  }
 
   return (
     <Stack spacing={3}>
@@ -1558,6 +1775,40 @@ export function AnalyticalOperationsPage() {
           { label: 'Assigned', render: (row) => row.assignedTo ?? '—' },
         ]}
       />
+
+      <SectionCard title="6 & 8. Controlled recuts and special stains" description="Requests require approval before completion, block on failed control slides, and draw down released inventory lots.">
+        <TableContainer sx={{ maxHeight: 360 }}>
+          <Table stickyHeader>
+            <TableHead>
+              <TableRow>
+                <TableCell>Slide</TableCell>
+                <TableCell>Type</TableCell>
+                <TableCell>Stain</TableCell>
+                <TableCell>Status</TableCell>
+                <TableCell>Billing</TableCell>
+                <TableCell>Actions</TableCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {specialStainState.data.slice(0, 10).map((request) => (
+                <TableRow key={request._id}>
+                  <TableCell>{request.slideId}</TableCell>
+                  <TableCell>{request.requestType}</TableCell>
+                  <TableCell>{request.stainName}</TableCell>
+                  <TableCell>{request.status}</TableCell>
+                  <TableCell>{request.billingReference ?? '—'}</TableCell>
+                  <TableCell>
+                    <Stack direction="row" spacing={1}>
+                      <Button size="small" disabled={request.status !== 'requested'} onClick={() => approveSpecialStain(request)}>Approve</Button>
+                      <Button size="small" disabled={!['approved', 'requested'].includes(request.status)} onClick={() => completeSpecialStain(request)}>Complete</Button>
+                    </Stack>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </TableContainer>
+      </SectionCard>
 
       <ResourceSection<CytologyQualityRecord>
         title="7. Cytopathology routing and QC"
@@ -1691,7 +1942,48 @@ export function AnalyticalOperationsPage() {
           { label: 'Owner', render: (row) => row.ownerId ?? '—' },
           { label: 'Status', render: (row) => row.signOutStatus },
         ]}
+        rowActions={[
+          {
+            label: 'Claim',
+            onClick: async (row) => {
+              await api.post(`/digital-slides/${row._id}/claim`, { reason: 'Analytical operations ownership review' })
+            },
+          },
+          {
+            label: 'Lock sign-out',
+            onClick: async (row) => {
+              await api.post(`/digital-slides/${row._id}/signout-lock`, { reason: 'Analytical operations sign-out control' })
+            },
+          },
+        ]}
       />
+
+      <SectionCard title="10. AI model registry and clinical-use gate" description="Only models documented as clinically validated can be enabled for diagnostic use. Local free-mode AI remains QC/research only.">
+        <TableContainer sx={{ maxHeight: 320 }}>
+          <Table stickyHeader>
+            <TableHead>
+              <TableRow>
+                <TableCell>Model</TableCell>
+                <TableCell>Provider</TableCell>
+                <TableCell>Validation</TableCell>
+                <TableCell>Clinical use</TableCell>
+                <TableCell>Notes</TableCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {aiModelsState.data.slice(0, 10).map((model) => (
+                <TableRow key={model._id}>
+                  <TableCell>{model.name} v{model.version}</TableCell>
+                  <TableCell>{model.provider}</TableCell>
+                  <TableCell>{model.validationStatus}</TableCell>
+                  <TableCell>{model.clinicalUseAllowed ? 'Allowed' : 'Blocked'}</TableCell>
+                  <TableCell>{model.notes}</TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </TableContainer>
+      </SectionCard>
 
       <ResourceSection<AiAnalysisResult>
         title="10. AI decision support"

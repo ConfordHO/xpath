@@ -35,7 +35,9 @@ export type SampleStatus =
   | "embedded"
   | "sectioned"
   | "stained"
-  | "ready_for_review";
+  | "ready_for_review"
+  | "quarantined"
+  | "rejected";
 
 export type PaymentStatus = "pending" | "completed" | "failed";
 export type PaymentMethod =
@@ -61,6 +63,7 @@ export type OrderWorkflowStageId =
   | "sectioning"
   | "staining"
   | "cytology_case"
+  | "cytology_screening"
   | "cytology_qc"
   | "ihc"
   | "analyzer_run"
@@ -327,6 +330,21 @@ export interface HistologyIhcEntry {
   antigenRetrieval: string;
   detection: string;
   counterstain: string;
+  stainKind?: "ihc" | "special_stain";
+  stainName?: string | null;
+  lotNumber?: string | null;
+  batchReleased?: boolean;
+  controlSlideStatus?: "pending" | "pass" | "fail" | null;
+  qcExceptionId?: string | null;
+  inventoryDrawdowns?: Array<{
+    inventoryId: string;
+    name: string;
+    quantity: number;
+    unit: string;
+  }>;
+  approvedBy?: string | null;
+  approvedAt?: string | null;
+  billingReference?: string | null;
   qcNotes?: string;
   createdAt: string;
 }
@@ -425,12 +443,22 @@ export interface CytologyCase {
   orderId: string;
   caseNumber: string;
   specimenType: string;
-  status: "open" | "review" | "complete";
+  status: "open" | "screening" | "review" | "escalated" | "complete";
   remarks: string;
   routeType?: "gyn" | "non_gyn";
   preparationType?: "smear" | "cell_block" | "liquid_based";
   qcStatus?: "pending" | "pass" | "fail";
   qcNotes?: string;
+  screeningStatus?: "pending" | "in_progress" | "adequate" | "inadequate" | "escalated";
+  adequacyStatus?: "pending" | "satisfactory" | "limited" | "unsatisfactory";
+  adequacyCriteriaMet?: string[];
+  adequacyExceptions?: string[];
+  cytotechnologistId?: string | null;
+  screenedAt?: string | null;
+  pathologistEscalatedAt?: string | null;
+  pathologistEscalationReason?: string | null;
+  bethesdaCategory?: string | null;
+  screeningNotes?: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -766,6 +794,12 @@ export interface BarcodeRecord {
   templateId?: string | null;
   justification?: string;
   printedAt?: string | null;
+  assignedAt?: string | null;
+  assignedBy?: string | null;
+  archivedAt?: string | null;
+  archivedBy?: string | null;
+  lastScannedAt?: string | null;
+  gs1ApplicationIdentifiers?: Record<string, string> | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -780,6 +814,10 @@ export interface BarcodeScanEvent {
   outcome: "accepted" | "rejected";
   reason?: string | null;
   scannedBy: string;
+  required?: boolean;
+  enforced?: boolean;
+  expectedEntityId?: string | null;
+  sourceScreen?: string | null;
   createdAt: string;
 }
 
@@ -789,6 +827,7 @@ export interface LabelTemplateRecord {
   printerName: string;
   templateType: "specimen" | "block" | "slide" | "case";
   scanEnforced: boolean;
+  requireGs1?: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -803,7 +842,9 @@ export interface ChainOfCustodyEvent {
     | "aliquoted"
     | "transferred"
     | "handoff"
-    | "rejected";
+    | "rejected"
+    | "exception"
+    | "temperature_logged";
   location: string;
   condition: string;
   actor: string;
@@ -825,6 +866,9 @@ export interface PreAnalyticsLog {
   transportTemperature: string;
   transportCondition: string;
   receiptValidated: boolean;
+  receiptException?: string | null;
+  validatedBy?: string | null;
+  validatedAt?: string | null;
   tatMinutes: number;
   createdAt: string;
   updatedAt: string;
@@ -843,6 +887,13 @@ export interface HistologyWorklistItem {
     | "special_stain";
   status: "pending" | "in_progress" | "complete";
   assignedTo?: string | null;
+  assignedBy?: string | null;
+  assignedAt?: string | null;
+  completedBy?: string | null;
+  completedAt?: string | null;
+  queuePriority?: "routine" | "urgent" | "stat";
+  workloadWeight?: number;
+  ownershipAuditId?: string | null;
   notes?: string;
   createdAt: string;
   updatedAt: string;
@@ -855,6 +906,10 @@ export interface CytologyQualityRecord {
   preparationType: "smear" | "cell_block" | "liquid_based";
   qcStatus: "pending" | "pass" | "fail";
   qcNotes: string;
+  adequacyStatus?: "pending" | "satisfactory" | "limited" | "unsatisfactory";
+  adequacyScore?: number | null;
+  unsatisfactoryReason?: string | null;
+  trendBucket?: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -870,6 +925,9 @@ export interface AntibodyInventoryItem {
   controlSlideTracked: boolean;
   qcStatus: "pass" | "hold" | "fail";
   usageCount: number;
+  batchReleaseStatus?: "pending" | "released" | "held" | "rejected";
+  releasedBy?: string | null;
+  releasedAt?: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -887,6 +945,11 @@ export interface DigitalSlideRecord {
   scanStatus?: "requested" | "scanning" | "available" | "failed";
   scannedAt?: string | null;
   ownerId?: string | null;
+  ownerLockedAt?: string | null;
+  ownerLockReason?: string | null;
+  signOutLockedBy?: string | null;
+  signOutLockedAt?: string | null;
+  signOutLockReason?: string | null;
   signOutStatus: "pending" | "reviewed" | "signed_out";
   createdAt: string;
   updatedAt: string;
@@ -900,6 +963,10 @@ export interface AiAnalysisResult {
   score: string;
   explainability: string;
   status: "pending" | "accepted" | "rejected";
+  modelId?: string | null;
+  validationStatus?: "research_only" | "site_validation_required" | "clinically_validated";
+  clinicalUseAllowed?: boolean;
+  providerPayload?: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -1181,6 +1248,14 @@ export interface QualityEvent {
   status: "open" | "investigating" | "closed";
   summary: string;
   owner: string;
+  linkedOrderId?: string | null;
+  linkedSampleId?: string | null;
+  linkedDiscrepancyId?: string | null;
+  rootCause?: string | null;
+  correctiveAction?: string | null;
+  preventiveAction?: string | null;
+  approvedBy?: string | null;
+  approvedAt?: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -1192,6 +1267,9 @@ export interface TatAlert {
   slaMinutes: number;
   actualMinutes: number;
   status: "on_track" | "risk" | "breach";
+  escalatedToRole?: UserRole | null;
+  escalatedAt?: string | null;
+  notificationId?: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -1216,6 +1294,122 @@ export interface ReagentInventoryItem {
   reorderLevel: number;
   lotNumber: string;
   expiresAt: string;
+  batchReleaseStatus?: "pending" | "released" | "held" | "rejected";
+  releasedBy?: string | null;
+  releasedAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SampleDiscrepancyCase {
+  _id: string;
+  sampleId: string;
+  orderId: string;
+  discrepancyType:
+    | "identity_mismatch"
+    | "unlabeled"
+    | "leaking_container"
+    | "insufficient_volume"
+    | "temperature_excursion"
+    | "transport_delay"
+    | "wrong_container"
+    | "missing_requisition"
+    | "other";
+  severity: "minor" | "major" | "critical";
+  description: string;
+  immediateAction: "quarantine" | "reject" | "accept_with_deviation" | "request_recollection";
+  status: "open" | "awaiting_approval" | "approved" | "rejected" | "closed";
+  createdBy: string;
+  approvals: Array<{
+    userId: string;
+    role: UserRole;
+    decision: "approve" | "reject";
+    comment: string;
+    decidedAt: string;
+  }>;
+  requiredApprovals: number;
+  capaEventId?: string | null;
+  correctiveAction?: string | null;
+  closedBy?: string | null;
+  closedAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CourierProviderEvent {
+  _id: string;
+  orderId: string;
+  provider: string;
+  providerJobId?: string | null;
+  eventType: "dispatch_requested" | "accepted" | "enroute" | "picked_up" | "delivered" | "cancelled" | "failed";
+  payload?: string | null;
+  status: "pending" | "sent" | "received" | "failed";
+  errorMessage?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface TemperatureLogRecord {
+  _id: string;
+  orderId?: string | null;
+  sampleId?: string | null;
+  courierEventId?: string | null;
+  deviceId: string;
+  provider: string;
+  temperatureCelsius: number;
+  humidityPercent?: number | null;
+  recordedAt: string;
+  receivedAt: string;
+  withinRange: boolean;
+  rangeMinCelsius?: number | null;
+  rangeMaxCelsius?: number | null;
+  payload?: string | null;
+  createdAt: string;
+}
+
+export interface SpecialStainRequest {
+  _id: string;
+  orderId: string;
+  accessionId: string;
+  slideId: string;
+  requestType: "recut" | "special_stain" | "ihc";
+  stainName: string;
+  reason: string;
+  status: "requested" | "approved" | "rejected" | "in_progress" | "completed" | "qc_failed";
+  requestedBy: string;
+  approvedBy?: string | null;
+  approvedAt?: string | null;
+  rejectedBy?: string | null;
+  rejectedAt?: string | null;
+  rejectionReason?: string | null;
+  controlSlideStatus?: "pending" | "pass" | "fail" | null;
+  lotNumber?: string | null;
+  billingReference?: string | null;
+  inventoryDrawdowns?: Array<{
+    inventoryId: string;
+    name: string;
+    quantity: number;
+    unit: string;
+  }>;
+  completedBy?: string | null;
+  completedAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AiModelRegistryRecord {
+  _id: string;
+  name: string;
+  provider: "local" | "external";
+  version: string;
+  analysisTypes: AiAnalysisResult["analysisType"][];
+  validationStatus: "research_only" | "site_validation_required" | "clinically_validated";
+  clinicalUseAllowed: boolean;
+  regulatoryReference?: string | null;
+  endpointEnvVar?: string | null;
+  apiKeyEnvVar?: string | null;
+  lastValidationAt?: string | null;
+  notes: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -1524,7 +1718,11 @@ export interface Database {
   labelTemplates: LabelTemplateRecord[];
   chainOfCustody: ChainOfCustodyEvent[];
   preAnalyticsLogs: PreAnalyticsLog[];
+  sampleDiscrepancyCases: SampleDiscrepancyCase[];
+  courierProviderEvents: CourierProviderEvent[];
+  temperatureLogs: TemperatureLogRecord[];
   histologyWorklist: HistologyWorklistItem[];
+  specialStainRequests: SpecialStainRequest[];
   reports: Report[];
   reportTemplates: ReportTemplate[];
   cytologyCases: CytologyCase[];
@@ -1532,6 +1730,7 @@ export interface Database {
   antibodyInventory: AntibodyInventoryItem[];
   digitalSlides: DigitalSlideRecord[];
   aiResults: AiAnalysisResult[];
+  aiModelRegistry: AiModelRegistryRecord[];
   instruments: InstrumentConnection[];
   instrumentRuns: InstrumentRunLog[];
   vendorConnectors: VendorConnector[];
