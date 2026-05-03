@@ -2,6 +2,15 @@
 
 Updated: 2026-05-03
 
+## 2026-05-03 External Clinician Portal E2E
+
+- External doctor accounts now have a dedicated `/doctor-portal` UI outside the internal staff order screen.
+- Clinicians can create/select authorized patients, submit online referral orders, and create OCR-backed referral orders.
+- Referral orders persist one order number, one workflow item per requested test, invoice records, and billing policy metadata for patient, clinician, corporate, insurance, or lab-policy review.
+- Doctor users are scoped to their own referred patients/orders, and report bodies stay hidden until final report release.
+- The controlled order-to-report route for clinician referrals is covered through payment, reception, accessioning, barcode-gated histology, pathologist review, report lock, release, and doctor report visibility.
+- A role-based API smoke sweep now covers common module GET endpoints and verifies they do not return server errors.
+
 ## 2026-05-03 Department Communications E2E
 
 - Internal communications now support department threads, direct-message threads with recipient policy checks, admin broadcast notices, and regulated exception-alert threads.
@@ -76,6 +85,7 @@ Backend tests now cover:
 - DMS upload, replace, and download
 - barcode enforcement on histology progression
 - multi-test single-order routing with item-level plans, shared specimen links, explicit IHC dependency checks, and final release gating
+- external clinician portal order-to-report flow with authorized patients, OCR referral ordering, invoice/payment policy, report privacy before release, and released-report access after sign-out
 - department communications with linked regulated threads, direct-message policy rejection, broadcasts, exception alerts and sync, read receipts, attachment upload/download, and audit verification
 - public registration closure for production
 - connector readiness and simulated vendor tests

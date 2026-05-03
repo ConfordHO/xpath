@@ -466,6 +466,239 @@ describe("production hardening", () => {
     assert.equal(typeof dashboard.body.workflowItems.completed, "number");
   });
 
+  test("external clinician portal creates authorized patients, referral orders, OCR orders, invoices, and only released reports", async () => {
+    const doctorToken = await loginUser("doctor@xpath.lims");
+
+    const profile = await request
+      .get("/api/doctors/me/profile")
+      .set("Authorization", `Bearer ${doctorToken}`);
+    assert.equal(profile.status, 200);
+    assert.ok(profile.body._id);
+
+    const patientCreate = await request
+      .post("/api/doctors/me/patients")
+      .set("Authorization", `Bearer ${doctorToken}`)
+      .send({
+        firstName: "Clinician",
+        lastName: `Referral${Date.now()}`,
+        dateOfBirth: "1978-02-03",
+        gender: "female",
+        phone: "+237699001122",
+        email: `clinician.patient.${Date.now()}@xpath.test`,
+        address: "Yaounde",
+        externalPatientId: "EXT-CLINICIAN-1",
+      });
+    assert.equal(patientCreate.status, 201);
+    assert.ok(patientCreate.body.authorizedDoctorIds.includes(profile.body._id));
+
+    const patientList = await request
+      .get("/api/doctors/me/patients")
+      .set("Authorization", `Bearer ${doctorToken}`);
+    assert.equal(patientList.status, 200);
+    assert.ok(patientList.body.data.some((entry: { _id: string }) => entry._id === patientCreate.body._id));
+
+    const referralOrder = await request
+      .post("/api/doctors/me/orders")
+      .set("Authorization", `Bearer ${doctorToken}`)
+      .send({
+        patientId: patientCreate.body._id,
+        testTypeIds: ["test-biopsy"],
+        priority: "urgent",
+        clinicalHistory: "Clinician portal end-to-end referral",
+        payerType: "clinician",
+        billingAccountName: "Referral Clinic",
+        billingInstructions: "Bill referring clinician after invoice approval.",
+      });
+    assert.equal(referralOrder.status, 201);
+    assert.equal(referralOrder.body.orderSource, "referral");
+    assert.equal(referralOrder.body.referringDoctorId._id, profile.body._id);
+    assert.equal(referralOrder.body.workflowPlan.itemPlans.length, 1);
+    assert.equal(referralOrder.body.payerType, "clinician");
+    assert.equal(referralOrder.body.financialClearance, "pending");
+    const referralOrderId = referralOrder.body._id as string;
+
+    const doctorOrderDetailBeforeRelease = await request
+      .get(`/api/orders/${referralOrderId}`)
+      .set("Authorization", `Bearer ${doctorToken}`);
+    assert.equal(doctorOrderDetailBeforeRelease.status, 200);
+    assert.equal(doctorOrderDetailBeforeRelease.body.report, null);
+
+    const ocrReferral = await request
+      .post("/api/doctors/me/orders/ocr")
+      .set("Authorization", `Bearer ${doctorToken}`)
+      .field(
+        "text",
+        "Patient name: OCR Referral\nDOB: 1984-04-05\nPhone: +237699004455\nEmail: ocr.referral@xpath.test\nAddress: Douala\nClinical history: Clinician OCR requisition\nRequested tests: HE, IHC",
+      )
+      .field(
+        "corrections",
+        JSON.stringify({
+          source: "clinician_portal",
+          testCodes: ["HE", "IHC"],
+          payerType: "insurance",
+          billingAccountName: "Clinician Insurance Desk",
+        }),
+      );
+    assert.equal(ocrReferral.status, 201);
+    assert.equal(ocrReferral.body.order.orderSource, "referral");
+    assert.equal(ocrReferral.body.order.intakeSource, "ocr_nlp");
+    assert.ok(ocrReferral.body.order.workflowPlan.itemPlans.length >= 2);
+
+    const clinicianOrdersBeforeRelease = await request
+      .get("/api/doctors/me/orders")
+      .set("Authorization", `Bearer ${doctorToken}`);
+    assert.equal(clinicianOrdersBeforeRelease.status, 200);
+    const listedReferral = clinicianOrdersBeforeRelease.body.data.find(
+      (entry: { _id: string }) => entry._id === referralOrderId,
+    );
+    assert.ok(listedReferral);
+    assert.ok(listedReferral.invoice);
+    assert.equal(listedReferral.report, null);
+    assert.equal(listedReferral.reportReleased, false);
+
+    const payment = await request
+      .post(`/api/orders/${referralOrderId}/payment`)
+      .set("Authorization", `Bearer ${authToken}`)
+      .send({
+        amount: 1000000,
+        method: "cash",
+        status: "completed",
+      });
+    assert.equal(payment.status, 201);
+
+    const receptionIntake = await request
+      .post(`/api/orders/${referralOrderId}/reception-intake`)
+      .set("Authorization", `Bearer ${authToken}`)
+      .send({
+        paymentCollectionStatus: "reconciled",
+        paymentCollectionMethod: "cash",
+        paymentCollectionAmount: 1000000,
+        paymentCollectionReference: "TEST-CLINICIAN-E2E",
+        transportTemperature: "ambient",
+        transportCondition: "stable",
+        sampleCondition: "Referral sample received intact",
+        scannedCode: referralOrder.body.orderNumber,
+      });
+    assert.equal(receptionIntake.status, 200);
+
+    const users = await request
+      .get("/api/users")
+      .set("Authorization", `Bearer ${authToken}`);
+    assert.equal(users.status, 200);
+    const technician = users.body.find((entry: { role: string }) => entry.role === "technician");
+    const pathologist = users.body.find((entry: { role: string }) => entry.role === "pathologist");
+    assert.ok(technician);
+    assert.ok(pathologist);
+
+    const releaseToLab = await request
+      .post(`/api/orders/${referralOrderId}/release-to-lab`)
+      .set("Authorization", `Bearer ${authToken}`)
+      .send({ technicianId: technician._id, scannedCode: referralOrder.body.orderNumber });
+    assert.equal(releaseToLab.status, 200);
+
+    const startProcessing = await request
+      .post(`/api/orders/${referralOrderId}/start-processing`)
+      .set("Authorization", `Bearer ${authToken}`)
+      .send({ scannedCode: referralOrder.body.orderNumber });
+    assert.equal(startProcessing.status, 200);
+
+    const accessionLookup = await request
+      .get(`/api/accessions/by-order/${referralOrderId}`)
+      .set("Authorization", `Bearer ${authToken}`);
+    assert.equal(accessionLookup.status, 200);
+    const accessionId = accessionLookup.body._id as string;
+
+    const grossing = await request
+      .post(`/api/accessions/${accessionId}/grossing`)
+      .set("Authorization", `Bearer ${authToken}`)
+      .send({
+        grossDescription: "Referral biopsy specimen",
+        numberOfBlocks: 1,
+        scannedCode: accessionLookup.body.accessionId,
+      });
+    assert.equal(grossing.status, 200);
+    const blockId = grossing.body.blocks[0].blockId as string;
+
+    const processing = await request
+      .post(`/api/accessions/${accessionId}/processing`)
+      .set("Authorization", `Bearer ${authToken}`)
+      .send({ processingNotes: "Referral processing", scannedCode: accessionLookup.body.accessionId });
+    assert.equal(processing.status, 200);
+
+    const embedding = await request
+      .post(`/api/accessions/${accessionId}/embedding`)
+      .set("Authorization", `Bearer ${authToken}`)
+      .send({ blockId, scannedCode: blockId });
+    assert.equal(embedding.status, 200);
+
+    const sectioning = await request
+      .post(`/api/accessions/${accessionId}/sectioning`)
+      .set("Authorization", `Bearer ${authToken}`)
+      .send({ blockId, slideCount: 1, scannedCode: blockId });
+    assert.equal(sectioning.status, 200);
+    const slideId = sectioning.body.blocks[0].slides[0].slideId as string;
+
+    const staining = await request
+      .post(`/api/accessions/${accessionId}/staining`)
+      .set("Authorization", `Bearer ${authToken}`)
+      .send({ slideId, stainType: "H&E", scannedCode: slideId });
+    assert.equal(staining.status, 200);
+
+    const readyForReview = await request
+      .post(`/api/orders/${referralOrderId}/ready-for-review`)
+      .set("Authorization", `Bearer ${authToken}`)
+      .send({ pathologistId: pathologist._id, scannedCode: accessionLookup.body.accessionId });
+    assert.equal(readyForReview.status, 200);
+
+    const reportSave = await request
+      .post(`/api/reports/${referralOrderId}/save`)
+      .set("Authorization", `Bearer ${authToken}`)
+      .send({
+        diagnosis: "Referral biopsy released diagnosis",
+        microscopicDescription: "Reviewed referral sections.",
+        grossDescription: "One referral biopsy block.",
+        comment: "External clinician portal E2E release.",
+      });
+    assert.equal(reportSave.status, 200);
+
+    const reportLock = await request
+      .post(`/api/reports/${referralOrderId}/lock`)
+      .set("Authorization", `Bearer ${authToken}`)
+      .send({});
+    assert.equal(reportLock.status, 200);
+
+    const reportRelease = await request
+      .post(`/api/reports/${referralOrderId}/email`)
+      .set("Authorization", `Bearer ${authToken}`)
+      .send({});
+    assert.equal(reportRelease.status, 200);
+
+    const clinicianOrdersAfterRelease = await request
+      .get("/api/doctors/me/orders")
+      .set("Authorization", `Bearer ${doctorToken}`);
+    assert.equal(clinicianOrdersAfterRelease.status, 200);
+    const releasedReferral = clinicianOrdersAfterRelease.body.data.find(
+      (entry: { _id: string }) => entry._id === referralOrderId,
+    );
+    assert.ok(releasedReferral);
+    assert.equal(releasedReferral.status, "released");
+    assert.equal(releasedReferral.reportReleased, true);
+    assert.match(releasedReferral.report.diagnosis, /Referral biopsy released diagnosis/);
+
+    const doctorOrderDetailAfterRelease = await request
+      .get(`/api/orders/${referralOrderId}`)
+      .set("Authorization", `Bearer ${doctorToken}`);
+    assert.equal(doctorOrderDetailAfterRelease.status, 200);
+    assert.equal(doctorOrderDetailAfterRelease.body.reportReleased, true);
+    assert.match(doctorOrderDetailAfterRelease.body.report.diagnosis, /Referral biopsy released diagnosis/);
+
+    const orderAudit = await request
+      .get(`/api/orders/${referralOrderId}/audit`)
+      .set("Authorization", `Bearer ${authToken}`);
+    assert.equal(orderAudit.status, 200);
+    assert.ok(orderAudit.body.some((entry: { action: string }) => entry.action === "create_clinician_referral"));
+  });
+
   test("connector and payment readiness endpoints return production configuration details", async () => {
     const mavianceConfig = await request
       .get("/api/payments/maviance/config")

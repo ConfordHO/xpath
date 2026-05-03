@@ -231,6 +231,15 @@ External referring doctors use a separate clinician portal with their own creden
 6. Sample collection, reception, accessioning, department workflow, reporting, release, and archiving follow the same controlled route as patient and walk-in orders.
 7. Clinician can view only their referred cases and released reports.
 
+Implementation status: implemented end to end on 2026-05-03.
+
+- Doctor-role users have a separate clinician portal at `/doctor-portal`.
+- Clinicians can create authorized patients, select existing authorized patients, submit referral orders, or create referral orders from OCR requisition text/files.
+- Referral orders create one order number, item-level workflow plans, invoice records, and billing policy metadata for patient, clinician, corporate, insurance, or lab-policy review.
+- Referral samples then use the same payment, reception, accessioning, barcode, histology, reporting, and release gates as walk-in and patient orders.
+- Doctor users can list only their own referred cases. Report payloads remain hidden until release, then become visible through the clinician portal and order detail.
+- E2E hardening coverage verifies manual clinician referral, OCR clinician referral, invoice/payment policy, full lab processing to released report, report privacy before release, and report visibility after release.
+
 ## OCR-assisted order to final report
 
 OCR intake supports typed and handwritten notes.

@@ -513,6 +513,13 @@ function normalizeDatabase(raw: Partial<Database>): Database {
     rawAuditEvents.length > 0 && verifyAuditTrail(rawAuditEvents).valid
       ? rawAuditEvents.slice().sort((left, right) => right.sequence - left.sequence)
       : normalizeAuditTrail(rawAuditEvents);
+  const referredPatientDoctorIds = new Map<string, Set<string>>();
+  for (const order of raw.orders ?? seed.orders) {
+    if (!order.referringDoctorId) continue;
+    const doctors = referredPatientDoctorIds.get(order.patientId) ?? new Set<string>();
+    doctors.add(order.referringDoctorId);
+    referredPatientDoctorIds.set(order.patientId, doctors);
+  }
   const normalizedOrders = (raw.orders ?? seed.orders).map((order) => ({
     ...order,
     testTypeIds: (order.testTypeIds ?? [])
@@ -528,6 +535,9 @@ function normalizeDatabase(raw: Partial<Database>): Database {
       }),
     validationStatus: order.validationStatus ?? "pending",
     intakeSource: order.intakeSource ?? "manual",
+    payerType: order.payerType ?? "patient",
+    billingAccountName: order.billingAccountName ?? null,
+    billingInstructions: order.billingInstructions ?? null,
     financialClearance: order.financialClearance ?? "pending",
     lockStatus: order.lockStatus ?? (order.lockedAt ? "locked" : "unlocked"),
     lockedAt: order.lockedAt ?? null,
@@ -574,6 +584,12 @@ function normalizeDatabase(raw: Partial<Database>): Database {
     doctors,
     patients: (raw.patients ?? seed.patients).map((patient) => ({
       ...patient,
+      authorizedDoctorIds: Array.from(
+        new Set([
+          ...(patient.authorizedDoctorIds ?? []),
+          ...(referredPatientDoctorIds.get(patient._id) ?? []),
+        ]),
+      ),
       siteId: patient.siteId ?? normalizeSiteId(patient.siteId),
     })),
     testTypes,

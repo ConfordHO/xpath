@@ -662,6 +662,224 @@ function normalizeUserPreference(input: {
   };
 }
 
+const clinicianPatientSchema = patientSchema.extend({
+  externalPatientId: z.string().trim().optional().nullable(),
+});
+
+const clinicianPayerTypeSchema = z.enum([
+  "patient",
+  "clinician",
+  "corporate",
+  "insurance",
+  "lab_policy",
+]);
+
+const clinicianOrderSchema = z.object({
+  patientId: z.string().trim().optional().nullable(),
+  patient: clinicianPatientSchema.partial().optional(),
+  testTypeIds: z.array(z.string().trim().min(1)).optional(),
+  testCodes: z.array(z.string().trim().min(1)).optional(),
+  priority: z.enum(["normal", "urgent"]).default("normal"),
+  clinicalHistory: z.string().trim().optional(),
+  notes: z.string().trim().optional(),
+  payerType: clinicianPayerTypeSchema.default("patient"),
+  billingAccountName: z.string().trim().optional().nullable(),
+  billingInstructions: z.string().trim().optional().nullable(),
+});
+
+function getDoctorForPortalUser(db: Database, user: User) {
+  const doctor = db.doctors.find((entry) => entry.userId === user._id && entry.active);
+  if (!doctor) {
+    throw new Error("Your user account is not linked to an active doctor record yet.");
+  }
+  return doctor;
+}
+
+function doctorCanAccessPatient(doctor: Doctor, patient: Patient, db: Database) {
+  return Boolean(
+    patient.authorizedDoctorIds?.includes(doctor._id) ||
+      db.orders.some((order) => order.patientId === patient._id && order.referringDoctorId === doctor._id),
+  );
+}
+
+function authorizePatientForDoctor(patient: Patient, doctor: Doctor) {
+  patient.authorizedDoctorIds = Array.from(
+    new Set([...(patient.authorizedDoctorIds ?? []), doctor._id]),
+  );
+}
+
+function resolveClinicianTestTypeIds(db: Database, input: { testTypeIds?: string[]; testCodes?: string[] }) {
+  const requested = [...(input.testTypeIds ?? []), ...(input.testCodes ?? [])]
+    .map((value) => value.trim())
+    .filter(Boolean);
+  const resolved = requested
+    .map((value) => {
+      const lowered = value.toLowerCase();
+      return db.testTypes.find(
+        (testType) => testType._id === value || testType.code.toLowerCase() === lowered,
+      )?._id;
+    })
+    .filter((value): value is string => Boolean(value));
+  return Array.from(new Set(resolved));
+}
+
+function clinicianReportIsReleased(order: Order, report: Report | null) {
+  return Boolean(
+    report &&
+      (order.status === "released" ||
+        order.releasedAt ||
+        report.emailedAt ||
+        report.releaseRuleStatus === "released"),
+  );
+}
+
+function clinicianReportPayload(order: Order, report: Report | null) {
+  if (!clinicianReportIsReleased(order, report)) {
+    return null;
+  }
+  return report;
+}
+
+function applyClinicianPaymentPolicy(
+  db: Database,
+  req: AuthRequest,
+  order: Order,
+  doctor: Doctor,
+  input: {
+    payerType: "patient" | "clinician" | "corporate" | "insurance" | "lab_policy";
+    billingAccountName?: string | null;
+    billingInstructions?: string | null;
+  },
+) {
+  order.payerType = input.payerType;
+  order.billingAccountName =
+    input.billingAccountName?.trim() ||
+    (input.payerType === "clinician" ? doctor.name : null);
+  order.billingInstructions = input.billingInstructions?.trim() || null;
+  order.financialClearance = "pending";
+  order.paymentCollectionStatus = "payment_prompt_sent";
+  order.paymentPromptSentAt = now();
+  order.paymentPromptRecipient =
+    input.payerType === "patient"
+      ? order.requesterNotificationPhone || order.requesterNotificationEmail || null
+      : doctor.phone || doctor.email || null;
+
+  if (input.payerType === "corporate" || input.payerType === "insurance" || input.payerType === "lab_policy") {
+    order.paymentCollectionStatus = "unpaid";
+    pushNotification(db, {
+      title: "Referral order billing review",
+      body: `${order.orderNumber} needs ${input.payerType.replace("_", " ")} billing review.`,
+      siteId: order.siteId ?? null,
+      audienceRoles: ["finance", "admin", "receptionist"],
+    });
+  }
+
+  appendRequestAudit(db, req, {
+    module: "Billing",
+    action: "apply_clinician_payment_policy",
+    targetId: order._id,
+    orderId: order._id,
+    summary: `Payment policy ${input.payerType} applied to ${order.orderNumber}`,
+    metadata: {
+      payerType: input.payerType,
+      billingAccountName: order.billingAccountName,
+      promptRecipient: order.paymentPromptRecipient,
+    },
+  });
+}
+
+function createClinicianPortalOrder(
+  db: Database,
+  req: AuthRequest,
+  user: User,
+  doctor: Doctor,
+  input: {
+    patient: Patient;
+    testTypeIds: string[];
+    priority: "normal" | "urgent";
+    clinicalHistory?: string | null;
+    notes?: string | null;
+    intakeSource: "portal" | "ocr_nlp";
+    payerType: "patient" | "clinician" | "corporate" | "insurance" | "lab_policy";
+    billingAccountName?: string | null;
+    billingInstructions?: string | null;
+  },
+) {
+  const timestamp = now();
+  const order: Order = {
+    _id: createId(),
+    orderNumber: createOrderNumber(db),
+    patientId: input.patient._id,
+    testTypeIds: input.testTypeIds,
+    status: "draft",
+    priority: input.priority,
+    orderSource: "referral",
+    referringDoctorId: doctor._id,
+    referringDoctorName: doctor.name,
+    payerType: input.payerType,
+    billingAccountName: input.billingAccountName ?? null,
+    billingInstructions: input.billingInstructions ?? null,
+    createdBy: user._id,
+    assignedTechnicianId: null,
+    assignedPathologistId: null,
+    notes: input.notes ?? "Created from external clinician portal",
+    clinicalHistory: input.clinicalHistory ?? "",
+    validationStatus: "pending",
+    validationNotes: "",
+    intakeSource: input.intakeSource,
+    financialClearance: "pending",
+    siteId: normalizeSiteId(doctor.siteId),
+    courierStatus: "ready_for_pickup",
+    pickupAddress: input.patient.address,
+    pickupPlaceName: null,
+    pickupLat: null,
+    pickupLng: null,
+    receivedByUserId: null,
+    triagedAt: null,
+    triagedBy: null,
+    workflowReleasedAt: null,
+    workflowReleasedBy: null,
+    paymentCollectionStatus: "unpaid",
+    paymentCollectionMethod: null,
+    paymentCollectionAmount: null,
+    paymentCollectionReference: null,
+    paymentCollectionDeclaredBy: null,
+    paymentCollectionDeclaredAt: null,
+    paymentPromptSentAt: null,
+    paymentPromptRecipient: input.patient.phone || input.patient.email || doctor.email,
+    anonymousCaseCode: null,
+    requesterNotificationEmail: input.patient.email || doctor.email,
+    requesterNotificationPhone: input.patient.phone || doctor.phone,
+    createdAt: timestamp,
+    updatedAt: timestamp,
+  };
+  order.anonymousCaseCode = `CASE-${order.orderNumber}`;
+  db.orders.push(order);
+  ensureInvoiceForOrder(db, order);
+  applyClinicianPaymentPolicy(db, req, order, doctor, input);
+  pushNotification(db, {
+    title: "New clinician referral",
+    body: `${doctor.name} submitted ${order.orderNumber}.`,
+    siteId: order.siteId ?? null,
+    audienceRoles: ["receptionist", "admin", "finance"],
+  });
+  appendRequestAudit(db, req, {
+    module: "Orders",
+    action: "create_clinician_referral",
+    targetId: order._id,
+    orderId: order._id,
+    summary: `Clinician referral order ${order.orderNumber} created`,
+    metadata: {
+      doctorId: doctor._id,
+      patientId: input.patient._id,
+      testCount: input.testTypeIds.length,
+      intakeSource: input.intakeSource,
+      payerType: input.payerType,
+    },
+  });
+  return order;
+}
+
 app.post("/api/auth/login", authLimiter, async (req, res) => {
   const parsed = loginSchema.safeParse(req.body);
   if (!parsed.success) {
@@ -2118,6 +2336,283 @@ app.get("/api/doctors/me/stats", async (req: AuthRequest, res) => {
   });
 });
 
+app.get("/api/doctors/me/patients", requireRoles("doctor"), async (req: AuthRequest, res) => {
+  const user = ensureUser(req);
+  const db = await loadDb();
+  try {
+    const doctor = getDoctorForPortalUser(db, user);
+    const patients = db.patients
+      .filter((patient) => doctorCanAccessPatient(doctor, patient, db))
+      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+    res.json({ data: patients });
+  } catch (error) {
+    res.status(404).json({ message: (error as Error).message });
+  }
+});
+
+app.post("/api/doctors/me/patients", requireRoles("doctor"), async (req: AuthRequest, res) => {
+  const parsed = clinicianPatientSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ message: "Invalid patient payload" });
+  }
+  const user = ensureUser(req);
+  const created = await updateDb((db) => {
+    const doctor = getDoctorForPortalUser(db, user);
+    const siteId = normalizeSiteId(doctor.siteId);
+    const existing = db.patients.find(
+      (entry) =>
+        normalizeSiteId(entry.siteId) === siteId &&
+        ((parsed.data.externalPatientId && entry.externalPatientId === parsed.data.externalPatientId) ||
+          (entry.email.toLowerCase() === parsed.data.email.toLowerCase() &&
+            entry.dateOfBirth === parsed.data.dateOfBirth)),
+    );
+    if (existing) {
+      authorizePatientForDoctor(existing, doctor);
+      existing.updatedAt = now();
+      appendRequestAudit(db, req, {
+        module: "External Clinician Portal",
+        action: "authorize_patient",
+        targetId: existing._id,
+        summary: `${doctor.name} linked an existing patient`,
+        metadata: { doctorId: doctor._id },
+      });
+      return existing;
+    }
+    const timestamp = now();
+    const patient: Patient = {
+      _id: createId(),
+      firstName: parsed.data.firstName,
+      lastName: parsed.data.lastName,
+      dateOfBirth: parsed.data.dateOfBirth,
+      gender: parsed.data.gender,
+      phone: parsed.data.phone,
+      email: parsed.data.email,
+      address: parsed.data.address,
+      siteId,
+      externalPatientId: parsed.data.externalPatientId ?? null,
+      authorizedDoctorIds: [doctor._id],
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    };
+    db.patients.push(patient);
+    appendRequestAudit(db, req, {
+      module: "External Clinician Portal",
+      action: "create_authorized_patient",
+      targetId: patient._id,
+      summary: `${doctor.name} created an authorized patient`,
+      metadata: { doctorId: doctor._id },
+    });
+    return patient;
+  }).catch((error: Error) => {
+    res.status(400).json({ message: error.message });
+    return null;
+  });
+  if (!created) return;
+  res.status(201).json(created);
+});
+
+app.get("/api/doctors/me/orders", requireRoles("doctor"), async (req: AuthRequest, res) => {
+  const user = ensureUser(req);
+  const db = await loadDb();
+  try {
+    const doctor = getDoctorForPortalUser(db, user);
+    const orders = db.orders
+      .filter((order) => order.referringDoctorId === doctor._id)
+      .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
+      .map((order) => {
+        const report = getReportByOrder(db, order._id);
+        const invoice = db.invoices.find((entry) => entry.orderId === order._id) ?? null;
+        return {
+          ...hydrateOrder(db, order),
+          invoice,
+          report: clinicianReportPayload(order, report),
+          reportReleased: clinicianReportIsReleased(order, report),
+        };
+      });
+    res.json({ data: orders });
+  } catch (error) {
+    res.status(404).json({ message: (error as Error).message });
+  }
+});
+
+app.post("/api/doctors/me/orders", requireRoles("doctor"), async (req: AuthRequest, res) => {
+  const parsed = clinicianOrderSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ message: "Invalid clinician order payload" });
+  }
+  const user = ensureUser(req);
+  const created = await updateDb((db) => {
+    const doctor = getDoctorForPortalUser(db, user);
+    const testTypeIds = resolveClinicianTestTypeIds(db, parsed.data);
+    if (!testTypeIds.length) {
+      throw new Error("At least one active test is required");
+    }
+    let patient: Patient | null = null;
+    if (parsed.data.patientId) {
+      patient = db.patients.find((entry) => entry._id === parsed.data.patientId) ?? null;
+      if (!patient || !doctorCanAccessPatient(doctor, patient, db)) {
+        throw new Error("Patient is not authorized for this clinician");
+      }
+    } else if (parsed.data.patient) {
+      const patientParsed = clinicianPatientSchema.safeParse(parsed.data.patient);
+      if (!patientParsed.success) {
+        throw new Error("Create or select an authorized patient before ordering");
+      }
+      const timestamp = now();
+      patient = {
+        _id: createId(),
+        firstName: patientParsed.data.firstName,
+        lastName: patientParsed.data.lastName,
+        dateOfBirth: patientParsed.data.dateOfBirth,
+        gender: patientParsed.data.gender,
+        phone: patientParsed.data.phone,
+        email: patientParsed.data.email,
+        address: patientParsed.data.address,
+        siteId: normalizeSiteId(doctor.siteId),
+        externalPatientId: patientParsed.data.externalPatientId ?? null,
+        authorizedDoctorIds: [doctor._id],
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      };
+      db.patients.push(patient);
+    }
+    if (!patient) {
+      throw new Error("Create or select an authorized patient before ordering");
+    }
+    authorizePatientForDoctor(patient, doctor);
+    const order = createClinicianPortalOrder(db, req, user, doctor, {
+      patient,
+      testTypeIds,
+      priority: parsed.data.priority,
+      clinicalHistory: parsed.data.clinicalHistory ?? "",
+      notes: parsed.data.notes ?? "",
+      intakeSource: "portal",
+      payerType: parsed.data.payerType,
+      billingAccountName: parsed.data.billingAccountName ?? null,
+      billingInstructions: parsed.data.billingInstructions ?? null,
+    });
+    return hydrateOrder(db, order);
+  }).catch((error: Error) => {
+    res.status(400).json({ message: error.message });
+    return null;
+  });
+  if (!created) return;
+  res.status(201).json(created);
+});
+
+app.post(
+  "/api/doctors/me/orders/ocr",
+  requireRoles("doctor"),
+  publicOcrUpload.any(),
+  async (req: AuthRequest, res) => {
+    const user = ensureUser(req);
+    const fallbackText = String(req.body?.text ?? req.body?.extractedText ?? req.body?.fileText ?? "").trim();
+    const files = publicUploadedFiles(req);
+    if (!files.length && !fallbackText) {
+      return res.status(400).json({ message: "Upload a requisition file or paste requisition text" });
+    }
+    try {
+      const corrections = parseMultipartJsonField(req.body?.corrections);
+      const extracted = await extractProductionOcrText({ files, fallbackText });
+      const result = await updateDb(async (db) => {
+        const doctor = getDoctorForPortalUser(db, user);
+        const parsed = parseProductionIntakePayload(db, extracted.text, extracted.confidence);
+        const correctedPayload = applyIntakeCorrections(db, parsed.payload, {
+          ...corrections,
+          source: "clinician_portal",
+          clinicianId: doctor._id,
+          referringDoctorId: doctor._id,
+          referringDoctorName: doctor.name,
+        });
+        const testTypeIds = resolveClinicianTestTypeIds(db, {
+          testTypeIds: correctedPayload.testTypeIds,
+        });
+        if (!testTypeIds.length) {
+          throw new Error("At least one test must be selected or detected before creating an order");
+        }
+        let patient = correctedPayload.patientId
+          ? db.patients.find((entry) => entry._id === correctedPayload.patientId) ?? null
+          : null;
+        if (patient && !doctorCanAccessPatient(doctor, patient, db)) {
+          throw new Error("Patient is not authorized for this clinician");
+        }
+        if (!patient) {
+          const timestamp = now();
+          patient = {
+            _id: createId(),
+            firstName: correctedPayload.patient.firstName,
+            lastName: correctedPayload.patient.lastName,
+            dateOfBirth: correctedPayload.patient.dateOfBirth,
+            gender: correctedPayload.patient.gender ?? "other",
+            phone: correctedPayload.patient.phone,
+            email: correctedPayload.patient.email,
+            address: correctedPayload.patient.address,
+            siteId: normalizeSiteId(doctor.siteId),
+            externalPatientId: correctedPayload.patient.externalPatientId ?? null,
+            authorizedDoctorIds: [doctor._id],
+            createdAt: timestamp,
+            updatedAt: timestamp,
+          };
+          db.patients.push(patient);
+        }
+        authorizePatientForDoctor(patient, doctor);
+        const timestamp = now();
+        const job: OcrIntakeJob = {
+          _id: createId(),
+          source: files.length ? "upload" : "manual_text",
+          originalFilename: files.map((file) => file.originalname).filter(Boolean).join(", ") || null,
+          mimeType: Array.from(new Set(files.map((file) => file.mimetype).filter(Boolean))).join(", ") || null,
+          rawText: extracted.text,
+          parsedPayload: JSON.stringify(correctedPayload),
+          confidence: parsed.confidence,
+          fieldConfidences: JSON.stringify(parsed.fieldConfidences),
+          status: "converted_to_order",
+          requiredHumanVerification: true,
+          verificationNotes: "Clinician portal OCR request converted with submitted corrections.",
+          verifiedBy: user._id,
+          verifiedAt: timestamp,
+          convertedOrderId: null,
+          createdBy: user._id,
+          siteId: normalizeSiteId(doctor.siteId),
+          createdAt: timestamp,
+          updatedAt: timestamp,
+        };
+        db.ocrIntakeJobs.unshift(job);
+        const order = createClinicianPortalOrder(db, req, user, doctor, {
+          patient,
+          testTypeIds,
+          priority: correctedPayload.priority ?? "normal",
+          clinicalHistory: correctedPayload.clinicalHistory ?? "",
+          notes: "Created from clinician portal OCR requisition",
+          intakeSource: "ocr_nlp",
+          payerType:
+            corrections.payerType === "clinician" ||
+            corrections.payerType === "corporate" ||
+            corrections.payerType === "insurance" ||
+            corrections.payerType === "lab_policy"
+              ? corrections.payerType
+              : "patient",
+          billingAccountName: typeof corrections.billingAccountName === "string" ? corrections.billingAccountName : null,
+          billingInstructions: typeof corrections.billingInstructions === "string" ? corrections.billingInstructions : null,
+        });
+        job.convertedOrderId = order._id;
+        appendRequestAudit(db, req, {
+          module: "External Clinician Portal",
+          action: "ocr_referral_order_created",
+          targetId: job._id,
+          orderId: order._id,
+          summary: `Clinician OCR requisition converted to ${order.orderNumber}`,
+          metadata: { confidence: job.confidence, doctorId: doctor._id },
+        });
+        return { job, order: hydrateOrder(db, order) };
+      });
+      res.status(201).json(result);
+    } catch (error) {
+      res.status(400).json({ message: (error as Error).message });
+    }
+  },
+);
+
 app.get("/api/patients", requireRoles("admin", "receptionist"), async (req: AuthRequest, res) => {
   const db = getScopedDb(req, await loadDb());
   const page = Number(req.query.page ?? 1);
@@ -2228,10 +2723,15 @@ app.get("/api/orders/:id", async (req: AuthRequest, res) => {
   const db = getScopedDb(req, await loadDb());
   try {
     const order = findOrder(db, String(req.params.id));
+    if (!userCanAccessOrder(db, ensureUser(req), order)) {
+      return res.status(403).json({ message: "You do not have access to this order" });
+    }
     const patient = findPatient(db, order.patientId);
     const accession = getAccessionByOrder(db, order._id);
     const sample = getSampleByOrder(db, order._id);
     const report = buildReport(db, order);
+    const visibleReport =
+      req.user?.role === "doctor" ? clinicianReportPayload(order, getReportByOrder(db, order._id)) : report;
     res.json({
       ...hydrateOrder(db, order),
       patient,
@@ -2240,7 +2740,8 @@ app.get("/api/orders/:id", async (req: AuthRequest, res) => {
       paidAmount: getOrderPaid(db, order._id),
       accession,
       sample,
-      report,
+      report: visibleReport,
+      reportReleased: clinicianReportIsReleased(order, getReportByOrder(db, order._id)),
       timeline: buildTimeline(db, order),
     });
   } catch (error) {

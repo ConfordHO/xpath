@@ -232,6 +232,7 @@ export interface Patient {
   address: string;
   siteId?: string | null;
   externalPatientId?: string | null;
+  authorizedDoctorIds?: string[];
   nationalId?: string;
   anonymized?: boolean;
   anonymousLabel?: string | null;
@@ -595,6 +596,9 @@ export interface Order {
   orderSource: "walk_in" | "online" | "referral";
   referringDoctorId?: string | null;
   referringDoctorName?: string | null;
+  payerType?: "patient" | "clinician" | "corporate" | "insurance" | "lab_policy";
+  billingAccountName?: string | null;
+  billingInstructions?: string | null;
   createdBy: string;
   assignedTechnicianId?: string | null;
   assignedPathologistId?: string | null;

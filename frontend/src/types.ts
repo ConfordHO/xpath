@@ -177,6 +177,8 @@ export interface Patient {
   email: string
   address: string
   siteId?: string | null
+  externalPatientId?: string | null
+  authorizedDoctorIds?: string[]
   nationalId?: string
   anonymized?: boolean
   anonymousLabel?: string | null
@@ -430,6 +432,9 @@ export interface HydratedOrder {
         type: string
       }
     | null
+  payerType?: 'patient' | 'clinician' | 'corporate' | 'insurance' | 'lab_policy'
+  billingAccountName?: string | null
+  billingInstructions?: string | null
   assignedTechnician?:
     | {
         _id: string

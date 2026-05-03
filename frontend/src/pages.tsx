@@ -1,7 +1,6 @@
 export { DashboardPage } from './views/dashboard'
 export { ProjectReviewPage } from './views/projectReview'
 export {
-  DoctorPortalPage,
   DoctorsPage,
   MyAccountPage,
   SystemSettingsPage,
@@ -9,6 +8,7 @@ export {
   UsersPage,
   WorkflowTemplatesPage,
 } from './views/admin'
+export { DoctorPortalPage } from './views/doctorPortal'
 export {
   AccountingPage,
   CourierPage,

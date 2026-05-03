@@ -7,6 +7,7 @@ import { api, getStoredToken } from '../api'
 type OcrOrderUploadProps = {
   title?: string
   buttonLabel?: string
+  endpoint?: string
   buildCorrections?: () => Record<string, unknown>
   onOrderCreated?: (order: any) => void
 }
@@ -21,6 +22,7 @@ function toMessage(error: unknown) {
 export function OcrOrderUpload({
   title = 'Scan requisition',
   buttonLabel = 'Scan and create order',
+  endpoint,
   buildCorrections,
   onOrderCreated,
 }: OcrOrderUploadProps) {
@@ -42,8 +44,8 @@ export function OcrOrderUpload({
       if (text.trim()) formData.append('text', text.trim())
       formData.append('verify', 'true')
       formData.append('corrections', JSON.stringify(buildCorrections?.() ?? {}))
-      const endpoint = getStoredToken() ? '/intake/ocr/jobs' : '/public/intake/ocr-order-request'
-      const response = await api.post(endpoint, formData, {
+      const targetEndpoint = endpoint ?? (getStoredToken() ? '/intake/ocr/jobs' : '/public/intake/ocr-order-request')
+      const response = await api.post(targetEndpoint, formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
       })
       const order = response.data.order
