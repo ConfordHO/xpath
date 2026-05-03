@@ -42,10 +42,15 @@ import {
 import { loadDb, updateDb } from "../store.js";
 import type {
   BarcodeRecord,
+  CommunicationAttachment,
+  CommunicationExceptionType,
+  CommunicationPriority,
   Database,
+  DocumentRecord,
   InternalChatMessage,
   InternalChatThread,
   User,
+  UserRole,
 } from "../types.js";
 import { appendAuditEvent, verifyAuditTrail } from "./audit.js";
 import {
@@ -60,9 +65,15 @@ import {
   now,
   scopeDbForUser,
 } from "./helpers.js";
+import {
+  documentUpload,
+  readDocumentBinary,
+  saveDocumentBinary,
+} from "./storage.js";
 import { buildTatDashboard } from "./tat.js";
 
 const ALL_AUTHENTICATED_ROLES = [
+  "super_admin",
   "admin",
   "receptionist",
   "technician",
@@ -141,24 +152,426 @@ function missingRequiredValue(value: unknown, key: string) {
   return false;
 }
 
-function userCanAccessThread(user: User, thread: InternalChatThread) {
-  return (
-    user.role === "super_admin" ||
-    user.role === "admin" ||
-    thread.participantUserIds.includes(user._id) ||
-    thread.department === user.role
+const roleSchema = z.enum(ALL_AUTHENTICATED_ROLES);
+const communicationThreadTypeSchema = z.enum(["department", "direct", "broadcast", "exception"]);
+const communicationPrioritySchema = z.enum(["routine", "urgent", "critical"]);
+const communicationExceptionTypeSchema = z.enum([
+  "rejected_sample",
+  "missing_payment",
+  "failed_qc",
+  "delayed_tat",
+  "missing_specimen",
+  "unread_clinician_response",
+]);
+const communicationMessageTypeSchema = z.enum(["message", "broadcast", "exception", "system"]);
+const optionalLinkIdSchema = z.preprocess(
+  (value) => (typeof value === "string" && value.trim() === "" ? undefined : value),
+  z.string().trim().min(1).max(160).optional().nullable(),
+);
+const optionalDepartmentSchema = z.preprocess(
+  (value) => (typeof value === "string" && value.trim() === "" ? undefined : value),
+  z.string().trim().min(1).max(80).optional().nullable(),
+);
+const optionalIsoDateSchema = z.preprocess(
+  (value) => (typeof value === "string" && value.trim() === "" ? undefined : value),
+  z.string().datetime().optional().nullable(),
+);
+
+const ROLE_DEPARTMENT_ALIASES: Record<UserRole, string[]> = {
+  super_admin: ["super_admin", "admin", "quality"],
+  admin: ["admin", "quality"],
+  receptionist: ["receptionist", "front_desk", "receiving"],
+  technician: ["technician", "histology", "cytology", "ihc", "laboratory", "lab"],
+  pathologist: ["pathologist", "histology", "cytology", "ihc", "signout"],
+  doctor: ["doctor", "clinician", "requester"],
+  finance: ["finance", "billing"],
+  courier: ["courier", "logistics"],
+};
+
+const DEFAULT_EXCEPTION_DEPARTMENTS: Record<CommunicationExceptionType, string[]> = {
+  rejected_sample: ["receptionist", "technician", "quality"],
+  missing_payment: ["finance", "receptionist"],
+  failed_qc: ["technician", "pathologist", "quality"],
+  delayed_tat: ["technician", "pathologist", "admin"],
+  missing_specimen: ["receptionist", "courier", "technician"],
+  unread_clinician_response: ["receptionist", "doctor", "pathologist"],
+};
+
+function uniqueStrings(values: Array<string | null | undefined>) {
+  return Array.from(
+    new Set(
+      values
+        .map((value) => value?.trim())
+        .filter((value): value is string => Boolean(value)),
+    ),
   );
+}
+
+function userCanAccessDepartment(user: User, department?: string | null) {
+  if (!department) return false;
+  const aliases = new Set(ROLE_DEPARTMENT_ALIASES[user.role].map((entry) => entry.toLowerCase()));
+  aliases.add(user.role.toLowerCase());
+  return aliases.has(department.toLowerCase());
+}
+
+function userCanAccessThread(user: User, thread: InternalChatThread) {
+  if (user.role === "super_admin" || user.role === "admin") {
+    return true;
+  }
+  if (thread.participantUserIds.includes(user._id)) {
+    return true;
+  }
+  const threadType = thread.threadType ?? (thread.broadcast ? "broadcast" : "department");
+  if (threadType === "direct") {
+    return false;
+  }
+  if ((threadType === "broadcast" || thread.broadcast) && (!thread.audienceRoles?.length || thread.audienceRoles.includes(user.role))) {
+    return true;
+  }
+  if (thread.audienceRoles?.includes(user.role)) {
+    return true;
+  }
+  const departments = thread.departments?.length ? thread.departments : [thread.department];
+  return departments.some((department) => userCanAccessDepartment(user, department));
 }
 
 const threadSchema = z.object({
   title: z.string().trim().min(1).max(160),
-  department: z.string().trim().min(1).max(80),
+  threadType: communicationThreadTypeSchema.default("department"),
+  department: optionalDepartmentSchema,
+  departments: z.array(z.string().trim().min(1).max(80)).default([]),
   participantUserIds: z.array(z.string().trim().min(1)).default([]),
+  audienceRoles: z.array(roleSchema).optional().nullable(),
+  linkedOrderId: optionalLinkIdSchema,
+  linkedSpecimenId: optionalLinkIdSchema,
+  linkedOrderItemId: optionalLinkIdSchema,
+  linkedInvoiceId: optionalLinkIdSchema,
+  linkedReportId: optionalLinkIdSchema,
+  exceptionType: communicationExceptionTypeSchema.optional().nullable(),
+  priority: communicationPrioritySchema.default("routine"),
+  regulated: z.boolean().default(false),
+  broadcast: z.boolean().optional(),
+  retentionUntil: optionalIsoDateSchema,
 });
 
 const messageSchema = z.object({
   body: z.string().trim().min(1).max(4000),
+  messageType: communicationMessageTypeSchema.default("message"),
+  regulated: z.boolean().optional(),
+  mandatoryRead: z.boolean().optional(),
 });
+
+const broadcastSchema = z.object({
+  title: z.string().trim().min(1).max(160),
+  body: z.string().trim().min(1).max(4000),
+  departments: z.array(z.string().trim().min(1).max(80)).default([]),
+  audienceRoles: z.array(roleSchema).default([...ALL_AUTHENTICATED_ROLES]),
+  linkedOrderId: optionalLinkIdSchema,
+  linkedSpecimenId: optionalLinkIdSchema,
+  linkedOrderItemId: optionalLinkIdSchema,
+  linkedInvoiceId: optionalLinkIdSchema,
+  linkedReportId: optionalLinkIdSchema,
+  priority: communicationPrioritySchema.default("urgent"),
+  regulated: z.boolean().default(false),
+  mandatoryRead: z.boolean().default(false),
+  retentionUntil: optionalIsoDateSchema,
+});
+
+const exceptionAlertSchema = z.object({
+  title: z.string().trim().min(1).max(160).optional(),
+  body: z.string().trim().min(1).max(4000),
+  exceptionType: communicationExceptionTypeSchema,
+  departments: z.array(z.string().trim().min(1).max(80)).default([]),
+  participantUserIds: z.array(z.string().trim().min(1)).default([]),
+  linkedOrderId: optionalLinkIdSchema,
+  linkedSpecimenId: optionalLinkIdSchema,
+  linkedOrderItemId: optionalLinkIdSchema,
+  linkedInvoiceId: optionalLinkIdSchema,
+  linkedReportId: optionalLinkIdSchema,
+  priority: communicationPrioritySchema.default("urgent"),
+  retentionUntil: optionalIsoDateSchema,
+});
+
+const attachmentSchema = z.object({
+  messageId: z.string().trim().min(1),
+  retentionUntil: optionalIsoDateSchema,
+});
+
+type CommunicationLinkInput = {
+  linkedOrderId?: string | null;
+  linkedSpecimenId?: string | null;
+  linkedOrderItemId?: string | null;
+  linkedInvoiceId?: string | null;
+  linkedReportId?: string | null;
+};
+
+function normalizeCommunicationLinks(db: Database, input: CommunicationLinkInput) {
+  let linkedOrderId = input.linkedOrderId ?? null;
+  let linkedSpecimenId = input.linkedSpecimenId ?? null;
+  let linkedOrderItemId = input.linkedOrderItemId ?? null;
+  let linkedInvoiceId = input.linkedInvoiceId ?? null;
+  let linkedReportId = input.linkedReportId ?? null;
+
+  const order = linkedOrderId
+    ? db.orders.find((entry) => entry._id === linkedOrderId || entry.orderNumber === linkedOrderId)
+    : null;
+  if (linkedOrderId && !order) {
+    throw new Error("Linked order was not found");
+  }
+  linkedOrderId = order?._id ?? linkedOrderId;
+
+  const specimen = linkedSpecimenId
+    ? db.samples.find(
+        (entry) =>
+          entry._id === linkedSpecimenId ||
+          entry.accessionId === linkedSpecimenId ||
+          entry.label === linkedSpecimenId,
+      )
+    : null;
+  const accession = linkedSpecimenId
+    ? db.accessions.find((entry) => entry._id === linkedSpecimenId || entry.accessionId === linkedSpecimenId)
+    : null;
+  if (linkedSpecimenId && !specimen && !accession) {
+    throw new Error("Linked specimen was not found");
+  }
+  if (specimen) {
+    linkedSpecimenId = specimen._id;
+    linkedOrderId = linkedOrderId ?? specimen.orderId;
+  } else if (accession) {
+    linkedSpecimenId = accession._id;
+    linkedOrderId = linkedOrderId ?? accession.orderId;
+  }
+
+  const orderItem = linkedOrderItemId
+    ? db.orderItems.find((entry) => entry._id === linkedOrderItemId)
+    : null;
+  if (linkedOrderItemId && !orderItem) {
+    throw new Error("Linked order item was not found");
+  }
+  if (orderItem) {
+    linkedOrderItemId = orderItem._id;
+    linkedOrderId = linkedOrderId ?? orderItem.orderId;
+  }
+
+  const invoice = linkedInvoiceId
+    ? db.invoices.find((entry) => entry._id === linkedInvoiceId || entry.invoiceNumber === linkedInvoiceId)
+    : null;
+  if (linkedInvoiceId && !invoice) {
+    throw new Error("Linked invoice was not found");
+  }
+  if (invoice) {
+    linkedInvoiceId = invoice._id;
+    linkedOrderId = linkedOrderId ?? invoice.orderId;
+  }
+
+  const report = linkedReportId ? db.reports.find((entry) => entry._id === linkedReportId) : null;
+  if (linkedReportId && !report) {
+    throw new Error("Linked report was not found");
+  }
+  if (report) {
+    linkedReportId = report._id;
+    linkedOrderId = linkedOrderId ?? report.orderId;
+  }
+
+  const linkedOrder = linkedOrderId ? db.orders.find((entry) => entry._id === linkedOrderId) : null;
+  if (linkedOrderId && !linkedOrder) {
+    throw new Error("Linked order was not found");
+  }
+  const linkedEntities = [
+    specimen ? { label: "specimen", orderId: specimen.orderId } : null,
+    accession ? { label: "specimen", orderId: accession.orderId } : null,
+    orderItem ? { label: "order item", orderId: orderItem.orderId } : null,
+    invoice ? { label: "invoice", orderId: invoice.orderId } : null,
+    report ? { label: "report", orderId: report.orderId } : null,
+  ].filter((entry): entry is { label: string; orderId: string } => Boolean(entry));
+  const mismatch = linkedOrderId
+    ? linkedEntities.find((entry) => entry.orderId !== linkedOrderId)
+    : null;
+  if (mismatch) {
+    throw new Error(`Linked ${mismatch.label} does not belong to the linked order`);
+  }
+
+  return {
+    linkedOrderId,
+    linkedSpecimenId,
+    linkedOrderItemId,
+    linkedInvoiceId,
+    linkedReportId,
+  };
+}
+
+function defaultCommunicationRetentionUntil() {
+  const retention = new Date();
+  retention.setUTCFullYear(retention.getUTCFullYear() + 7);
+  return retention.toISOString();
+}
+
+function communicationAuditMetadata(thread: InternalChatThread, extra?: Record<string, unknown>) {
+  return {
+    threadType: thread.threadType ?? "department",
+    departments: thread.departments ?? [thread.department],
+    linkedOrderId: thread.linkedOrderId ?? null,
+    linkedSpecimenId: thread.linkedSpecimenId ?? null,
+    linkedOrderItemId: thread.linkedOrderItemId ?? null,
+    linkedInvoiceId: thread.linkedInvoiceId ?? null,
+    linkedReportId: thread.linkedReportId ?? null,
+    exceptionType: thread.exceptionType ?? null,
+    sourceReferenceId: thread.sourceReferenceId ?? null,
+    priority: thread.priority ?? "routine",
+    regulated: thread.regulated ?? false,
+    broadcast: thread.broadcast ?? false,
+    retentionUntil: thread.retentionUntil ?? null,
+    ...extra,
+  };
+}
+
+function resolveParticipantUserIds(db: Database, user: User, requestedIds: string[], threadType: string) {
+  const participantUserIds = uniqueStrings([user._id, ...requestedIds]);
+  const unknownUserId = participantUserIds.find(
+    (userId) => !db.users.some((entry) => entry._id === userId),
+  );
+  if (unknownUserId) {
+    throw new Error(`Participant user ${unknownUserId} was not found`);
+  }
+  if (threadType === "direct" && participantUserIds.filter((userId) => userId !== user._id).length < 1) {
+    throw new Error("Direct messages require at least one recipient");
+  }
+  return participantUserIds;
+}
+
+function addCommunicationNotification(
+  db: Database,
+  input: {
+    title: string;
+    body: string;
+    audienceRoles?: UserRole[] | null;
+    audienceUserIds?: string[] | null;
+    siteId?: string | null;
+  },
+) {
+  const timestamp = now();
+  db.notifications.unshift({
+    _id: createId(),
+    title: input.title,
+    body: input.body,
+    read: false,
+    audienceRoles: input.audienceRoles ?? null,
+    audienceUserIds: input.audienceUserIds ?? null,
+    siteId: input.siteId ?? null,
+    readBy: [],
+    createdAt: timestamp,
+    updatedAt: timestamp,
+  });
+  return db.notifications[0];
+}
+
+function audienceRolesForDepartments(departments: string[]) {
+  return ALL_AUTHENTICATED_ROLES.filter((role) =>
+    departments.some(
+      (department) =>
+        ROLE_DEPARTMENT_ALIASES[role].some(
+          (alias) => alias.toLowerCase() === department.toLowerCase(),
+        ) || role.toLowerCase() === department.toLowerCase(),
+    ),
+  );
+}
+
+function createExceptionCommunication(
+  db: Database,
+  req: AuthRequest,
+  user: User,
+  input: {
+    title: string;
+    body: string;
+    exceptionType: CommunicationExceptionType;
+    departments?: string[];
+    participantUserIds?: string[];
+    priority?: CommunicationPriority;
+    sourceReferenceId?: string | null;
+  } & CommunicationLinkInput,
+) {
+  if (
+    input.sourceReferenceId &&
+    db.internalChatThreads.some(
+      (thread) =>
+        thread.threadType === "exception" &&
+        thread.exceptionType === input.exceptionType &&
+        thread.sourceReferenceId === input.sourceReferenceId,
+    )
+  ) {
+    return null;
+  }
+  const links = normalizeCommunicationLinks(db, input);
+  const departments = uniqueStrings([
+    ...(input.departments ?? []),
+    ...DEFAULT_EXCEPTION_DEPARTMENTS[input.exceptionType],
+  ]);
+  const participantUserIds = resolveParticipantUserIds(
+    db,
+    user,
+    input.participantUserIds ?? [],
+    "exception",
+  );
+  const timestamp = now();
+  const thread: InternalChatThread = {
+    _id: createId(),
+    title: input.title,
+    department: departments[0] ?? "admin",
+    departments: departments.length ? departments : ["admin"],
+    threadType: "exception",
+    participantUserIds,
+    audienceRoles: audienceRolesForDepartments(departments),
+    ...links,
+    exceptionType: input.exceptionType,
+    sourceReferenceId: input.sourceReferenceId ?? null,
+    priority: input.priority === "routine" ? "urgent" : input.priority ?? "urgent",
+    regulated: true,
+    broadcast: false,
+    retentionUntil: defaultCommunicationRetentionUntil(),
+    closedAt: null,
+    closedBy: null,
+    createdBy: user._id,
+    lastMessageAt: timestamp,
+    createdAt: timestamp,
+    updatedAt: timestamp,
+  };
+  const message: InternalChatMessage = {
+    _id: createId(),
+    threadId: thread._id,
+    senderId: user._id,
+    senderName: user.name,
+    senderRole: user.role,
+    body: input.body,
+    messageType: "exception",
+    regulated: true,
+    mandatoryRead: true,
+    attachments: [],
+    readBy: [{ userId: user._id, readAt: timestamp }],
+    createdAt: timestamp,
+    updatedAt: timestamp,
+  };
+  db.internalChatThreads.unshift(thread);
+  db.internalChatMessages.push(message);
+  const notification = addCommunicationNotification(db, {
+    title: thread.title,
+    body: message.body,
+    audienceRoles: thread.audienceRoles,
+    audienceUserIds: participantUserIds,
+    siteId: user.siteId ?? null,
+  });
+  audit(db, req, {
+    module: "Communication",
+    action: "create_exception_alert",
+    targetId: thread._id,
+    orderId: thread.linkedOrderId ?? null,
+    summary: `${input.exceptionType.replace(/_/g, " ")} exception alert created`,
+    metadata: communicationAuditMetadata(thread, {
+      messageId: message._id,
+      notificationId: notification._id,
+    }),
+  });
+  return { thread, message, notification };
+}
 
 function barcodePrimaryBcid(barcode: BarcodeRecord) {
   if (barcode.symbology === "qr") return "qrcode";
@@ -971,34 +1384,106 @@ export function registerProductionRoutes(app: express.Express) {
     res.json(threads);
   });
 
+  app.get("/api/communications/users", requireRoles(...ALL_AUTHENTICATED_ROLES), async (req: AuthRequest, res) => {
+    const scopedDb = scopeDbForUser(await loadDb(), ensureUser(req));
+    res.json(
+      scopedDb.users
+        .filter((entry) => entry.active)
+        .map((entry) => ({
+          _id: entry._id,
+          name: entry.name,
+          role: entry.role,
+          siteId: entry.siteId ?? null,
+        })),
+    );
+  });
+
   app.post("/api/communications/threads", requireRoles(...ALL_AUTHENTICATED_ROLES), async (req: AuthRequest, res) => {
     const parsed = threadSchema.safeParse(req.body);
     if (!parsed.success) {
       return res.status(400).json({ message: "Invalid chat thread payload" });
     }
     const user = ensureUser(req);
-    const created = await updateDb((db) => {
-      const participantUserIds = Array.from(new Set([user._id, ...parsed.data.participantUserIds]));
-      const thread: InternalChatThread = {
-        _id: createId(),
-        title: parsed.data.title,
-        department: parsed.data.department,
-        participantUserIds,
-        createdBy: user._id,
-        lastMessageAt: null,
-        createdAt: now(),
-        updatedAt: now(),
-      };
-      db.internalChatThreads.unshift(thread);
-      audit(db, req, {
-        module: "Communication",
-        action: "create_chat_thread",
-        targetId: thread._id,
-        summary: `Chat thread ${thread.title} created`,
+    try {
+      const created = await updateDb((db) => {
+        if (
+          parsed.data.threadType === "broadcast" &&
+          user.role !== "admin" &&
+          user.role !== "super_admin"
+        ) {
+          throw new Error("Only admin or quality-authorized users can create broadcast notices");
+        }
+        if (parsed.data.threadType === "exception" && !parsed.data.exceptionType) {
+          throw new Error("Exception threads require an exception type");
+        }
+
+        const links = normalizeCommunicationLinks(db, parsed.data);
+        const departments = uniqueStrings([
+          ...parsed.data.departments,
+          parsed.data.department ?? undefined,
+          ...(parsed.data.threadType === "exception" && parsed.data.exceptionType
+            ? DEFAULT_EXCEPTION_DEPARTMENTS[parsed.data.exceptionType]
+            : []),
+        ]);
+        const resolvedDepartments = departments.length ? departments : [user.role];
+        const participantUserIds = resolveParticipantUserIds(
+          db,
+          user,
+          parsed.data.participantUserIds,
+          parsed.data.threadType,
+        );
+        const timestamp = now();
+        const regulated = parsed.data.regulated || parsed.data.threadType === "exception";
+        const thread: InternalChatThread = {
+          _id: createId(),
+          title: parsed.data.title,
+          department: resolvedDepartments[0],
+          departments: resolvedDepartments,
+          threadType: parsed.data.threadType,
+          participantUserIds,
+          audienceRoles:
+            parsed.data.audienceRoles ??
+            (parsed.data.threadType === "broadcast" ? [...ALL_AUTHENTICATED_ROLES] : null),
+          ...links,
+          exceptionType: parsed.data.exceptionType ?? null,
+          sourceReferenceId: null,
+          priority:
+            parsed.data.threadType === "exception" && parsed.data.priority === "routine"
+              ? "urgent"
+              : parsed.data.priority,
+          regulated,
+          broadcast: parsed.data.broadcast ?? parsed.data.threadType === "broadcast",
+          retentionUntil: parsed.data.retentionUntil ?? (regulated ? defaultCommunicationRetentionUntil() : null),
+          closedAt: null,
+          closedBy: null,
+          createdBy: user._id,
+          lastMessageAt: null,
+          createdAt: timestamp,
+          updatedAt: timestamp,
+        };
+        db.internalChatThreads.unshift(thread);
+        if (thread.broadcast) {
+          addCommunicationNotification(db, {
+            title: `Broadcast: ${thread.title}`,
+            body: `Broadcast thread opened by ${actorName(req)}`,
+            audienceRoles: thread.audienceRoles ?? [...ALL_AUTHENTICATED_ROLES],
+            siteId: user.siteId ?? null,
+          });
+        }
+        audit(db, req, {
+          module: "Communication",
+          action: `create_${thread.threadType ?? "department"}_thread`,
+          targetId: thread._id,
+          orderId: thread.linkedOrderId ?? null,
+          summary: `Communication thread ${thread.title} created`,
+          metadata: communicationAuditMetadata(thread),
+        });
+        return thread;
       });
-      return thread;
-    });
-    res.status(201).json(created);
+      res.status(201).json(created);
+    } catch (error) {
+      res.status(400).json({ message: (error as Error).message });
+    }
   });
 
   app.get("/api/communications/threads/:id/messages", requireRoles(...ALL_AUTHENTICATED_ROLES), async (req: AuthRequest, res) => {
@@ -1026,6 +1511,14 @@ export function registerProductionRoutes(app: express.Express) {
       if (!thread || !userCanAccessThread(user, thread)) {
         throw new Error("Chat thread not found");
       }
+      const timestamp = now();
+      const messageType =
+        thread.threadType === "broadcast"
+          ? "broadcast"
+          : thread.threadType === "exception"
+            ? "exception"
+            : parsed.data.messageType;
+      const regulated = Boolean(thread.regulated || parsed.data.regulated || parsed.data.mandatoryRead);
       const message: InternalChatMessage = {
         _id: createId(),
         threadId: thread._id,
@@ -1033,18 +1526,35 @@ export function registerProductionRoutes(app: express.Express) {
         senderName: user.name,
         senderRole: user.role,
         body: parsed.data.body,
-        readBy: [{ userId: user._id, readAt: now() }],
-        createdAt: now(),
-        updatedAt: now(),
+        messageType,
+        regulated,
+        mandatoryRead: Boolean(regulated || parsed.data.mandatoryRead),
+        attachments: [],
+        readBy: [{ userId: user._id, readAt: timestamp }],
+        createdAt: timestamp,
+        updatedAt: timestamp,
       };
       db.internalChatMessages.push(message);
       thread.lastMessageAt = message.createdAt;
       thread.updatedAt = message.createdAt;
+      if (messageType === "broadcast") {
+        addCommunicationNotification(db, {
+          title: thread.title,
+          body: message.body,
+          audienceRoles: thread.audienceRoles ?? [...ALL_AUTHENTICATED_ROLES],
+          siteId: user.siteId ?? null,
+        });
+      }
       audit(db, req, {
         module: "Communication",
         action: "send_chat_message",
         targetId: message._id,
+        orderId: thread.linkedOrderId ?? null,
         summary: `Internal chat message sent in ${thread.title}`,
+        metadata: communicationAuditMetadata(thread, {
+          messageType: message.messageType,
+          mandatoryRead: message.mandatoryRead,
+        }),
       });
       return message;
     }).catch((error: Error) => {
@@ -1063,11 +1573,28 @@ export function registerProductionRoutes(app: express.Express) {
         throw new Error("Chat thread not found");
       }
       const threadMessages = db.internalChatMessages.filter((message) => message.threadId === thread._id);
+      const readAt = now();
+      let readCount = 0;
+      let regulatedReadCount = 0;
       for (const message of threadMessages) {
         if (!message.readBy.some((entry) => entry.userId === user._id)) {
-          message.readBy.push({ userId: user._id, readAt: now() });
-          message.updatedAt = now();
+          message.readBy.push({ userId: user._id, readAt });
+          message.updatedAt = readAt;
+          readCount += 1;
+          if (message.regulated || message.mandatoryRead || thread.regulated) {
+            regulatedReadCount += 1;
+          }
         }
+      }
+      if (readCount > 0) {
+        audit(db, req, {
+          module: "Communication",
+          action: regulatedReadCount > 0 ? "acknowledge_regulated_messages" : "mark_thread_read",
+          targetId: thread._id,
+          orderId: thread.linkedOrderId ?? null,
+          summary: `${readCount} communication message read receipt${readCount === 1 ? "" : "s"} recorded`,
+          metadata: communicationAuditMetadata(thread, { readCount, regulatedReadCount }),
+        });
       }
       return threadMessages;
     }).catch((error: Error) => {
@@ -1077,6 +1604,441 @@ export function registerProductionRoutes(app: express.Express) {
     if (!messages) return;
     res.json(messages);
   });
+
+  app.post("/api/communications/broadcasts", requireRoles("admin", "super_admin"), async (req: AuthRequest, res) => {
+    const parsed = broadcastSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ message: "Invalid broadcast payload" });
+    }
+    const user = ensureUser(req);
+    try {
+      const created = await updateDb((db) => {
+        const links = normalizeCommunicationLinks(db, parsed.data);
+        const timestamp = now();
+        const regulated = parsed.data.regulated || parsed.data.mandatoryRead;
+        const departments = uniqueStrings([...parsed.data.departments, "admin", "quality"]);
+        const thread: InternalChatThread = {
+          _id: createId(),
+          title: parsed.data.title,
+          department: departments[0],
+          departments,
+          threadType: "broadcast",
+          participantUserIds: [user._id],
+          audienceRoles: parsed.data.audienceRoles,
+          ...links,
+          exceptionType: null,
+          sourceReferenceId: null,
+          priority: parsed.data.priority,
+          regulated,
+          broadcast: true,
+          retentionUntil: parsed.data.retentionUntil ?? (regulated ? defaultCommunicationRetentionUntil() : null),
+          closedAt: null,
+          closedBy: null,
+          createdBy: user._id,
+          lastMessageAt: timestamp,
+          createdAt: timestamp,
+          updatedAt: timestamp,
+        };
+        const message: InternalChatMessage = {
+          _id: createId(),
+          threadId: thread._id,
+          senderId: user._id,
+          senderName: user.name,
+          senderRole: user.role,
+          body: parsed.data.body,
+          messageType: "broadcast",
+          regulated,
+          mandatoryRead: Boolean(parsed.data.mandatoryRead || regulated),
+          attachments: [],
+          readBy: [{ userId: user._id, readAt: timestamp }],
+          createdAt: timestamp,
+          updatedAt: timestamp,
+        };
+        db.internalChatThreads.unshift(thread);
+        db.internalChatMessages.push(message);
+        const notification = addCommunicationNotification(db, {
+          title: thread.title,
+          body: message.body,
+          audienceRoles: thread.audienceRoles,
+          siteId: user.siteId ?? null,
+        });
+        audit(db, req, {
+          module: "Communication",
+          action: "create_broadcast_notice",
+          targetId: thread._id,
+          orderId: thread.linkedOrderId ?? null,
+          summary: `Broadcast notice ${thread.title} created`,
+          metadata: communicationAuditMetadata(thread, {
+            messageId: message._id,
+            notificationId: notification._id,
+          }),
+        });
+        return { thread, message, notification };
+      });
+      res.status(201).json(created);
+    } catch (error) {
+      res.status(400).json({ message: (error as Error).message });
+    }
+  });
+
+  app.post("/api/communications/exceptions", requireRoles(...ALL_AUTHENTICATED_ROLES), async (req: AuthRequest, res) => {
+    const parsed = exceptionAlertSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ message: "Invalid exception alert payload" });
+    }
+    const user = ensureUser(req);
+    try {
+      const created = await updateDb((db) => {
+        const links = normalizeCommunicationLinks(db, parsed.data);
+        const departments = uniqueStrings([
+          ...parsed.data.departments,
+          ...DEFAULT_EXCEPTION_DEPARTMENTS[parsed.data.exceptionType],
+        ]);
+        const participantUserIds = resolveParticipantUserIds(
+          db,
+          user,
+          parsed.data.participantUserIds,
+          "exception",
+        );
+        const timestamp = now();
+        const audienceRoles = ALL_AUTHENTICATED_ROLES.filter((role) =>
+          departments.some((department) =>
+            ROLE_DEPARTMENT_ALIASES[role].some(
+              (alias) => alias.toLowerCase() === department.toLowerCase(),
+            ) || role.toLowerCase() === department.toLowerCase(),
+          ),
+        );
+        const thread: InternalChatThread = {
+          _id: createId(),
+          title: parsed.data.title ?? `Exception alert: ${parsed.data.exceptionType.replace(/_/g, " ")}`,
+          department: departments[0],
+          departments,
+          threadType: "exception",
+          participantUserIds,
+          audienceRoles: audienceRoles.length ? audienceRoles : null,
+          ...links,
+          exceptionType: parsed.data.exceptionType,
+          sourceReferenceId: null,
+          priority: parsed.data.priority === "routine" ? "urgent" : parsed.data.priority,
+          regulated: true,
+          broadcast: false,
+          retentionUntil: parsed.data.retentionUntil ?? defaultCommunicationRetentionUntil(),
+          closedAt: null,
+          closedBy: null,
+          createdBy: user._id,
+          lastMessageAt: timestamp,
+          createdAt: timestamp,
+          updatedAt: timestamp,
+        };
+        const message: InternalChatMessage = {
+          _id: createId(),
+          threadId: thread._id,
+          senderId: user._id,
+          senderName: user.name,
+          senderRole: user.role,
+          body: parsed.data.body,
+          messageType: "exception",
+          regulated: true,
+          mandatoryRead: true,
+          attachments: [],
+          readBy: [{ userId: user._id, readAt: timestamp }],
+          createdAt: timestamp,
+          updatedAt: timestamp,
+        };
+        db.internalChatThreads.unshift(thread);
+        db.internalChatMessages.push(message);
+        const notification = addCommunicationNotification(db, {
+          title: thread.title,
+          body: message.body,
+          audienceRoles: thread.audienceRoles,
+          audienceUserIds: participantUserIds,
+          siteId: user.siteId ?? null,
+        });
+        audit(db, req, {
+          module: "Communication",
+          action: "create_exception_alert",
+          targetId: thread._id,
+          orderId: thread.linkedOrderId ?? null,
+          summary: `${parsed.data.exceptionType.replace(/_/g, " ")} exception alert created`,
+          metadata: communicationAuditMetadata(thread, {
+            messageId: message._id,
+            notificationId: notification._id,
+          }),
+        });
+        return { thread, message, notification };
+      });
+      res.status(201).json(created);
+    } catch (error) {
+      res.status(400).json({ message: (error as Error).message });
+    }
+  });
+
+  app.post("/api/communications/exceptions/sync", requireRoles("admin", "super_admin"), async (req: AuthRequest, res) => {
+    const user = ensureUser(req);
+    const result = await updateDb((db) => {
+      const created: Array<ReturnType<typeof createExceptionCommunication>> = [];
+      const pushCreated = (entry: ReturnType<typeof createExceptionCommunication>) => {
+        if (entry) created.push(entry);
+      };
+
+      for (const sample of db.samples.filter((entry) => entry.status === "rejected" || entry.rejectionReason)) {
+        pushCreated(
+          createExceptionCommunication(db, req, user, {
+            title: `Rejected sample: ${sample.label}`,
+            body: sample.rejectionReason ?? `Sample ${sample.label} was rejected and needs resolution.`,
+            exceptionType: "rejected_sample",
+            linkedOrderId: sample.orderId,
+            linkedSpecimenId: sample._id,
+            sourceReferenceId: `sample:${sample._id}:rejected`,
+            priority: "critical",
+          }),
+        );
+      }
+
+      for (const order of db.orders.filter(
+        (entry) =>
+          entry.status !== "cancelled" &&
+          entry.status !== "released" &&
+          (entry.financialClearance === "pending" || entry.financialClearance === "blocked"),
+      )) {
+        const invoice = db.invoices.find((entry) => entry.orderId === order._id);
+        pushCreated(
+          createExceptionCommunication(db, req, user, {
+            title: `Missing payment: ${order.orderNumber}`,
+            body: `Order ${order.orderNumber} is not financially cleared.`,
+            exceptionType: "missing_payment",
+            linkedOrderId: order._id,
+            linkedInvoiceId: invoice?._id ?? null,
+            sourceReferenceId: `order:${order._id}:missing_payment`,
+            priority: order.financialClearance === "blocked" ? "critical" : "urgent",
+          }),
+        );
+      }
+
+      for (const event of db.qualityEvents.filter(
+        (entry) => entry.eventType === "qc" && entry.status !== "closed",
+      )) {
+        pushCreated(
+          createExceptionCommunication(db, req, user, {
+            title: `Failed QC: ${event.module}`,
+            body: event.summary,
+            exceptionType: "failed_qc",
+            linkedOrderId: event.linkedOrderId ?? null,
+            linkedSpecimenId: event.linkedSampleId ?? null,
+            sourceReferenceId: `quality:${event._id}:failed_qc`,
+            priority: "critical",
+          }),
+        );
+      }
+
+      for (const alert of db.tatAlerts.filter((entry) => entry.status === "risk" || entry.status === "breach")) {
+        pushCreated(
+          createExceptionCommunication(db, req, user, {
+            title: `Delayed TAT: ${alert.phase}`,
+            body: `${alert.phase} is ${alert.status}; ${alert.actualMinutes} minutes elapsed against ${alert.slaMinutes} minute SLA.`,
+            exceptionType: "delayed_tat",
+            linkedOrderId: alert.orderId ?? null,
+            sourceReferenceId: `tat:${alert._id}:delayed_tat`,
+            priority: alert.status === "breach" ? "critical" : "urgent",
+          }),
+        );
+      }
+
+      const sampleOrderIds = new Set(db.samples.map((sample) => sample.orderId));
+      for (const order of db.orders.filter(
+        (entry) =>
+          !sampleOrderIds.has(entry._id) &&
+          ["received", "in_progress", "review", "completed"].includes(entry.status),
+      )) {
+        pushCreated(
+          createExceptionCommunication(db, req, user, {
+            title: `Missing specimen: ${order.orderNumber}`,
+            body: `Order ${order.orderNumber} has no linked specimen record.`,
+            exceptionType: "missing_specimen",
+            linkedOrderId: order._id,
+            sourceReferenceId: `order:${order._id}:missing_specimen`,
+            priority: "urgent",
+          }),
+        );
+      }
+
+      for (const log of db.communicationLogs.filter(
+        (entry) =>
+          entry.channel === "portal" &&
+          entry.mandatory &&
+          entry.status !== "read" &&
+          entry.status !== "acknowledged",
+      )) {
+        pushCreated(
+          createExceptionCommunication(db, req, user, {
+            title: `Unread clinician response: ${log.recipient}`,
+            body: log.message,
+            exceptionType: "unread_clinician_response",
+            linkedOrderId: log.orderId,
+            sourceReferenceId: `communication:${log._id}:unread_clinician_response`,
+            priority: "urgent",
+          }),
+        );
+      }
+
+      audit(db, req, {
+        module: "Communication",
+        action: "sync_exception_alerts",
+        targetId: "communications-exceptions",
+        summary: `${created.length} communication exception alert${created.length === 1 ? "" : "s"} created from source records`,
+        metadata: {
+          createdThreadIds: created.map((entry) => entry?.thread._id).filter(Boolean),
+        },
+      });
+      return { createdCount: created.length, created };
+    });
+    res.json(result);
+  });
+
+  app.post(
+    "/api/communications/threads/:id/attachments",
+    requireRoles(...ALL_AUTHENTICATED_ROLES),
+    documentUpload.single("file"),
+    async (req: AuthRequest, res) => {
+      const parsed = attachmentSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ message: "Invalid attachment payload" });
+      }
+      const user = ensureUser(req);
+      try {
+        const created = await updateDb(async (db) => {
+          const thread = db.internalChatThreads.find((entry) => entry._id === req.params.id);
+          if (!thread || !userCanAccessThread(user, thread)) {
+            throw new Error("Chat thread not found");
+          }
+          const message = db.internalChatMessages.find(
+            (entry) => entry._id === parsed.data.messageId && entry.threadId === thread._id,
+          );
+          if (!message) {
+            throw new Error("Message not found in communication thread");
+          }
+          const timestamp = now();
+          const documentId = createId();
+          const fileVersion = await saveDocumentBinary({
+            documentId,
+            file: req.file ?? null,
+            uploadedBy: user._id,
+            version: "1.0",
+          });
+          const document: DocumentRecord = {
+            _id: documentId,
+            title: `Communication attachment: ${fileVersion.originalFilename}`,
+            category: "Communication",
+            version: "1.0",
+            owner: "Communication",
+            accessLevel: "controlled",
+            trainingDueAt: null,
+            originalFilename: fileVersion.originalFilename,
+            storedFilename: fileVersion.storedFilename,
+            mimeType: fileVersion.mimeType,
+            sizeBytes: fileVersion.sizeBytes,
+            checksumSha256: fileVersion.checksumSha256,
+            storageProvider: fileVersion.storageProvider,
+            storagePath: fileVersion.storagePath,
+            uploadedBy: fileVersion.uploadedBy,
+            approvalStatus: "approved",
+            approvedBy: user._id,
+            approvedAt: timestamp,
+            approvalNotes: "Stored as a regulated communication attachment.",
+            trainingAttestations: [],
+            versions: [
+              {
+                _id: fileVersion.versionId,
+                version: fileVersion.version,
+                originalFilename: fileVersion.originalFilename,
+                storedFilename: fileVersion.storedFilename,
+                mimeType: fileVersion.mimeType,
+                sizeBytes: fileVersion.sizeBytes,
+                checksumSha256: fileVersion.checksumSha256,
+                storageProvider: fileVersion.storageProvider,
+                storagePath: fileVersion.storagePath,
+                uploadedBy: fileVersion.uploadedBy,
+                uploadedAt: fileVersion.uploadedAt,
+              },
+            ],
+            createdAt: timestamp,
+            updatedAt: timestamp,
+          };
+          const attachment: CommunicationAttachment = {
+            _id: createId(),
+            filename: fileVersion.originalFilename,
+            mimeType: fileVersion.mimeType,
+            sizeBytes: fileVersion.sizeBytes,
+            checksumSha256: fileVersion.checksumSha256,
+            storageProvider: fileVersion.storageProvider,
+            storagePath: fileVersion.storagePath,
+            documentId,
+            uploadedBy: user._id,
+            uploadedAt: timestamp,
+            retentionUntil:
+              parsed.data.retentionUntil ??
+              thread.retentionUntil ??
+              defaultCommunicationRetentionUntil(),
+          };
+          db.documents.unshift(document);
+          message.attachments = [...(message.attachments ?? []), attachment];
+          message.updatedAt = timestamp;
+          thread.updatedAt = timestamp;
+          audit(db, req, {
+            module: "Communication",
+            action: "upload_attachment",
+            targetId: attachment._id,
+            orderId: thread.linkedOrderId ?? null,
+            summary: `Attachment ${attachment.filename} uploaded to ${thread.title}`,
+            metadata: communicationAuditMetadata(thread, {
+              messageId: message._id,
+              documentId,
+              checksumSha256: attachment.checksumSha256,
+              retentionUntil: attachment.retentionUntil,
+            }),
+          });
+          return { attachment, message, document };
+        });
+        res.status(201).json(created);
+      } catch (error) {
+        res.status(400).json({ message: (error as Error).message });
+      }
+    },
+  );
+
+  app.get(
+    "/api/communications/threads/:threadId/attachments/:attachmentId/file",
+    requireRoles(...ALL_AUTHENTICATED_ROLES),
+    async (req: AuthRequest, res) => {
+      const user = ensureUser(req);
+      const db = await loadDb();
+      const thread = db.internalChatThreads.find((entry) => entry._id === req.params.threadId);
+      if (!thread || !userCanAccessThread(user, thread)) {
+        return res.status(404).json({ message: "Attachment not found" });
+      }
+      const message = db.internalChatMessages.find(
+        (entry) =>
+          entry.threadId === thread._id &&
+          (entry.attachments ?? []).some((attachment) => attachment._id === req.params.attachmentId),
+      );
+      const attachment = message?.attachments?.find((entry) => entry._id === req.params.attachmentId) ?? null;
+      const document = attachment?.documentId
+        ? db.documents.find((entry) => entry._id === attachment.documentId)
+        : null;
+      if (!attachment || !document) {
+        return res.status(404).json({ message: "Attachment not found" });
+      }
+      try {
+        const file = await readDocumentBinary(document);
+        const filename = attachment.filename.replace(/["\r\n]/g, "_");
+        res.setHeader("Content-Type", attachment.mimeType || "application/octet-stream");
+        res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+        res.send(file);
+      } catch (error) {
+        res.status(404).json({ message: (error as Error).message });
+      }
+    },
+  );
 
   app.get("/api/communications/stream", requireRoles(...ALL_AUTHENTICATED_ROLES), async (req: AuthRequest, res) => {
     const user = ensureUser(req);

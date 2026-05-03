@@ -1,6 +1,16 @@
 # Production Hardening Update
 
-Updated: 2026-04-18
+Updated: 2026-05-03
+
+## 2026-05-03 Department Communications E2E
+
+- Internal communications now support department threads, direct-message threads with recipient policy checks, admin broadcast notices, and regulated exception-alert threads.
+- Threads can be explicitly linked to orders, specimens, order items, invoices, and reports, with cross-entity validation before persistence.
+- Exception alert creation supports rejected sample, missing payment, failed QC, delayed TAT, missing specimen, and unread clinician response categories.
+- Admin/super-admin exception sync can derive alert threads idempotently from rejected samples, non-cleared orders, open QC events, TAT risk/breach records, missing specimens, and unread mandatory portal communications.
+- Regulated messages store read receipts, and read acknowledgements are recorded in the immutable audit chain.
+- Communication attachments use the existing DMS binary storage path, checksum capture, controlled document metadata, download access checks, and retention timestamps.
+- The frontend communications page now exposes multi-department routing, direct recipients, broadcast audiences, exception categories, linked entity fields, regulated read receipt controls, and message attachments.
 
 ## 2026-04-18 Modules 1-10 Hardening
 
@@ -66,6 +76,7 @@ Backend tests now cover:
 - DMS upload, replace, and download
 - barcode enforcement on histology progression
 - multi-test single-order routing with item-level plans, shared specimen links, explicit IHC dependency checks, and final release gating
+- department communications with linked regulated threads, direct-message policy rejection, broadcasts, exception alerts and sync, read receipts, attachment upload/download, and audit verification
 - public registration closure for production
 - connector readiness and simulated vendor tests
 - logout/session revocation

@@ -571,6 +571,197 @@ describe("production hardening", () => {
     assert.match(mfaSetup.body.otpauthUrl, /^otpauth:\/\/totp\//);
   });
 
+  test("department communications support linked regulated threads, broadcasts, exceptions, read receipts, and attachments", async () => {
+    const pathologistToken = await loginUser("pathologist@xpath.lims");
+    const technicianToken = await loginUser("technician@xpath.lims");
+
+    const orderDetail = await request
+      .get(`/api/orders/${createdOrderId}`)
+      .set("Authorization", `Bearer ${authToken}`);
+    assert.equal(orderDetail.status, 200);
+    const orderItemId = orderDetail.body.workflowPlan.itemPlans[0]?.orderItemId as string | undefined;
+    assert.ok(orderItemId);
+    const specimenId = (orderDetail.body.sample?._id ?? createdAccessionId) as string;
+    assert.ok(specimenId);
+
+    const invoices = await request
+      .get("/api/invoices")
+      .set("Authorization", `Bearer ${authToken}`);
+    assert.equal(invoices.status, 200);
+    const invoice = invoices.body.find((entry: { orderId: string }) => entry.orderId === createdOrderId);
+
+    const directRejected = await request
+      .post("/api/communications/threads")
+      .set("Authorization", `Bearer ${authToken}`)
+      .send({
+        title: "Invalid direct communication",
+        threadType: "direct",
+        departments: ["histology"],
+        participantUserIds: [],
+      });
+    assert.equal(directRejected.status, 400);
+
+    const linkedThread = await request
+      .post("/api/communications/threads")
+      .set("Authorization", `Bearer ${authToken}`)
+      .send({
+        title: "Specimen handoff escalation",
+        threadType: "department",
+        departments: ["receptionist", "histology"],
+        participantUserIds: [],
+        linkedOrderId: createdOrderId,
+        linkedSpecimenId: specimenId,
+        linkedOrderItemId: orderItemId,
+        linkedInvoiceId: invoice?._id,
+        priority: "urgent",
+        regulated: true,
+      });
+    assert.equal(linkedThread.status, 201);
+    assert.equal(linkedThread.body.threadType, "department");
+    assert.equal(linkedThread.body.linkedOrderId, createdOrderId);
+    assert.equal(linkedThread.body.linkedOrderItemId, orderItemId);
+    assert.equal(linkedThread.body.regulated, true);
+
+    const regulatedMessage = await request
+      .post(`/api/communications/threads/${linkedThread.body._id}/messages`)
+      .set("Authorization", `Bearer ${authToken}`)
+      .send({
+        body: "Histology needs accession context before continuing.",
+        mandatoryRead: true,
+      });
+    assert.equal(regulatedMessage.status, 201);
+    assert.equal(regulatedMessage.body.mandatoryRead, true);
+    assert.equal(regulatedMessage.body.regulated, true);
+
+    const pathologistRead = await request
+      .post(`/api/communications/threads/${linkedThread.body._id}/read`)
+      .set("Authorization", `Bearer ${pathologistToken}`)
+      .send({});
+    assert.equal(pathologistRead.status, 200);
+    const readMessage = pathologistRead.body.find(
+      (entry: { _id: string }) => entry._id === regulatedMessage.body._id,
+    );
+    assert.ok(readMessage);
+    assert.ok(readMessage.readBy.length >= 2);
+
+    const attachment = await request
+      .post(`/api/communications/threads/${linkedThread.body._id}/attachments`)
+      .set("Authorization", `Bearer ${authToken}`)
+      .field("messageId", regulatedMessage.body._id)
+      .attach("file", Buffer.from("handoff attachment body", "utf8"), {
+        filename: "handoff.txt",
+        contentType: "text/plain",
+      });
+    assert.equal(attachment.status, 201);
+    assert.equal(attachment.body.attachment.filename, "handoff.txt");
+    assert.equal(typeof attachment.body.attachment.checksumSha256, "string");
+    assert.ok(attachment.body.attachment.retentionUntil);
+    assert.equal(attachment.body.message.attachments.length, 1);
+
+    const download = await request
+      .get(
+        `/api/communications/threads/${linkedThread.body._id}/attachments/${attachment.body.attachment._id}/file`,
+      )
+      .set("Authorization", `Bearer ${authToken}`);
+    assert.equal(download.status, 200);
+    assert.match(download.text, /handoff attachment body/);
+
+    const rejectedBroadcast = await request
+      .post("/api/communications/broadcasts")
+      .set("Authorization", `Bearer ${technicianToken}`)
+      .send({
+        title: "Unauthorized broadcast",
+        body: "This should not be accepted.",
+        audienceRoles: ["admin"],
+      });
+    assert.equal(rejectedBroadcast.status, 403);
+
+    const broadcast = await request
+      .post("/api/communications/broadcasts")
+      .set("Authorization", `Bearer ${authToken}`)
+      .send({
+        title: "Quality broadcast",
+        body: "Quality notice for regulated handoff.",
+        departments: ["quality"],
+        audienceRoles: ["admin", "technician", "pathologist"],
+        linkedOrderId: createdOrderId,
+        priority: "critical",
+        regulated: true,
+        mandatoryRead: true,
+      });
+    assert.equal(broadcast.status, 201);
+    assert.equal(broadcast.body.thread.threadType, "broadcast");
+    assert.equal(broadcast.body.thread.broadcast, true);
+    assert.equal(broadcast.body.message.messageType, "broadcast");
+    assert.equal(broadcast.body.message.mandatoryRead, true);
+    assert.ok(broadcast.body.notification._id);
+
+    const exception = await request
+      .post("/api/communications/exceptions")
+      .set("Authorization", `Bearer ${authToken}`)
+      .send({
+        exceptionType: "missing_payment",
+        title: "Missing payment alert",
+        body: "Finance must resolve payment before release.",
+        linkedOrderId: createdOrderId,
+        linkedInvoiceId: invoice?._id,
+        priority: "critical",
+      });
+    assert.equal(exception.status, 201);
+    assert.equal(exception.body.thread.threadType, "exception");
+    assert.equal(exception.body.thread.exceptionType, "missing_payment");
+    assert.equal(exception.body.thread.regulated, true);
+    assert.equal(exception.body.message.messageType, "exception");
+    assert.equal(exception.body.message.mandatoryRead, true);
+
+    const qcEvent = await request
+      .post("/api/quality-events")
+      .set("Authorization", `Bearer ${authToken}`)
+      .send({
+        module: "Histology",
+        eventType: "qc",
+        status: "open",
+        summary: "Automated QC failure should create an exception alert.",
+        owner: "Quality",
+      });
+    assert.equal(qcEvent.status, 201);
+
+    const syncedExceptions = await request
+      .post("/api/communications/exceptions/sync")
+      .set("Authorization", `Bearer ${authToken}`)
+      .send({});
+    assert.equal(syncedExceptions.status, 200);
+    assert.equal(typeof syncedExceptions.body.createdCount, "number");
+    assert.ok(
+      syncedExceptions.body.created.some(
+        (entry: { thread: { exceptionType: string; sourceReferenceId?: string | null } }) =>
+          entry.thread.exceptionType === "failed_qc" && entry.thread.sourceReferenceId,
+      ),
+    );
+
+    const orderAudit = await request
+      .get(`/api/orders/${createdOrderId}/audit`)
+      .set("Authorization", `Bearer ${authToken}`);
+    assert.equal(orderAudit.status, 200);
+    assert.ok(
+      orderAudit.body.some((entry: { action: string }) =>
+        [
+          "create_department_thread",
+          "acknowledge_regulated_messages",
+          "upload_attachment",
+          "create_broadcast_notice",
+          "create_exception_alert",
+        ].includes(entry.action),
+      ),
+    );
+
+    const auditVerify = await request
+      .get("/api/audit/verify")
+      .set("Authorization", `Bearer ${authToken}`);
+    assert.equal(auditVerify.status, 200);
+    assert.equal(auditVerify.body.valid, true);
+  });
+
   test("module one and two governance flows enforce verification, approvals, and reversals", async () => {
     const pathologistToken = await loginUser("pathologist@xpath.lims");
     const financeToken = await loginUser("finance@xpath.lims");

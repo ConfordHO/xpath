@@ -1626,11 +1626,53 @@ export interface ValidationRule {
   updatedAt: string;
 }
 
+export type CommunicationThreadType = "department" | "direct" | "broadcast" | "exception";
+export type CommunicationPriority = "routine" | "urgent" | "critical";
+export type CommunicationLinkType = "order" | "specimen" | "order_item" | "invoice" | "report";
+export type CommunicationExceptionType =
+  | "rejected_sample"
+  | "missing_payment"
+  | "failed_qc"
+  | "delayed_tat"
+  | "missing_specimen"
+  | "unread_clinician_response";
+export type CommunicationMessageType = "message" | "broadcast" | "exception" | "system";
+
+export interface CommunicationAttachment {
+  _id: string;
+  filename: string;
+  mimeType: string;
+  sizeBytes: number;
+  checksumSha256: string;
+  storageProvider?: "local" | "s3" | null;
+  storagePath?: string | null;
+  documentId?: string | null;
+  uploadedBy: string;
+  uploadedAt: string;
+  retentionUntil: string;
+}
+
 export interface InternalChatThread {
   _id: string;
   title: string;
   department: string;
+  departments?: string[];
+  threadType?: CommunicationThreadType;
   participantUserIds: string[];
+  audienceRoles?: UserRole[] | null;
+  linkedOrderId?: string | null;
+  linkedSpecimenId?: string | null;
+  linkedOrderItemId?: string | null;
+  linkedInvoiceId?: string | null;
+  linkedReportId?: string | null;
+  exceptionType?: CommunicationExceptionType | null;
+  sourceReferenceId?: string | null;
+  priority?: CommunicationPriority;
+  regulated?: boolean;
+  broadcast?: boolean;
+  retentionUntil?: string | null;
+  closedAt?: string | null;
+  closedBy?: string | null;
   createdBy: string;
   lastMessageAt?: string | null;
   createdAt: string;
@@ -1644,6 +1686,10 @@ export interface InternalChatMessage {
   senderName: string;
   senderRole: UserRole;
   body: string;
+  messageType?: CommunicationMessageType;
+  regulated?: boolean;
+  mandatoryRead?: boolean;
+  attachments?: CommunicationAttachment[];
   readBy: Array<{
     userId: string;
     readAt: string;

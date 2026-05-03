@@ -1,6 +1,6 @@
 # X.PATH Cameroon LIMS End-to-End Implementation Specification
 
-Updated: 2026-04-26
+Updated: 2026-05-03
 
 This document revamps the attached LIMS implementation specification for the current X.PATH product direction: Cameroon launch, Maviance/manual payments, on-premise-first deployment, cloud backup/sync, modular monolith architecture, TypeScript backend, open-source OCR, immutable audit logging, and explicit end-to-end workflows for patients, walk-ins, reception, external clinicians, laboratory departments, finance, reporting, archives, and administration.
 
@@ -357,6 +357,14 @@ Required features:
 - Message read receipts for regulated workflow messages.
 - Attachments where needed, stored with audit and retention policy.
 - All communication actions recorded immutably.
+
+Implementation status: implemented end to end on 2026-05-03.
+
+- Backend APIs provide linked department/direct/broadcast/exception threads, message read acknowledgements, attachment upload/download through controlled DMS storage, and an idempotent exception-alert sync endpoint.
+- Access controls enforce participant-only direct threads, role/department thread visibility, admin/super-admin broadcast creation, and attachment download authorization.
+- Immutable audit events are recorded for thread creation, message send, regulated read acknowledgement, broadcast creation, exception creation/sync, and attachment upload.
+- Frontend communications now includes thread type, departments, direct recipients, broadcast audiences, exception category, priority, linked entity fields, regulated read controls, and attachments.
+- Hardening E2E coverage verifies linked regulated communications, direct-message policy rejection, unauthorized broadcast rejection, read receipts, attachment storage/download, broadcasts, manual exceptions, synced failed-QC exceptions, and audit-chain validity.
 
 ## 10. Audit and Admin Logs
 
