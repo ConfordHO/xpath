@@ -101,6 +101,8 @@ export const AUTH_RATE_LIMIT_WINDOW_MS = Number(
   process.env.AUTH_RATE_LIMIT_WINDOW_MS ?? 15 * 60_000,
 );
 export const AUTH_RATE_LIMIT_MAX = Number(process.env.AUTH_RATE_LIMIT_MAX ?? 20);
+export const PUBLIC_REGISTRATION_ENABLED =
+  process.env.PUBLIC_REGISTRATION_ENABLED?.trim().toLowerCase() === "true";
 export const HL7_MLLP_ENABLED = process.env.HL7_MLLP_ENABLED?.trim() !== "false";
 export const HL7_MLLP_HOST = process.env.HL7_MLLP_HOST?.trim() || "0.0.0.0";
 export const HL7_MLLP_PORT = Number(process.env.HL7_MLLP_PORT ?? 2575);
@@ -227,8 +229,16 @@ export const OFFLINE_SYNC_ENABLED =
   process.env.OFFLINE_SYNC_ENABLED?.trim().toLowerCase() !== "false";
 
 export function isAllowedOrigin(origin?: string | null) {
-  if (!origin || CORS_ORIGINS.length === 0 || CORS_ORIGINS.includes("*")) {
+  if (!origin) {
     return true;
+  }
+
+  if (CORS_ORIGINS.length === 0) {
+    return NODE_ENV !== "production";
+  }
+
+  if (CORS_ORIGINS.includes("*")) {
+    return NODE_ENV !== "production";
   }
 
   if (CORS_ORIGINS.includes(origin)) {

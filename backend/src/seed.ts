@@ -44,6 +44,8 @@ function createCleanSeedDatabase(db: Database): Database {
     specimenImages: [],
     orderNumberReservations: [],
     orders: [],
+    orderItems: [],
+    specimenAssignments: [],
     payments: [],
     mavianceTransactions: [],
     accessions: [],
@@ -699,6 +701,8 @@ export function createSeedDatabase(): Database {
         updatedAt: "2026-03-23T07:14:01.749Z",
       },
     ],
+    orderItems: [],
+    specimenAssignments: [],
     payments: [
       {
         _id: "pay-order-1",

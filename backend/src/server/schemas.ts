@@ -6,6 +6,14 @@ export const loginSchema = z.object({
   mfaToken: z.string().trim().min(6).max(10).optional(),
 });
 
+export const strongPasswordSchema = z
+  .string()
+  .min(10)
+  .regex(/[a-z]/)
+  .regex(/[A-Z]/)
+  .regex(/[0-9]/)
+  .regex(/[^A-Za-z0-9]/);
+
 export const patientSchema = z.object({
   firstName: z.string().min(1),
   lastName: z.string().min(1),
@@ -47,7 +55,7 @@ export const userSchema = z.object({
   preferredLocale: z.enum(["en", "fr"]).optional(),
   siteId: z.string().nullable().optional(),
   active: z.boolean().default(true),
-  password: z.string().min(6),
+  password: strongPasswordSchema,
 });
 
 export const doctorSchema = z.object({
