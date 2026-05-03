@@ -29,7 +29,14 @@ export function signToken(user: User, sessionId: string) {
 }
 
 export async function verifyPassword(password: string, hash: string) {
-  return bcrypt.compare(password, hash);
+  if (!hash || typeof hash !== "string") {
+    return false;
+  }
+  try {
+    return await bcrypt.compare(password, hash);
+  } catch {
+    return false;
+  }
 }
 
 export function normalizeSiteId(siteId?: string | null) {

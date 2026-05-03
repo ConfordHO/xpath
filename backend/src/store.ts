@@ -370,8 +370,14 @@ function normalizeDatabase(raw: Partial<Database>): Database {
       (item) => !legacyTestIds.has(item._id) && !canonicalTestCodes.has(item.code),
     ),
   ];
+  const seedUserByEmail = new Map(seed.users.map((user) => [user.email.toLowerCase(), user]));
   const users = mergeByKey(raw.users, seed.users, (item) => item.email).map((user) => ({
     ...user,
+    passwordHash: user.passwordHash ?? seedUserByEmail.get(user.email.toLowerCase())?.passwordHash ?? "",
+    active:
+      user.passwordHash || seedUserByEmail.has(user.email.toLowerCase())
+        ? user.active
+        : false,
     preferredLocale:
       user.preferredLocale ??
       localeFromLanguage(user.preferredLanguage) ??
