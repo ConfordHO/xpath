@@ -3,6 +3,7 @@ import { Navigate, Route, Routes } from 'react-router-dom'
 import {
   AnalyticalOperationsPage,
   AccountingPage,
+  CameroonE2EPage,
   ClinicalOperationsPage,
   CommunicationsPage,
   CreateOrderPage,
@@ -114,6 +115,7 @@ export function AppRoutes() {
           <Route path="/operations/results-quality" element={<ResultsQualityPage />} />
           <Route path="/operations/governance" element={<GovernanceOperationsPage />} />
           <Route path="/operations/enterprise-admin" element={<EnterpriseAdminPage />} />
+          <Route path="/operations/cameroon-e2e" element={<CameroonE2EPage />} />
           <Route path="/operations/module-audit" element={<ModuleAuditPage />} />
           <Route path="/operations/production-hardening" element={<ProductionHardeningPage />} />
           <Route path="/admin/users" element={<UsersPage />} />

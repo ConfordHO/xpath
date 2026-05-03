@@ -1241,7 +1241,6 @@ export function ClinicalOperationsPage() {
             options: [
               { label: 'Cash', value: 'cash' },
               { label: 'Card', value: 'card' },
-              { label: 'M-Pesa', value: 'mpesa' },
               { label: 'Maviance', value: 'maviance' },
               { label: 'Bank transfer', value: 'bank_transfer' },
               { label: 'Insurance', value: 'insurance' },

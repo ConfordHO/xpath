@@ -778,7 +778,7 @@ export function AccountingPage() {
       setFeedback({
         kind: 'success',
         message: response.data.refreshToken
-          ? 'Grant token exchanged. Copy the returned refresh token into backend/.env as ZOHO_BOOKS_REFRESH_TOKEN and restart the backend.'
+          ? 'Grant token exchanged. Copy the returned refresh token into backend/.env as ZOHO_BOOKS_REFRESH_TOKEN and restart the Node backend.'
           : response.data.message,
       })
     } catch (exchangeError) {

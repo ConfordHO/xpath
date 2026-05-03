@@ -561,8 +561,8 @@ export interface Invoice {
   subtotal: number
   adjustmentAmount: number
   total: number
-  status: 'draft' | 'issued' | 'paid' | 'refunded'
-  paymentGateway: 'cash' | 'card' | 'mpesa' | 'maviance' | 'bank_transfer' | 'insurance'
+  status: 'draft' | 'issued' | 'unpaid' | 'partial' | 'paid' | 'refunded'
+  paymentGateway: 'cash' | 'card' | 'maviance' | 'bank_transfer' | 'insurance'
   issuedAt: string
   createdAt: string
   updatedAt: string

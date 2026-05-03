@@ -29,6 +29,7 @@ import { useEffect, useState } from 'react'
 import { Link as RouterLink } from 'react-router-dom'
 
 import { api } from '../api'
+import { OcrOrderUpload } from '../components/OcrOrderUpload'
 
 import { useAuth } from '../auth'
 import { translateTextForLocale, useLanguage } from '../i18n'
@@ -754,17 +755,45 @@ export function MyAccountPage() {
 
 export function DoctorPortalPage() {
   const profileState = useLoadable<any>(null, [], async () => {
-    const [profileResponse, statsResponse, ordersResponse] = await Promise.all([
+    const [profileResponse, statsResponse, ordersResponse, servicesResponse] = await Promise.all([
       api.get('/doctors/me/profile'),
       api.get('/doctors/me/stats'),
-      api.get('/orders'),
+      api.get('/doctors/me/orders'),
+      api.get('/public/services'),
     ])
     return {
       profile: profileResponse.data,
       stats: statsResponse.data,
       orders: ordersResponse.data.data,
+      services: servicesResponse.data,
     }
   })
+  const [patient, setPatient] = useState({ firstName: '', lastName: '', dateOfBirth: '', phone: '', email: '' })
+  const [testTypeIds, setTestTypeIds] = useState<string[]>([])
+  const [clinicalNotes, setClinicalNotes] = useState('')
+  const [creating, setCreating] = useState(false)
+  const [createMessage, setCreateMessage] = useState<{ kind: 'success' | 'error'; text: string } | null>(null)
+
+  const createReferralOrder = async () => {
+    setCreateMessage(null)
+    setCreating(true)
+    try {
+      const response = await api.post('/doctors/me/orders', {
+        patient,
+        testCodes: testTypeIds,
+        clinicalHistory: clinicalNotes,
+      })
+      setCreateMessage({ kind: 'success', text: `Order ${response.data.orderNumber} created.` })
+      setPatient({ firstName: '', lastName: '', dateOfBirth: '', phone: '', email: '' })
+      setTestTypeIds([])
+      setClinicalNotes('')
+      profileState.refresh()
+    } catch (error) {
+      setCreateMessage({ kind: 'error', text: errorMessage(error) })
+    } finally {
+      setCreating(false)
+    }
+  }
 
   if (profileState.loading) return <LoadingPanel label="Loading referrer portal…" />
   if (profileState.error || !profileState.data) {
@@ -787,6 +816,52 @@ export function DoctorPortalPage() {
       <SectionCard title="Profile">
         <Typography>{profileState.data.profile.name}</Typography>
         <Typography color="text.secondary" sx={{ mt: 1 }}>{profileState.data.profile.email}</Typography>
+      </SectionCard>
+      <SectionCard title="Create referral order">
+        <Stack spacing={2}>
+          {createMessage ? <Alert severity={createMessage.kind}>{createMessage.text}</Alert> : null}
+          <Box sx={{ display: 'grid', gap: 2, gridTemplateColumns: { xs: '1fr', md: 'repeat(2, 1fr)' } }}>
+            <TextField label="Patient first name" value={patient.firstName} onChange={(event) => setPatient((prev) => ({ ...prev, firstName: event.target.value }))} />
+            <TextField label="Patient last name" value={patient.lastName} onChange={(event) => setPatient((prev) => ({ ...prev, lastName: event.target.value }))} />
+            <TextField label="Date of birth" type="date" InputLabelProps={{ shrink: true }} value={patient.dateOfBirth} onChange={(event) => setPatient((prev) => ({ ...prev, dateOfBirth: event.target.value }))} />
+            <TextField label="Phone" value={patient.phone} onChange={(event) => setPatient((prev) => ({ ...prev, phone: event.target.value }))} />
+            <TextField label="Email" value={patient.email} onChange={(event) => setPatient((prev) => ({ ...prev, email: event.target.value }))} />
+          </Box>
+          <Box sx={{ display: 'grid', gap: 1.5, gridTemplateColumns: { xs: '1fr', md: 'repeat(2, 1fr)' } }}>
+            {profileState.data.services.map((test: TestType) => (
+              <Paper key={test._id} sx={{ p: 2 }}>
+                <FormControlLabel
+                  control={
+                    <Checkbox
+                      checked={testTypeIds.includes(test._id)}
+                      onChange={(event) => {
+                        setTestTypeIds((prev) =>
+                          event.target.checked ? [...prev, test._id] : prev.filter((item) => item !== test._id),
+                        )
+                      }}
+                    />
+                  }
+                  label={`${test.code} — ${test.name}`}
+                />
+              </Paper>
+            ))}
+          </Box>
+          <TextField label="Clinical notes" multiline minRows={3} value={clinicalNotes} onChange={(event) => setClinicalNotes(event.target.value)} />
+          <OcrOrderUpload
+            title="Scan referral requisition"
+            buildCorrections={() => ({
+              source: 'clinician_portal',
+              patient,
+              testCodes: testTypeIds,
+              clinicianId: profileState.data.profile._id,
+              clinicalNotes,
+            })}
+            onOrderCreated={() => profileState.refresh()}
+          />
+          <Button variant="contained" disabled={creating || !testTypeIds.length} onClick={createReferralOrder}>
+            Create referral order
+          </Button>
+        </Stack>
       </SectionCard>
       <SectionCard title="Referral cases">
         {profileState.data.orders.length ? (

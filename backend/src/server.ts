@@ -1,5 +1,6 @@
 import cors from "cors";
 import express from "express";
+import multer from "multer";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
 
@@ -104,6 +105,12 @@ import { createTotpSecret, createTotpUri, verifyTotpToken } from "./server/mfa.j
 import { applySecurity, authLimiter } from "./server/security.js";
 import { registerProductionRoutes } from "./server/productionRoutes.js";
 import { orderIsLockedForDirectEdit, registerOrderGovernanceRoutes } from "./server/orderGovernanceRoutes.js";
+import {
+  applyIntakeCorrections,
+  extractOcrText as extractProductionOcrText,
+  parseIntakePayload as parseProductionIntakePayload,
+  type ParsedIntakePayload,
+} from "./server/ocrIntake.js";
 import { ensureInvoiceForOrder, registerZohoBooksRoutes, syncPaymentToZoho } from "./server/zohoBooks.js";
 import { registerModuleHardeningRoutes } from "./server/moduleHardeningRoutes.js";
 import { loadDb, updateDb } from "./store.js";
@@ -115,6 +122,7 @@ import type {
   FormLanguage,
   HistologyBlock,
   HistologySlide,
+  OcrIntakeJob,
   Order,
   OrderStatus,
   Patient,
@@ -131,6 +139,10 @@ import type {
 const app = express();
 const DOUBLE_CLICK_WINDOW_MS = 15_000;
 const NOTE_DUPLICATE_WINDOW_MS = 30_000;
+const publicOcrUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024 },
+});
 const projectReviewCommentSchema = z.object({
   title: z.string().trim().min(3).max(160),
   module: z.string().trim().min(2).max(120),
@@ -603,6 +615,28 @@ function parsePublicOrderBody(body: unknown): PublicOrderRequestInput | null {
 
 function reservationExpired(expiresAt: string) {
   return new Date(expiresAt).getTime() <= Date.now();
+}
+
+function parseMultipartJsonField(value: unknown) {
+  if (!value) return {};
+  if (typeof value === "object") return value;
+  try {
+    return JSON.parse(String(value));
+  } catch {
+    throw new Error("Invalid JSON field");
+  }
+}
+
+function publicUploadedFiles(req: express.Request) {
+  return Array.isArray(req.files) ? (req.files as Express.Multer.File[]) : [];
+}
+
+function publicJobPayload(job: OcrIntakeJob) {
+  return {
+    ...job,
+    parsedPayload: JSON.parse(job.parsedPayload) as ParsedIntakePayload,
+    fieldConfidences: JSON.parse(job.fieldConfidences) as Record<string, number>,
+  };
 }
 
 function normalizeUserPreference(input: {
@@ -1413,6 +1447,159 @@ app.post("/api/public/order-request", async (req, res) => {
     order: result,
     orderNumber: result.orderNumber,
   });
+});
+
+app.post("/api/public/intake/ocr-order-request", publicOcrUpload.any(), async (req, res) => {
+  const fallbackText = String(req.body?.text ?? req.body?.extractedText ?? req.body?.fileText ?? "").trim();
+  const files = publicUploadedFiles(req);
+  if (!files.length && !fallbackText) {
+    return res.status(400).json({ message: "Upload a requisition file or paste requisition text" });
+  }
+
+  try {
+    const corrections = parseMultipartJsonField(req.body?.corrections);
+    const extracted = await extractProductionOcrText({ files, fallbackText });
+    const result = await updateDb(async (db) => {
+      const parsed = parseProductionIntakePayload(db, extracted.text, extracted.confidence);
+      const correctedPayload = applyIntakeCorrections(db, parsed.payload, corrections);
+      if (!correctedPayload.testTypeIds.length) {
+        throw new Error("At least one test must be selected or detected before creating an online order");
+      }
+      const timestamp = now();
+      const siteId = normalizeSiteId(null);
+      const ensuredDoctor = await ensureReferralDoctorRecord(db, {
+        name: correctedPayload.referringDoctorName ?? null,
+        email: null,
+        phone: null,
+        siteId,
+        actor: null,
+      });
+      const patientId = createId();
+      db.patients.push({
+        _id: patientId,
+        firstName: correctedPayload.patient.firstName,
+        lastName: correctedPayload.patient.lastName,
+        dateOfBirth: correctedPayload.patient.dateOfBirth,
+        gender: correctedPayload.patient.gender ?? "other",
+        phone: correctedPayload.patient.phone,
+        email: correctedPayload.patient.email,
+        address: correctedPayload.patient.address,
+        siteId,
+        nationalId: correctedPayload.patient.nationalId,
+        externalPatientId: correctedPayload.patient.externalPatientId ?? null,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      });
+      const order: Order = {
+        _id: createId(),
+        orderNumber: createOrderNumber(db),
+        patientId,
+        testTypeIds: correctedPayload.testTypeIds,
+        status: "draft",
+        priority: correctedPayload.priority ?? "normal",
+        orderSource: "online",
+        referringDoctorId: ensuredDoctor.doctor?._id ?? correctedPayload.referringDoctorId ?? null,
+        referringDoctorName: correctedPayload.referringDoctorName ?? null,
+        createdBy: "69a524bffafff8415e680391",
+        assignedTechnicianId: null,
+        assignedPathologistId: null,
+        notes: "Created from public OCR requisition upload",
+        clinicalHistory: correctedPayload.clinicalHistory,
+        validationStatus: "pending",
+        validationNotes: "",
+        intakeSource: "ocr_nlp",
+        financialClearance: "pending",
+        siteId,
+        courierStatus: "ready_for_pickup",
+        pickupAddress: correctedPayload.patient.address,
+        pickupPlaceName: null,
+        pickupLat: null,
+        pickupLng: null,
+        receivedByUserId: null,
+        courierCheckedInAt: timestamp,
+        triagedAt: null,
+        triagedBy: null,
+        workflowReleasedAt: null,
+        workflowReleasedBy: null,
+        paymentCollectionStatus: "unpaid",
+        paymentCollectionMethod: null,
+        paymentCollectionAmount: null,
+        paymentCollectionReference: null,
+        paymentCollectionDeclaredBy: null,
+        paymentCollectionDeclaredAt: null,
+        paymentPromptSentAt: null,
+        paymentPromptRecipient: correctedPayload.patient.phone || correctedPayload.patient.email,
+        anonymousCaseCode: "CASE-OCR",
+        requesterNotificationEmail: correctedPayload.patient.email,
+        requesterNotificationPhone: correctedPayload.patient.phone,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      };
+      order.anonymousCaseCode = `CASE-${order.orderNumber}`;
+      db.orders.push(order);
+      ensureInvoiceForOrder(db, order);
+      const job: OcrIntakeJob = {
+        _id: createId(),
+        source: files.length ? "upload" : "manual_text",
+        originalFilename: files.map((file) => file.originalname).filter(Boolean).join(", ") || null,
+        mimeType: Array.from(new Set(files.map((file) => file.mimetype).filter(Boolean))).join(", ") || null,
+        rawText: extracted.text,
+        parsedPayload: JSON.stringify(correctedPayload),
+        confidence: parsed.confidence,
+        fieldConfidences: JSON.stringify(parsed.fieldConfidences),
+        status: "converted_to_order",
+        requiredHumanVerification: true,
+        verificationNotes: "Public OCR request auto-converted from submitted patient form values.",
+        verifiedBy: null,
+        verifiedAt: timestamp,
+        convertedOrderId: order._id,
+        createdBy: "public_portal",
+        siteId,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      };
+      db.ocrIntakeJobs.unshift(job);
+      pushNotification(db, {
+        title: "New OCR online sample pickup",
+        body: `${order.orderNumber} was created from a public requisition upload and is ready for courier pickup.`,
+        siteId,
+        audienceRoles: ["courier", "receptionist", "admin"],
+      });
+      appendAuditEvent(db, {
+        module: "Orders",
+        action: "create_public_ocr_order",
+        targetId: order._id,
+        actor: "public_ocr_portal",
+        actorUserId: null,
+        actorRole: null,
+        siteId,
+        orderId: order._id,
+        summary: `Public OCR requisition submitted for ${order.orderNumber}`,
+        metadata: {
+          confidence: job.confidence,
+          testCount: order.testTypeIds.length,
+          extractionParts: extracted.parts.map((part) => ({
+            filename: part.filename,
+            method: part.method,
+            confidence: part.confidence,
+            pageCount: part.pageCount ?? null,
+          })),
+        },
+      });
+      return {
+        order: hydrateOrder(db, order),
+        job: publicJobPayload(job),
+      };
+    });
+    res.status(201).json({
+      message: "OCR order request submitted successfully",
+      order: result.order,
+      orderNumber: result.order.orderNumber,
+      job: result.job,
+    });
+  } catch (error) {
+    res.status(400).json({ message: (error as Error).message });
+  }
 });
 
 app.use("/api", requireAuth);

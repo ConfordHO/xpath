@@ -494,8 +494,8 @@ export function registerEnterpriseRoutes(app: express.Express) {
     subtotal: z.number().min(0),
     adjustmentAmount: z.number(),
     total: z.number().min(0),
-    status: z.enum(["draft", "issued", "paid", "refunded"]),
-    paymentGateway: z.enum(["cash", "card", "mpesa", "maviance", "bank_transfer", "insurance"]),
+    status: z.enum(["draft", "issued", "unpaid", "partial", "paid", "refunded"]),
+    paymentGateway: z.enum(["cash", "card", "maviance", "bank_transfer", "insurance"]),
     issuedAt: z.string().min(1),
   });
   const refundSchema = z.object({

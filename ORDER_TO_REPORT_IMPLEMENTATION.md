@@ -1,13 +1,15 @@
 # X.PATH Order-to-Report Implementation Guide
 
-Updated: 2026-04-15
+Updated: 2026-04-26
 
 This guide explains how the current system works in code for the two primary journeys:
 
 1. Online request to final pathology report
 2. Walk-in reception request to final pathology report
+3. External clinician portal request to final pathology report
+4. OCR-assisted request to final pathology report
 
-It also explains the main control points that were added in this pass: courier activation, receptionist gating, payment prompting, multi-test workflow routing, TAT capture, privacy masking, Zoho Books readiness, and blocker reminders.
+It also explains the main control points for the Cameroon implementation: courier activation, receptionist gating, Maviance/manual payment prompting, printable invoices and receipts, multi-test workflow routing, TAT capture, privacy masking, OCR verification, external clinician ordering, immutable audit logs, department custody, cloud backup/sync, and blocker reminders.
 
 ## Local runtime
 
@@ -21,12 +23,19 @@ The frontend `.env` now points to the local backend by default for development.
 - Orders are visible only to the roles that should handle them at each stage.
 - Patient identity is visible to reception/admin/requester roles, and anonymized for downstream lab handling after reception.
 - Online pickup automatically activates the courier workflow.
-- Payment state is captured at pickup, at reception, and during finance reconciliation.
+- Payment state is captured at pickup, at reception, through Maviance callbacks, and during finance reconciliation.
 - A case cannot be released to the laboratory workflow until reception and finance gates are satisfied.
-- Multi-test orders expose per-test route guides so histology, cytology, IHC, analyzer, and direct pathology paths do not get mixed.
+- Multi-test orders expose per-test route guides so histology, cytology, IHC, analyzer, and direct pathology paths do not get mixed or silently ignored.
 - TAT is recorded per phase and feeds dashboards/averages.
+- Invoices are printable before and after payment; receipts are printable after every payment event.
+- OCR intake must retain the source file, raw extracted text, parsed fields, confidence, reviewer corrections, and final order link.
+- Sample movement is department-owned; every user interaction inside a department is still recorded.
+- Every action is written to immutable admin-visible audit logs.
+- Completed results and specimen/sample metadata are archived for at least 10 years.
 - When someone tries to continue while a prerequisite is missing, the UI shows a blocker reminder with the missing step and the responsible role.
 - Accounting is now Zoho Books only. The system prepares contacts, invoices, and payments for Zoho sync and keeps immutable sync logs.
+
+See also `CAMEROON_LIMS_E2E_IMPLEMENTATION.md` for the complete updated implementation specification based on the attached source document and Cameroon launch instructions.
 
 ## Online order to final report
 
@@ -93,6 +102,7 @@ Payment prompts support the Cameroon flow through Maviance readiness:
 
 - MTN Mobile Money
 - Orange Money
+- card/POS or bank-transfer handling through manual finance capture
 - other fallback/manual methods
 
 When a completed payment is recorded:
@@ -100,6 +110,7 @@ When a completed payment is recorded:
 - the order payment state is updated
 - financial clearance is recalculated
 - the local invoice is ensured
+- the receipt becomes printable
 - the payment is prepared for Zoho Books sync
 
 ### 5. Release to the correct workflow
@@ -119,7 +130,13 @@ For multi-test orders, the order now exposes per-test workflow routes, for examp
 - IHC-linked test -> accessioning/histology path -> IHC -> pathologist review
 - Direct pathology review tests -> pathologist review without technician flow
 
-This makes it easier to split operational handling while preserving a single originating order.
+This preserves one originating order number while ensuring each ordered test has its own workflow state. Completing one test cannot complete or hide the remaining tests.
+
+### 5A. Department custody and user interactions
+
+When a sample moves between work areas, the custody target is the department, not a named individual user. The handoff records the sending department, receiving department, specimen/order item, barcode scan, condition, timestamp, and initiating user.
+
+Inside the receiving department, the system records every user interaction separately: view, scan, start, note, exception, approval, completion, upload, and handoff. This gives the lab department-level work queues without losing user-level accountability.
 
 ### 6. Downstream privacy masking
 
@@ -139,6 +156,7 @@ After lab release:
 - accessioning and histology stages are barcode-gated where required
 - TAT clocks continue to run
 - workflow history is written with timestamps and actors
+- each order item advances independently according to its configured workflow plan
 
 The pathologist then:
 
@@ -200,6 +218,40 @@ From there the case follows the same controlled downstream path:
 - anonymized downstream handling
 - pathologist review
 - report completion and release
+
+## External clinician portal order to final report
+
+External referring doctors use a separate clinician portal with their own credentials.
+
+1. Clinician logs in.
+2. Clinician creates or selects an authorized patient.
+3. Clinician submits requested tests through the online order form or uploads a requisition note for OCR.
+4. The system creates one order number and one order item per requested test.
+5. Invoice/payment rules run according to patient, clinician, corporate, insurance, or lab policy.
+6. Sample collection, reception, accessioning, department workflow, reporting, release, and archiving follow the same controlled route as patient and walk-in orders.
+7. Clinician can view only their referred cases and released reports.
+
+## OCR-assisted order to final report
+
+OCR intake supports typed and handwritten notes.
+
+1. User uploads a note or requisition image.
+2. Open-source OCR extracts text.
+3. The parser proposes patient, clinician, tests, notes, and priority.
+4. A human reviewer verifies and corrects the extracted fields.
+5. Unmatched or uncertain tests remain in an exception queue and are never silently discarded.
+6. The system creates the order, order items, invoice, and workflow plans.
+7. Source file, raw OCR text, parsed payload, corrections, reviewer, and created order are retained in the audit trail.
+
+## Invoice and receipt printing
+
+Invoices must be printable at any time before or after payment. Receipts must be printable at any time after payment.
+
+Each invoice print or reprint records an audit event. Each receipt print or reprint records an audit event. Printed documents must show order number, invoice/receipt number, patient or payer details, test lines, totals, amount paid, balance, provider reference where available, and payment status.
+
+## Archive retention
+
+Released reports, order data, specimen/sample data, OCR sources, payment records, communication records, and audit logs are retained electronically for a minimum of 10 years. Disposal after the retention period requires policy authorization and immutable disposal logging.
 
 ## Blocker reminders
 
@@ -269,7 +321,7 @@ To complete live Zoho integration, fill these backend env values:
 Implemented and working locally:
 
 - Next.js frontend on port `3000`
-- Express backend on port `4000`
+- TypeScript/Node backend on port `4000`
 - PostgreSQL-backed persistence
 - online intake
 - referral-doctor auto-onboarding notifications

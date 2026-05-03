@@ -35,6 +35,7 @@ import { Link as RouterLink, useNavigate, useParams } from 'react-router-dom'
 
 import { api } from '../api'
 import { useAuth } from '../auth'
+import { OcrOrderUpload } from '../components/OcrOrderUpload'
 
 import {
   LoadingPanel,
@@ -206,6 +207,9 @@ export function CreateOrderPage() {
     })
   }
 
+  const selectedPatient = patientsState.data.data.find((item) => item._id === patientId)
+  const selectedDoctor = doctorsState.data.find((item) => item._id === doctorId)
+
   if (patientsState.loading || testTypesState.loading || doctorsState.loading) {
     return <LoadingPanel label="Loading order form…" />
   }
@@ -262,6 +266,29 @@ export function CreateOrderPage() {
           />
           <TextField label="Referring doctor (free text if not in list)" value={doctorText} onChange={(event) => setDoctorText(event.target.value)} />
           <TextField label="Notes" multiline minRows={3} value={notes} onChange={(event) => setNotes(event.target.value)} />
+          <OcrOrderUpload
+            title="Scan requisition"
+            buildCorrections={() => ({
+              source: 'walk_in',
+              patientId: patientId || undefined,
+              patient: selectedPatient ? {
+                firstName: selectedPatient.firstName,
+                lastName: selectedPatient.lastName,
+                dateOfBirth: selectedPatient.dateOfBirth,
+                phone: selectedPatient.phone,
+                email: selectedPatient.email,
+              } : undefined,
+              testCodes: testTypeIds,
+              clinicianId: doctorId || undefined,
+              clinician: doctorText ? { name: doctorText } : selectedDoctor ? {
+                name: selectedDoctor.name,
+                email: selectedDoctor.email,
+                phone: selectedDoctor.phone,
+              } : undefined,
+              clinicalNotes: notes,
+            })}
+            onOrderCreated={(order) => navigate(`/orders/${order._id}`)}
+          />
           <Stack direction="row" spacing={2}>
             <Button variant="contained" disabled={actionLock.isPending('create-order')} onClick={createOrder}>
               Create order

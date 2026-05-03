@@ -2,6 +2,7 @@ import AccountCircleOutlinedIcon from '@mui/icons-material/AccountCircleOutlined
 import AddCircleOutlineRoundedIcon from '@mui/icons-material/AddCircleOutlineRounded'
 import BiotechOutlinedIcon from '@mui/icons-material/BiotechOutlined'
 import ChatBubbleOutlineRoundedIcon from '@mui/icons-material/ChatBubbleOutlineRounded'
+import CloudSyncRoundedIcon from '@mui/icons-material/CloudSyncRounded'
 import DashboardOutlinedIcon from '@mui/icons-material/DashboardOutlined'
 import DescriptionOutlinedIcon from '@mui/icons-material/DescriptionOutlined'
 import FolderCopyOutlinedIcon from '@mui/icons-material/FolderCopyOutlined'
@@ -78,6 +79,7 @@ export function getNavGroups(user: SafeUser): NavGroup[] {
             { label: 'Results & quality', to: '/operations/results-quality', icon: <DescriptionOutlinedIcon /> },
             { label: 'Governance & compliance', to: '/operations/governance', icon: <SettingsSuggestOutlinedIcon /> },
             { label: 'Enterprise admin', to: '/operations/enterprise-admin', icon: <TuneOutlinedIcon /> },
+            { label: 'Cameroon E2E', to: '/operations/cameroon-e2e', icon: <CloudSyncRoundedIcon /> },
             { label: 'Module audit', to: '/operations/module-audit', icon: <FolderCopyOutlinedIcon /> },
             { label: 'Production readiness', to: '/operations/production-hardening', icon: <SettingsSuggestOutlinedIcon /> },
           ],
@@ -126,6 +128,7 @@ export function getNavGroups(user: SafeUser): NavGroup[] {
             { label: 'Results & quality', to: '/operations/results-quality', icon: <DescriptionOutlinedIcon /> },
             { label: 'Governance & compliance', to: '/operations/governance', icon: <SettingsSuggestOutlinedIcon /> },
             { label: 'Enterprise admin', to: '/operations/enterprise-admin', icon: <TuneOutlinedIcon /> },
+            { label: 'Cameroon E2E', to: '/operations/cameroon-e2e', icon: <CloudSyncRoundedIcon /> },
             { label: 'Module audit', to: '/operations/module-audit', icon: <FolderCopyOutlinedIcon /> },
             { label: 'Production readiness', to: '/operations/production-hardening', icon: <SettingsSuggestOutlinedIcon /> },
           ],

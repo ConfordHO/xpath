@@ -38,6 +38,26 @@ services:
         sync: false
       - key: CORS_ORIGIN
         value: https://x-path.vercel.app,http://localhost:5173,http://localhost:3000
+      - key: OCR_TESSERACT_BINARY
+        value: tesseract
+      - key: OCR_TESSERACT_LANG
+        value: eng+fra
+      - key: OCR_NATIVE_ENABLED
+        value: true
+      - key: OCR_MAX_PDF_PAGES
+        value: 8
+      - key: AI_MODEL
+        value: qwen2.5:1.5b
+      - key: ORTHANC_BASE_URL
+        sync: false
+      - key: OHIF_VIEWER_URL
+        sync: false
+      - key: WSI_TILE_SERVER_URL
+        sync: false
+      - key: COUCHDB_URL
+        sync: false
+      - key: COUCHDB_DATABASE
+        value: xpath_offline
       - key: DMS_STORAGE_PROVIDER
         sync: false
       - key: DMS_LOCAL_STORAGE_PATH

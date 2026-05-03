@@ -1,4 +1,5 @@
 import net from "node:net";
+import { createRequire } from "node:module";
 
 import type express from "express";
 import { z } from "zod";
@@ -36,6 +37,11 @@ import {
   now,
   scopeDbForUser,
 } from "./helpers.js";
+
+const require = createRequire(import.meta.url);
+const hl7 = require("simple-hl7") as {
+  Parser: new (options?: { segmentSeperator?: string }) => { parse: (message: string) => unknown };
+};
 
 const MLLP_START = Buffer.from([0x0b]);
 const MLLP_END = Buffer.from([0x1c, 0x0d]);
@@ -265,6 +271,11 @@ function buildAck(code: "CA" | "CE", originalMessageId: string, error = "") {
 }
 
 function parseHl7Message(rawMessage: string): ParsedHl7Message {
+  try {
+    new hl7.Parser({ segmentSeperator: "\r" }).parse(rawMessage.replace(/\n/g, "\r"));
+  } catch (error) {
+    throw new Error(`HL7 parser rejected message: ${(error as Error).message}`);
+  }
   const segments = splitHl7Segments(rawMessage);
   const msh = getSegments(segments, "MSH")[0];
   if (!msh) {

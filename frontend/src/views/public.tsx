@@ -44,6 +44,7 @@ import serviceHistology from '../assets/reference/service-histology.jpg'
 import serviceReports from '../assets/reference/service-reports.jpg'
 
 import { useAuth } from '../auth'
+import { OcrOrderUpload } from '../components/OcrOrderUpload'
 
 import {
   BrandLogo,
@@ -954,7 +955,7 @@ export function OrderOnlinePage() {
         pickupPlaceName: pickupPlaceName || undefined,
         pickupLat: pickupLat ?? undefined,
         pickupLng: pickupLng ?? undefined,
-        testTypes: testTypeIds,
+        testTypeIds,
         referringDoctor,
         notes,
         clinicalHistory,
@@ -1097,6 +1098,17 @@ export function OrderOnlinePage() {
         <TextField label="Referring clinician" value={referringDoctor} onChange={(event) => setReferringDoctor(event.target.value)} />
         <TextField label="Clinical history" multiline minRows={3} value={clinicalHistory} onChange={(event) => setClinicalHistory(event.target.value)} />
         <TextField label="Notes" multiline minRows={3} value={notes} onChange={(event) => setNotes(event.target.value)} />
+        <OcrOrderUpload
+          title="Scan requisition"
+          buildCorrections={() => ({
+            source: 'patient_portal',
+            patient,
+            testCodes: testTypeIds,
+            clinician: referringDoctor ? { name: referringDoctor } : undefined,
+            clinicalNotes: [clinicalHistory, notes].filter(Boolean).join('\n\n'),
+          })}
+          onOrderCreated={(order) => setSubmitted(order.orderNumber)}
+        />
         <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
           <Button variant="contained" disabled={!testTypeIds.length} onClick={submit}>
             Submit order request

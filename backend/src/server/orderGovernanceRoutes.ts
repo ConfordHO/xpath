@@ -11,7 +11,6 @@ import type {
   Order,
   OrderAmendment,
   OrderCorrection,
-  Patient,
   User,
 } from "../types.js";
 import { appendAuditEvent } from "./audit.js";
@@ -28,6 +27,13 @@ import {
   trimText,
   userCanAccessOrder,
 } from "./helpers.js";
+import {
+  applyIntakeCorrections,
+  extractOcrText as extractProductionOcrText,
+  parseIntakePayload as parseProductionIntakePayload,
+  type ParsedIntakePayload,
+} from "./ocrIntake.js";
+import { ensureInvoiceForOrder } from "./zohoBooks.js";
 
 const ocrUpload = multer({
   storage: multer.memoryStorage(),
@@ -113,153 +119,6 @@ function canGovernOrders(user: User) {
   return ["super_admin", "admin", "pathologist"].includes(user.role);
 }
 
-function parseDateLike(value: string) {
-  const cleaned = value.trim();
-  if (/^\d{4}-\d{2}-\d{2}$/.test(cleaned)) {
-    return cleaned;
-  }
-  const slash = cleaned.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})$/);
-  if (!slash) {
-    return cleaned;
-  }
-  const [, first, second, year] = slash;
-  const fullYear = year.length === 2 ? `20${year}` : year;
-  return `${fullYear}-${second.padStart(2, "0")}-${first.padStart(2, "0")}`;
-}
-
-function readTextValue(text: string, patterns: RegExp[]) {
-  for (const pattern of patterns) {
-    const match = text.match(pattern);
-    if (match?.[1]) {
-      return match[1].trim();
-    }
-  }
-  return "";
-}
-
-function splitName(text: string) {
-  const firstName = readTextValue(text, [
-    /first\s*name[:\-]\s*([^\n\r]+)/i,
-    /pr[ée]nom[:\-]\s*([^\n\r]+)/i,
-  ]);
-  const lastName = readTextValue(text, [
-    /last\s*name[:\-]\s*([^\n\r]+)/i,
-    /surname[:\-]\s*([^\n\r]+)/i,
-    /nom[:\-]\s*([^\n\r]+)/i,
-  ]);
-  if (firstName || lastName) {
-    return {
-      firstName: firstName || "Needs verification",
-      lastName: lastName || "Needs verification",
-    };
-  }
-
-  const combined = readTextValue(text, [
-    /patient\s*name[:\-]\s*([^\n\r]+)/i,
-    /name[:\-]\s*([^\n\r]+)/i,
-    /nom\s*du\s*patient[:\-]\s*([^\n\r]+)/i,
-  ]);
-  const [first = "", ...rest] = combined.split(/\s+/).filter(Boolean);
-  return {
-    firstName: first || "Needs verification",
-    lastName: rest.join(" ") || "Needs verification",
-  };
-}
-
-function parseIntakePayload(db: Database, text: string, baseConfidence: number) {
-  const { firstName, lastName } = splitName(text);
-  const dob = readTextValue(text, [
-    /date\s*of\s*birth[:\-]\s*([^\n\r]+)/i,
-    /dob[:\-]\s*([^\n\r]+)/i,
-    /date\s*de\s*naissance[:\-]\s*([^\n\r]+)/i,
-  ]);
-  const phone = readTextValue(text, [/phone[:\-]\s*([^\n\r]+)/i, /t[ée]l[ée]phone[:\-]\s*([^\n\r]+)/i]);
-  const email = readTextValue(text, [/email[:\-]\s*([^\n\r\s]+)/i, /courriel[:\-]\s*([^\n\r\s]+)/i]);
-  const address = readTextValue(text, [/address[:\-]\s*([^\n\r]+)/i, /adresse[:\-]\s*([^\n\r]+)/i]);
-  const clinicalHistory = readTextValue(text, [
-    /clinical\s*history[:\-]\s*([^\n\r]+)/i,
-    /history[:\-]\s*([^\n\r]+)/i,
-    /renseignements\s*cliniques[:\-]\s*([^\n\r]+)/i,
-    /ant[ée]c[ée]dents[:\-]\s*([^\n\r]+)/i,
-  ]);
-  const normalizedText = text.toLowerCase();
-  const matchedTests = db.testTypes.filter(
-    (testType) =>
-      normalizedText.includes(testType.code.toLowerCase()) ||
-      normalizedText.includes(testType.name.toLowerCase()),
-  );
-  const fieldConfidences = {
-    firstName: firstName === "Needs verification" ? 25 : 92,
-    lastName: lastName === "Needs verification" ? 25 : 92,
-    dateOfBirth: dob ? 88 : 20,
-    phone: phone ? 85 : 35,
-    email: email ? 85 : 35,
-    address: address ? 82 : 35,
-    clinicalHistory: clinicalHistory ? 84 : 30,
-    testTypeIds: matchedTests.length ? 88 : 25,
-  };
-  const fieldAverage =
-    Object.values(fieldConfidences).reduce((sum, value) => sum + value, 0) /
-    Object.values(fieldConfidences).length;
-  const confidence = Math.round(baseConfidence * 0.6 + fieldAverage * 0.4);
-  const payload = {
-    patient: {
-      firstName,
-      lastName,
-      dateOfBirth: dob ? parseDateLike(dob) : "1900-01-01",
-      gender: "other",
-      phone: phone || "+237000000000",
-      email: email || "needs-verification@xpath.local",
-      address: address || "Needs verification",
-    },
-    clinicalHistory: clinicalHistory || "Needs verification from OCR intake",
-    testTypeIds: matchedTests.map((testType) => testType._id),
-    matchedTestCodes: matchedTests.map((testType) => testType.code),
-  };
-
-  return {
-    payload,
-    confidence,
-    fieldConfidences,
-    needsVerification:
-      confidence < 90 ||
-      !dob ||
-      !clinicalHistory ||
-      matchedTests.length === 0 ||
-      firstName === "Needs verification" ||
-      lastName === "Needs verification",
-  };
-}
-
-async function extractOcrText(file: Express.Multer.File | undefined, fallbackText: string) {
-  if (!file) {
-    return { text: fallbackText, confidence: 92, source: "manual_text" as const };
-  }
-  if (file.mimetype.startsWith("text/")) {
-    return {
-      text: file.buffer.toString("utf-8"),
-      confidence: 90,
-      source: "upload" as const,
-    };
-  }
-  if (!file.mimetype.startsWith("image/")) {
-    throw new Error("Upload an image requisition for OCR, or paste extracted text for PDF requisitions.");
-  }
-
-  const { createWorker } = await import("tesseract.js");
-  const worker = await createWorker("eng");
-  try {
-    const result = await worker.recognize(file.buffer);
-    return {
-      text: result.data.text,
-      confidence: Math.round(result.data.confidence || 0),
-      source: "upload" as const,
-    };
-  } finally {
-    await worker.terminate();
-  }
-}
-
 function applyOrderChanges(order: Order, changes: Partial<Order>) {
   if (changes.patientId !== undefined) order.patientId = changes.patientId;
   if (changes.testTypeIds !== undefined) order.testTypeIds = changes.testTypeIds;
@@ -283,6 +142,121 @@ export function orderIsLockedForDirectEdit(order: Order) {
   );
 }
 
+function truthyFormValue(value: unknown) {
+  return ["1", "true", "yes", "on"].includes(String(value ?? "").trim().toLowerCase());
+}
+
+function parseJsonField(value: unknown) {
+  if (!value) return {};
+  if (typeof value === "object") return value;
+  try {
+    return JSON.parse(String(value));
+  } catch {
+    throw new Error("Invalid corrections JSON");
+  }
+}
+
+function uploadedOcrFiles(req: AuthRequest) {
+  if (Array.isArray(req.files)) {
+    return req.files as Express.Multer.File[];
+  }
+  const filesByField = req.files as Record<string, Express.Multer.File[]> | undefined;
+  return Object.values(filesByField ?? {}).flat();
+}
+
+function publicOcrJob(job: OcrIntakeJob) {
+  return {
+    ...job,
+    parsedPayload: JSON.parse(job.parsedPayload) as ParsedIntakePayload,
+    fieldConfidences: JSON.parse(job.fieldConfidences) as Record<string, number>,
+  };
+}
+
+function createOrderFromVerifiedOcrJob(
+  db: Database,
+  job: OcrIntakeJob,
+  user: User,
+  req: AuthRequest,
+) {
+  if (job.convertedOrderId) {
+    return hydrateOrder(db, findOrder(db, job.convertedOrderId));
+  }
+  if (job.status !== "verified") {
+    throw new Error("Human verification is required before creating an order");
+  }
+  const parsedPayload = JSON.parse(job.parsedPayload) as ParsedIntakePayload;
+  if (!parsedPayload.testTypeIds?.length) {
+    throw new Error("At least one verified test is required");
+  }
+  const timestamp = now();
+  const existingPatient = parsedPayload.patientId
+    ? db.patients.find((entry) => entry._id === parsedPayload.patientId) ?? null
+    : null;
+  if (parsedPayload.patientId && !existingPatient) {
+    throw new Error("Verified OCR payload references a patient that no longer exists");
+  }
+  const patientId = existingPatient?._id ?? createId();
+  if (!existingPatient) {
+    db.patients.push({
+      _id: patientId,
+      firstName: parsedPayload.patient.firstName,
+      lastName: parsedPayload.patient.lastName,
+      dateOfBirth: parsedPayload.patient.dateOfBirth,
+      gender: parsedPayload.patient.gender ?? "other",
+      phone: parsedPayload.patient.phone,
+      email: parsedPayload.patient.email,
+      address: parsedPayload.patient.address,
+      siteId: normalizeSiteId(user.siteId),
+      nationalId: parsedPayload.patient.nationalId,
+      externalPatientId: parsedPayload.patient.externalPatientId ?? null,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    });
+  }
+  const order: Order = {
+    _id: createId(),
+    orderNumber: createOrderNumber(db),
+    patientId,
+    testTypeIds: parsedPayload.testTypeIds,
+    status: "draft",
+    priority: parsedPayload.priority ?? "normal",
+    orderSource: parsedPayload.orderSource ?? "walk_in",
+    referringDoctorId: parsedPayload.referringDoctorId ?? null,
+    referringDoctorName: parsedPayload.referringDoctorName ?? null,
+    createdBy: user._id,
+    assignedTechnicianId: null,
+    assignedPathologistId: null,
+    notes: `Created from verified OCR intake job ${job._id}`,
+    clinicalHistory: parsedPayload.clinicalHistory,
+    validationStatus: "pending",
+    validationNotes: "",
+    intakeSource: "ocr_nlp",
+    financialClearance: "pending",
+    siteId: normalizeSiteId(user.siteId),
+    courierStatus: "",
+    lockStatus: "unlocked",
+    lockedAt: null,
+    lockedBy: null,
+    lockReason: null,
+    createdAt: timestamp,
+    updatedAt: timestamp,
+  };
+  db.orders.push(order);
+  ensureInvoiceForOrder(db, order);
+  job.status = "converted_to_order";
+  job.convertedOrderId = order._id;
+  job.updatedAt = timestamp;
+  audit(db, req, {
+    module: "Order Management & Intake",
+    action: "ocr_order_created",
+    targetId: order._id,
+    orderId: order._id,
+    summary: `Verified OCR intake converted to ${order.orderNumber}`,
+    metadata: { ocrJobId: job._id, confidence: job.confidence },
+  });
+  return hydrateOrder(db, order);
+}
+
 export function registerOrderGovernanceRoutes(app: express.Express) {
   app.get("/api/intake/ocr/jobs", requireRoles("admin", "receptionist"), async (req: AuthRequest, res) => {
     const db = scopeDbForUser(await loadDb(), ensureUser(req));
@@ -292,34 +266,41 @@ export function registerOrderGovernanceRoutes(app: express.Express) {
   app.post(
     "/api/intake/ocr/jobs",
     requireRoles("admin", "receptionist"),
-    ocrUpload.single("file"),
+    ocrUpload.any(),
     async (req: AuthRequest, res) => {
       const user = ensureUser(req);
-      const fallbackText = String(req.body?.text ?? "").trim();
+      const fallbackText = String(req.body?.text ?? req.body?.extractedText ?? req.body?.fileText ?? "").trim();
       try {
-        if (!req.file && !fallbackText) {
-          return res.status(400).json({ message: "Upload an image or paste requisition text" });
+        const files = uploadedOcrFiles(req);
+        if (!files.length && !fallbackText) {
+          return res.status(400).json({ message: "Upload a requisition file or paste requisition text" });
         }
-        const extracted = await extractOcrText(req.file, fallbackText);
-        const record = await updateDb((db) => {
-          const parsed = parseIntakePayload(db, extracted.text, extracted.confidence);
+        const shouldVerify = truthyFormValue(req.body?.verify);
+        const shouldConvert = shouldVerify && String(req.body?.autoConvert ?? "true").trim().toLowerCase() !== "false";
+        const corrections = parseJsonField(req.body?.corrections);
+        const extracted = await extractProductionOcrText({ files, fallbackText });
+        const result = await updateDb((db) => {
+          const parsed = parseProductionIntakePayload(db, extracted.text, extracted.confidence);
+          const correctedPayload = applyIntakeCorrections(db, parsed.payload, corrections);
           const timestamp = now();
           const job: OcrIntakeJob = {
             _id: createId(),
             source: extracted.source,
-            originalFilename: req.file?.originalname ?? null,
-            mimeType: req.file?.mimetype ?? null,
+            originalFilename: files.map((file) => file.originalname).filter(Boolean).join(", ") || null,
+            mimeType: Array.from(new Set(files.map((file) => file.mimetype).filter(Boolean))).join(", ") || null,
             rawText: extracted.text,
-            parsedPayload: JSON.stringify(parsed.payload),
+            parsedPayload: JSON.stringify(correctedPayload),
             confidence: parsed.confidence,
             fieldConfidences: JSON.stringify(parsed.fieldConfidences),
-            status: "needs_verification",
+            status: shouldVerify ? "verified" : "needs_verification",
             requiredHumanVerification: true,
-            verificationNotes: parsed.needsVerification
+            verificationNotes: shouldVerify
+              ? "Auto-verified from submitted form corrections and queued for order creation."
+              : parsed.needsVerification
               ? "Human verification is required before conversion to an order."
               : "High confidence OCR still requires sign-off before order creation.",
-            verifiedBy: null,
-            verifiedAt: null,
+            verifiedBy: shouldVerify ? user._id : null,
+            verifiedAt: shouldVerify ? timestamp : null,
             convertedOrderId: null,
             createdBy: user._id,
             siteId: normalizeSiteId(user.siteId),
@@ -336,15 +317,33 @@ export function registerOrderGovernanceRoutes(app: express.Express) {
               confidence: job.confidence,
               fieldConfidences: parsed.fieldConfidences,
               filename: job.originalFilename,
+              extractionParts: extracted.parts.map((part) => ({
+                filename: part.filename,
+                mimeType: part.mimeType,
+                method: part.method,
+                confidence: part.confidence,
+                pageCount: part.pageCount ?? null,
+              })),
             },
           });
+          let order = null;
+          if (shouldVerify) {
+            audit(db, req, {
+              module: "Order Management & Intake",
+              action: "ocr_job_verified",
+              targetId: job._id,
+              summary: "OCR intake job auto-verified from submitted corrections",
+            });
+          }
+          if (shouldConvert) {
+            order = createOrderFromVerifiedOcrJob(db, job, user, req);
+          }
           return {
-            ...job,
-            parsedPayload: parsed.payload,
-            fieldConfidences: parsed.fieldConfidences,
+            job: publicOcrJob(job),
+            order,
           };
         });
-        res.status(201).json(record);
+        res.status(201).json(result.order ? { ...result.job, job: result.job, order: result.order } : result.job);
       } catch (error) {
         res.status(400).json({ message: (error as Error).message });
       }
@@ -423,77 +422,7 @@ export function registerOrderGovernanceRoutes(app: express.Express) {
       if (!job) {
         throw new Error("OCR job not found");
       }
-      if (job.convertedOrderId) {
-        return hydrateOrder(db, findOrder(db, job.convertedOrderId));
-      }
-      if (job.status !== "verified") {
-        throw new Error("Human verification is required before creating an order");
-      }
-      const parsedPayload = JSON.parse(job.parsedPayload) as {
-        patient: Patient;
-        clinicalHistory: string;
-        testTypeIds: string[];
-      };
-      if (!parsedPayload.testTypeIds?.length) {
-        throw new Error("At least one verified test is required");
-      }
-      const timestamp = now();
-      const patientId = createId();
-      db.patients.push({
-        _id: patientId,
-        firstName: parsedPayload.patient.firstName,
-        lastName: parsedPayload.patient.lastName,
-        dateOfBirth: parsedPayload.patient.dateOfBirth,
-        gender: parsedPayload.patient.gender ?? "other",
-        phone: parsedPayload.patient.phone,
-        email: parsedPayload.patient.email,
-        address: parsedPayload.patient.address,
-        siteId: normalizeSiteId(user.siteId),
-        nationalId: parsedPayload.patient.nationalId,
-        createdAt: timestamp,
-        updatedAt: timestamp,
-      });
-      const order: Order = {
-        _id: createId(),
-        orderNumber: createOrderNumber(db),
-        patientId,
-        testTypeIds: parsedPayload.testTypeIds,
-        status: "draft",
-        priority: "normal",
-        orderSource: "walk_in",
-        referringDoctorId: null,
-        referringDoctorName: null,
-        createdBy: user._id,
-        assignedTechnicianId: null,
-        assignedPathologistId: null,
-        notes: `Created from verified OCR intake job ${job._id}`,
-        clinicalHistory: parsedPayload.clinicalHistory,
-        validationStatus: "pending",
-        validationNotes: "",
-        intakeSource: "ocr_nlp",
-        financialClearance: "pending",
-        siteId: normalizeSiteId(user.siteId),
-        courierStatus: "",
-        lockStatus: "unlocked",
-        lockedAt: null,
-        lockedBy: null,
-        lockReason: null,
-        createdAt: timestamp,
-        updatedAt: timestamp,
-      };
-      db.orders.push(order);
-      job.status = "converted_to_order";
-      job.convertedOrderId = order._id;
-      job.updatedAt = timestamp;
-      audit(db, req, {
-        module: "Order Management & Intake",
-        action: "ocr_order_created",
-        targetId: order._id,
-        orderId: order._id,
-        summary: `Verified OCR intake converted to ${order.orderNumber}`,
-        metadata: { ocrJobId: job._id, confidence: job.confidence },
-      });
-      return hydrateOrder(db, order);
+      return createOrderFromVerifiedOcrJob(db, job, user, req);
     }).catch((error: Error) => {
       res.status(400).json({ message: error.message });
       return null;

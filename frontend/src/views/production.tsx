@@ -64,11 +64,21 @@ type ProductionReadiness = {
 }
 
 type ProviderReadiness = Record<string, {
-  provider: string
+  provider?: string
   configured: boolean
   requiredEnv?: string[]
   note?: string
 }>
+
+type OssStackReadiness = {
+  categories: Array<{
+    category: string
+    implemented: boolean
+    libraries?: string[]
+    configured?: boolean
+    note?: string
+  }>
+}
 
 type DisasterRecoveryDashboard = {
   backups: Array<{ _id: string; status: string; notes: string; createdAt: string }>
@@ -91,6 +101,10 @@ export function ProductionHardeningPage() {
     const response = await api.get<ProviderReadiness>('/integrations/provider-readiness')
     return response.data
   })
+  const ossState = useLoadable<OssStackReadiness>({ categories: [] }, [], async () => {
+    const response = await api.get<OssStackReadiness>('/oss/stack-readiness')
+    return response.data
+  })
   const zohoConfigState = useLoadable<ZohoBooksConfig | null>(null, [], async () => {
     const response = await api.get<ZohoBooksConfig>('/accounting/zoho/config')
     return response.data
@@ -105,8 +119,8 @@ export function ProductionHardeningPage() {
   })
   const [feedback, setFeedback] = useState<{ kind: 'success' | 'error'; message: string } | null>(null)
 
-  if (readinessState.error || providerState.error || zohoConfigState.error || zohoLogsState.error || drState.error) {
-    return <PageError message={readinessState.error ?? providerState.error ?? zohoConfigState.error ?? zohoLogsState.error ?? drState.error ?? 'Could not load production console'} />
+  if (readinessState.error || providerState.error || ossState.error || zohoConfigState.error || zohoLogsState.error || drState.error) {
+    return <PageError message={readinessState.error ?? providerState.error ?? ossState.error ?? zohoConfigState.error ?? zohoLogsState.error ?? drState.error ?? 'Could not load production console'} />
   }
 
   const readiness = readinessState.data
@@ -161,7 +175,7 @@ export function ProductionHardeningPage() {
         action={(
           <Stack direction="row" spacing={1}>
             <Button startIcon={<DownloadRoundedIcon />} onClick={downloadEvidence}>Audit evidence</Button>
-            <Button startIcon={<SyncRoundedIcon />} onClick={() => { readinessState.refresh(); providerState.refresh(); zohoConfigState.refresh(); zohoLogsState.refresh(); drState.refresh() }}>Refresh</Button>
+            <Button startIcon={<SyncRoundedIcon />} onClick={() => { readinessState.refresh(); providerState.refresh(); ossState.refresh(); zohoConfigState.refresh(); zohoLogsState.refresh(); drState.refresh() }}>Refresh</Button>
           </Stack>
         )}
       />
@@ -181,7 +195,7 @@ export function ProductionHardeningPage() {
               <Paper key={key} variant="outlined" sx={{ p: 2 }}>
                 <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} justifyContent="space-between">
                   <Box>
-                    <Typography fontWeight={700}>{key.toUpperCase()} · {item.provider}</Typography>
+                    <Typography fontWeight={700}>{key.toUpperCase()} · {item.provider ?? 'configured service'}</Typography>
                     {item.note ? <Typography variant="body2" color="text.secondary">{item.note}</Typography> : null}
                     {item.requiredEnv?.length ? (
                       <Typography variant="caption" color="text.secondary">Env: {item.requiredEnv.join(', ')}</Typography>
@@ -199,6 +213,25 @@ export function ProductionHardeningPage() {
           </Box>
         </SectionCard>
       </Box>
+
+      <SectionCard title="Open-source implementation stack" description="The production backend now reports the concrete OSS engines wired into the Node service.">
+        <Box sx={{ display: 'grid', gap: 1.5, gridTemplateColumns: { xs: '1fr', md: 'repeat(2, minmax(0, 1fr))' } }}>
+          {ossState.data.categories.map((item) => (
+            <Paper key={item.category} variant="outlined" sx={{ p: 2 }}>
+              <Stack spacing={1}>
+                <Stack direction="row" justifyContent="space-between" spacing={1}>
+                  <Typography fontWeight={700}>{item.category}</Typography>
+                  <Chip size="small" color={item.implemented ? 'success' : 'warning'} label={item.implemented ? 'Implemented' : 'Pending'} />
+                </Stack>
+                {item.libraries?.length ? (
+                  <Typography variant="caption" color="text.secondary">{item.libraries.join(', ')}</Typography>
+                ) : null}
+                {item.note ? <Typography variant="body2" color="text.secondary">{item.note}</Typography> : null}
+              </Stack>
+            </Paper>
+          ))}
+        </Box>
+      </SectionCard>
 
       <SectionCard
         title="Zoho Books readiness"

@@ -72,8 +72,8 @@ MAVIANCE_ORANGE_PAYITEM_ID=
 - `backend/src/types.ts`
 - `backend/src/store.ts`
 - `backend/src/server.ts`
-- `frontend/src/pages/operations.tsx`
-- `frontend/src/pages/public.tsx`
+- `frontend/src/views/operations.tsx`
+- `frontend/src/views/public.tsx`
 
 ## Official references used
 

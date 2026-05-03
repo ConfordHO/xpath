@@ -1,16 +1,26 @@
+import * as Automerge from "@automerge/automerge";
+import bwipjs from "bwip-js";
 import type express from "express";
+import PDFDocument from "pdfkit";
+import QRCode from "qrcode";
 import { z } from "zod";
 
 import { requireRoles, type AuthRequest } from "../auth.js";
 import {
   AI_API_BASE_URL,
   AI_API_KEY,
+  AI_MODEL,
   AI_PROVIDER,
+  COUCHDB_DATABASE,
+  COUCHDB_URL,
   GPS_PROVIDER,
   OFFLINE_SYNC_ENABLED,
+  OHIF_VIEWER_URL,
+  ORTHANC_BASE_URL,
   SMS_API_BASE_URL,
   SMS_API_KEY,
   SMS_PROVIDER,
+  WSI_TILE_SERVER_URL,
   WHATSAPP_ACCESS_TOKEN,
   WHATSAPP_API_BASE_URL,
   WHATSAPP_PHONE_NUMBER_ID,
@@ -24,6 +34,7 @@ import {
 } from "../config.js";
 import { loadDb, updateDb } from "../store.js";
 import type {
+  BarcodeRecord,
   Database,
   InternalChatMessage,
   InternalChatThread,
@@ -141,6 +152,83 @@ const threadSchema = z.object({
 const messageSchema = z.object({
   body: z.string().trim().min(1).max(4000),
 });
+
+function barcodePrimaryBcid(barcode: BarcodeRecord) {
+  if (barcode.symbology === "qr") return "qrcode";
+  return "gs1-128";
+}
+
+async function renderBarcodePng(barcode: BarcodeRecord) {
+  const common = {
+    text: barcode.code,
+    scale: 3,
+    height: 14,
+    includetext: barcode.symbology !== "qr",
+    textsize: 10,
+    paddingwidth: 8,
+    paddingheight: 8,
+  };
+  try {
+    return await bwipjs.toBuffer({
+      bcid: barcodePrimaryBcid(barcode),
+      ...common,
+    });
+  } catch {
+    return bwipjs.toBuffer({
+      bcid: barcode.symbology === "qr" ? "qrcode" : "code128",
+      ...common,
+    });
+  }
+}
+
+async function renderPdf(render: (doc: PDFKit.PDFDocument) => void | Promise<void>) {
+  const doc = new PDFDocument({ size: "A4", margin: 42 });
+  const chunks: Buffer[] = [];
+  doc.on("data", (chunk: Buffer) => chunks.push(chunk));
+  const complete = new Promise<Buffer>((resolve, reject) => {
+    doc.on("end", () => resolve(Buffer.concat(chunks)));
+    doc.on("error", reject);
+  });
+  await render(doc);
+  doc.end();
+  return complete;
+}
+
+function writePdfHeader(doc: PDFKit.PDFDocument, title: string) {
+  doc
+    .fontSize(10)
+    .fillColor("#1565c0")
+    .text("X.PATH LABS", { continued: false })
+    .moveDown(0.4)
+    .fontSize(18)
+    .fillColor("#1f2937")
+    .text(title)
+    .moveDown(0.6)
+    .moveTo(42, doc.y)
+    .lineTo(553, doc.y)
+    .strokeColor("#d1d5db")
+    .stroke()
+    .moveDown();
+}
+
+function writePdfRows(doc: PDFKit.PDFDocument, rows: Array<[string, string | number | null | undefined]>) {
+  for (const [label, value] of rows) {
+    const y = doc.y;
+    doc.fontSize(9).fillColor("#64748b").text(label, 42, y, { width: 145 });
+    doc.fontSize(10).fillColor("#111827").text(String(value ?? "—"), 190, y, { width: 360 });
+    doc.moveDown(0.8);
+  }
+}
+
+async function couchDbReachable() {
+  if (!COUCHDB_URL) return false;
+  try {
+    const response = await fetch(COUCHDB_URL, { method: "GET" });
+    return response.ok;
+  } catch {
+    return false;
+  }
+}
 
 export function registerProductionRoutes(app: express.Express) {
   app.get(
@@ -363,13 +451,132 @@ export function registerProductionRoutes(app: express.Express) {
       return res.status(404).json({ message: "Barcode not found" });
     }
     const template = db.labelTemplates.find((entry) => entry._id === barcode.templateId) ?? null;
+    const imagePath = `/api/barcodes/${encodeURIComponent(barcode._id)}/image.png`;
+    const pdfPath = `/api/barcodes/${encodeURIComponent(barcode._id)}/label.pdf`;
     res.json({
       barcode,
       template,
-      printHtml: `<section class="xpath-label"><strong>X.PATH LABS</strong><br/><span>${barcode.entityType.toUpperCase()}</span><br/><code>${barcode.code}</code><br/><small>${template?.name ?? "Default browser label"}</small></section>`,
+      imagePath,
+      pdfPath,
+      printHtml: `<section class="xpath-label"><strong>X.PATH LABS</strong><br/><span>${barcode.entityType.toUpperCase()}</span><br/><img alt="Barcode" src="${imagePath}" style="max-width:100%;height:auto"/><br/><code>${barcode.code}</code><br/><small>${template?.name ?? "Default browser label"}</small></section>`,
       browserPrintInstruction:
-        "Render printHtml in a print-only iframe/window and call window.print(). Real thermal-printer drivers can be connected through the same endpoint payload.",
+        "Render printHtml in a print-only iframe/window and call window.print(), or download label.pdf for thermal-printer middleware.",
     });
+  });
+
+  app.get("/api/barcodes/:id/image.png", requireRoles("admin", "receptionist", "technician", "pathologist", "courier"), async (req, res) => {
+    const db = await loadDb();
+    const barcode = db.barcodes.find((entry) => entry._id === req.params.id || entry.code === req.params.id);
+    if (!barcode) {
+      return res.status(404).json({ message: "Barcode not found" });
+    }
+    const image = await renderBarcodePng(barcode);
+    res.setHeader("Content-Type", "image/png");
+    res.setHeader("Cache-Control", "private, max-age=300");
+    res.send(image);
+  });
+
+  app.get("/api/barcodes/:id/label.pdf", requireRoles("admin", "receptionist", "technician"), async (req, res) => {
+    const db = await loadDb();
+    const barcode = db.barcodes.find((entry) => entry._id === req.params.id || entry.code === req.params.id);
+    if (!barcode) {
+      return res.status(404).json({ message: "Barcode not found" });
+    }
+    const image = await renderBarcodePng(barcode);
+    const template = db.labelTemplates.find((entry) => entry._id === barcode.templateId) ?? null;
+    const pdf = await renderPdf((doc) => {
+      writePdfHeader(doc, "Specimen Label");
+      doc.image(image, 64, 118, { width: 330 });
+      doc.moveDown(9);
+      writePdfRows(doc, [
+        ["Entity", barcode.entityType.toUpperCase()],
+        ["Barcode", barcode.code],
+        ["Symbology", barcode.symbology],
+        ["Template", template?.name ?? "Default"],
+        ["Status", barcode.status],
+      ]);
+    });
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `inline; filename="label-${barcode._id}.pdf"`);
+    res.send(pdf);
+  });
+
+  app.get("/api/orders/:id/documents/invoice.pdf", requireRoles("admin", "receptionist", "finance", "doctor"), async (req: AuthRequest, res) => {
+    const db = scopeDbForUser(await loadDb(), ensureUser(req));
+    const order = db.orders.find((entry) => entry._id === req.params.id || entry.orderNumber === req.params.id);
+    if (!order) {
+      return res.status(404).json({ message: "Order not found" });
+    }
+    const patient = findPatient(db, order.patientId);
+    const invoice = db.invoices.find((entry) => entry.orderId === order._id) ?? null;
+    const tests = db.testTypes.filter((entry) => order.testTypeIds.includes(entry._id));
+    const total = getOrderTotal(db, order);
+    const paid = getOrderPaid(db, order._id);
+    const qr = await QRCode.toBuffer(
+      JSON.stringify({ type: "invoice", orderId: order._id, orderNumber: order.orderNumber, total }),
+      { type: "png", width: 160, margin: 1 },
+    );
+    const pdf = await renderPdf((doc) => {
+      writePdfHeader(doc, `Invoice ${invoice?.invoiceNumber ?? order.orderNumber}`);
+      doc.image(qr, 430, 42, { width: 82 });
+      writePdfRows(doc, [
+        ["Order", order.orderNumber],
+        ["Patient", `${patient.firstName} ${patient.lastName}`],
+        ["Date of birth", patient.dateOfBirth],
+        ["Status", order.status],
+        ["Issued", invoice?.issuedAt ?? order.createdAt],
+        ["Tests", tests.map((test) => `${test.code} ${test.name}`).join("; ")],
+        ["Subtotal", formatCurrency(db, total)],
+        ["Paid", formatCurrency(db, paid)],
+        ["Balance", formatCurrency(db, Math.max(0, total - paid))],
+      ]);
+      doc.moveDown().fontSize(9).fillColor("#64748b").text("Generated by X.PATH LIMS server-side PDF pipeline.");
+    });
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `inline; filename="invoice-${order.orderNumber}.pdf"`);
+    res.send(pdf);
+  });
+
+  app.get("/api/orders/:id/documents/chain-of-custody.pdf", requireRoles("admin", "receptionist", "technician", "pathologist", "courier"), async (req: AuthRequest, res) => {
+    const db = scopeDbForUser(await loadDb(), ensureUser(req));
+    const order = db.orders.find((entry) => entry._id === req.params.id || entry.orderNumber === req.params.id);
+    if (!order) {
+      return res.status(404).json({ message: "Order not found" });
+    }
+    const patient = findPatient(db, order.patientId);
+    const samples = db.samples.filter((entry) => entry.orderId === order._id);
+    const sampleIds = new Set(samples.map((entry) => entry._id));
+    const events = db.chainOfCustody
+      .filter((entry) => sampleIds.has(entry.specimenId))
+      .slice()
+      .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+    const pdf = await renderPdf((doc) => {
+      writePdfHeader(doc, `Chain of Custody ${order.orderNumber}`);
+      writePdfRows(doc, [
+        ["Order", order.orderNumber],
+        ["Patient", `${patient.firstName} ${patient.lastName}`],
+        ["Samples", samples.map((sample) => sample.label).join(", ") || "—"],
+        ["Generated", now()],
+      ]);
+      doc.moveDown().fontSize(12).fillColor("#1f2937").text("Custody Events").moveDown(0.5);
+      if (!events.length) {
+        doc.fontSize(10).fillColor("#64748b").text("No custody events recorded.");
+      }
+      for (const event of events) {
+        writePdfRows(doc, [
+          ["Time", event.createdAt],
+          ["Event", event.eventType],
+          ["Actor", event.actor],
+          ["Location", event.location],
+          ["Condition", event.condition],
+          ["Notes", event.notes ?? ""],
+        ]);
+        doc.moveDown(0.4);
+      }
+    });
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `inline; filename="custody-${order.orderNumber}.pdf"`);
+    res.send(pdf);
   });
 
   app.post("/api/specimens/:id/handoff", async (req: AuthRequest, res) => {
@@ -598,7 +805,31 @@ export function registerProductionRoutes(app: express.Express) {
         "Local free-mode QC heuristic: no external model is configured, so this provides a deterministic integration-ready result for validation workflows.",
     };
 
-    if (AI_PROVIDER !== "local" && AI_API_BASE_URL) {
+    if (AI_PROVIDER === "ollama" && AI_API_BASE_URL) {
+      const response = await fetch(new URL("/api/generate", AI_API_BASE_URL), {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(AI_API_KEY ? { Authorization: `Bearer ${AI_API_KEY}` } : {}),
+        },
+        body: JSON.stringify({
+          model: AI_MODEL,
+          stream: false,
+          format: "json",
+          prompt: [
+            "Return compact JSON for a pathology AI quality-control request.",
+            `Slide: ${aiPayload.slideId}`,
+            `Analysis type: ${aiPayload.analysisType}`,
+            `Image URL: ${aiPayload.imageUrl ?? "not provided"}`,
+            "Fields: qualityScore 0-100, finding, explanation, needsReview boolean.",
+          ].join("\n"),
+        }),
+      });
+      providerResponse = await response.json().catch(() => ({ status: response.status }));
+      if (!response.ok) {
+        return res.status(502).json({ message: "Ollama provider returned an error", providerResponse });
+      }
+    } else if (AI_PROVIDER !== "local" && AI_API_BASE_URL) {
       const response = await fetch(new URL("/inference", AI_API_BASE_URL), {
         method: "POST",
         headers: {
@@ -920,6 +1151,48 @@ export function registerProductionRoutes(app: express.Express) {
     res.status(202).json(event);
   });
 
+  app.post("/api/offline/merge-preview", requireRoles(...ALL_AUTHENTICATED_ROLES), async (req: AuthRequest, res) => {
+    const parsed = z
+      .object({
+        base: z.record(z.string(), z.unknown()).default({}),
+        local: z.record(z.string(), z.unknown()).default({}),
+        remote: z.record(z.string(), z.unknown()).default({}),
+      })
+      .safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ message: "Invalid merge preview payload" });
+    }
+
+    const baseDoc = Automerge.from<Record<string, unknown>>(parsed.data.base);
+    const localDoc = Automerge.change(baseDoc, (doc) => {
+      Object.assign(doc, parsed.data.local);
+    });
+    const remoteDoc = Automerge.change(baseDoc, (doc) => {
+      Object.assign(doc, parsed.data.remote);
+    });
+    const merged = Automerge.merge(localDoc, remoteDoc);
+    const conflicts = Object.keys(merged).flatMap((key) => {
+      const fieldConflicts = Automerge.getConflicts(merged, key);
+      return fieldConflicts ? [{ field: key, values: fieldConflicts }] : [];
+    });
+    await updateDb((db) => {
+      audit(db, req, {
+        module: "Disaster Recovery",
+        action: "offline_merge_preview",
+        targetId: req.user?._id ?? "anonymous",
+        summary: `Automerge preview completed with ${conflicts.length} conflict field(s)`,
+        metadata: { conflictFields: conflicts.map((entry) => entry.field) },
+      });
+    });
+    res.json({
+      engine: "Automerge",
+      couchDbConfigured: Boolean(COUCHDB_URL),
+      couchDbDatabase: COUCHDB_DATABASE,
+      merged,
+      conflicts,
+    });
+  });
+
   app.get("/api/dr/dashboard", requireRoles("admin"), async (req: AuthRequest, res) => {
     const db = scopeDbForUser(await loadDb(), ensureUser(req));
     res.json({
@@ -1036,6 +1309,7 @@ export function registerProductionRoutes(app: express.Express) {
   });
 
   app.get("/api/integrations/provider-readiness", requireRoles("admin"), async (_req, res) => {
+    const couchConfigured = Boolean(COUCHDB_URL);
     res.json({
       accounting: {
         provider: "zoho_books",
@@ -1060,8 +1334,41 @@ export function registerProductionRoutes(app: express.Express) {
       },
       ai: {
         provider: AI_PROVIDER,
-        configured: AI_PROVIDER === "local" || Boolean(AI_API_BASE_URL && AI_API_KEY),
-        requiredEnv: ["AI_PROVIDER", "AI_API_BASE_URL", "AI_API_KEY"],
+        model: AI_MODEL,
+        configured:
+          AI_PROVIDER === "local"
+            ? true
+            : AI_PROVIDER === "ollama"
+            ? Boolean(AI_API_BASE_URL)
+            : Boolean(AI_API_BASE_URL && AI_API_KEY),
+        requiredEnv: ["AI_PROVIDER", "AI_API_BASE_URL", "AI_API_KEY", "AI_MODEL"],
+      },
+      digitalPathology: {
+        dicomServer: "Orthanc",
+        viewer: "OHIF / Cornerstone3D",
+        tileServer: "OpenSlide/OpenSeadragon-compatible",
+        configured: Boolean(ORTHANC_BASE_URL && OHIF_VIEWER_URL),
+        requiredEnv: ["ORTHANC_BASE_URL", "OHIF_VIEWER_URL", "WSI_TILE_SERVER_URL"],
+        endpoints: {
+          orthanc: ORTHANC_BASE_URL || null,
+          ohif: OHIF_VIEWER_URL || null,
+          wsiTiles: WSI_TILE_SERVER_URL || null,
+        },
+      },
+      offlineSync: {
+        browserEngine: "PouchDB-compatible document sync",
+        conflictEngine: "Automerge",
+        couchDbConfigured: couchConfigured,
+        couchDbReachable: await couchDbReachable(),
+        couchDbDatabase: COUCHDB_DATABASE,
+        requiredEnv: ["COUCHDB_URL", "COUCHDB_DATABASE"],
+      },
+      ocr: {
+        extraction: ["pdfjs-dist", "mammoth", "officeparser"],
+        preprocessing: ["sharp", "pdfjs-dist canvas render"],
+        recognition: ["native Tesseract via safe spawn", "tesseract.js fallback"],
+        nlp: ["compromise.js", "test-code gazetteer"],
+        queue: process.env.REDIS_URL ? "BullMQ-ready Redis worker mode" : "in-process immediate processing",
       },
       sms: {
         provider: SMS_PROVIDER,
@@ -1078,6 +1385,25 @@ export function registerProductionRoutes(app: express.Express) {
         configured: GPS_PROVIDER === "browser_geolocation",
         note: "Browser geolocation is free, permission-based, and requires HTTPS in production clients.",
       },
+    });
+  });
+
+  app.get("/api/oss/stack-readiness", requireRoles("admin"), async (_req, res) => {
+    res.json({
+      generatedAt: now(),
+      categories: [
+        { category: "OCR", implemented: true, libraries: ["native Tesseract safe spawn", "tesseract.js"], mode: "native-first with WASM fallback" },
+        { category: "Extraction", implemented: true, libraries: ["pdfjs-dist", "mammoth", "officeparser"] },
+        { category: "Preprocessing", implemented: true, libraries: ["sharp", "@napi-rs/canvas"], note: "PDF pages render to PNG before OCR when no text layer is present." },
+        { category: "NLP", implemented: true, libraries: ["compromise"], note: "Node-native parser with medical test gazetteer; external clinical NLP can be added without a second backend." },
+        { category: "Queue", implemented: true, libraries: ["BullMQ"], configured: Boolean(process.env.REDIS_URL), note: "Routes run synchronously without Redis; REDIS_URL enables production worker separation." },
+        { category: "Barcode", implemented: true, libraries: ["bwip-js", "qrcode"], endpoints: ["/api/barcodes/:id/image.png", "/api/barcodes/:id/label.pdf"] },
+        { category: "PDF-gen", implemented: true, libraries: ["PDFKit"], endpoints: ["/api/orders/:id/documents/invoice.pdf", "/api/orders/:id/documents/chain-of-custody.pdf"] },
+        { category: "WSI/DICOM", implemented: Boolean(ORTHANC_BASE_URL || OHIF_VIEWER_URL), libraries: ["Orthanc", "OHIF Viewer", "Cornerstone3D", "OpenSeadragon"], endpoints: { orthanc: ORTHANC_BASE_URL || null, ohif: OHIF_VIEWER_URL || null, wsiTiles: WSI_TILE_SERVER_URL || null } },
+        { category: "HL7/ASTM", implemented: true, libraries: ["simple-hl7"], note: "HL7 MLLP remains in Node; ASTM stays schema-hardened because Node ASTM libraries are weak." },
+        { category: "Sync", implemented: true, libraries: ["Automerge", "PouchDB/CouchDB-compatible API"], couchDbConfigured: Boolean(COUCHDB_URL) },
+        { category: "AI", implemented: true, libraries: ["Ollama HTTP API"], provider: AI_PROVIDER, model: AI_MODEL },
+      ],
     });
   });
 }

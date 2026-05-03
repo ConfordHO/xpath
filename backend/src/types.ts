@@ -662,11 +662,10 @@ export interface Invoice {
   subtotal: number;
   adjustmentAmount: number;
   total: number;
-  status: "draft" | "issued" | "paid" | "refunded";
+  status: "draft" | "issued" | "unpaid" | "partial" | "paid" | "refunded";
   paymentGateway:
     | "cash"
     | "card"
-    | "mpesa"
     | "maviance"
     | "bank_transfer"
     | "insurance";

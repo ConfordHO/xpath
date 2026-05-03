@@ -189,10 +189,16 @@ export const AI_PROVIDER =
   process.env.AI_PROVIDER?.trim().toLowerCase() || "local";
 export const AI_API_BASE_URL = process.env.AI_API_BASE_URL?.trim() || "";
 export const AI_API_KEY = process.env.AI_API_KEY?.trim() || "";
+export const AI_MODEL = process.env.AI_MODEL?.trim() || "qwen2.5:1.5b";
 export const AI_VALIDATED_MODEL_ENDPOINT =
   process.env.AI_VALIDATED_MODEL_ENDPOINT?.trim() || AI_API_BASE_URL;
 export const AI_VALIDATED_MODEL_API_KEY =
   process.env.AI_VALIDATED_MODEL_API_KEY?.trim() || AI_API_KEY;
+export const ORTHANC_BASE_URL = process.env.ORTHANC_BASE_URL?.trim() || "";
+export const OHIF_VIEWER_URL = process.env.OHIF_VIEWER_URL?.trim() || "";
+export const WSI_TILE_SERVER_URL = process.env.WSI_TILE_SERVER_URL?.trim() || "";
+export const COUCHDB_URL = process.env.COUCHDB_URL?.trim() || "";
+export const COUCHDB_DATABASE = process.env.COUCHDB_DATABASE?.trim() || "xpath_offline";
 export const GPS_PROVIDER =
   process.env.GPS_PROVIDER?.trim().toLowerCase() || "browser_geolocation";
 export const COURIER_PROVIDER =

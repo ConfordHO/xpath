@@ -17,6 +17,7 @@ import { Link as RouterLink, useSearchParams } from 'react-router-dom'
 
 import { api } from '../api'
 import { BrandLogo, LoadingPanel } from '../components'
+import { OcrOrderUpload } from '../components/OcrOrderUpload'
 import type { TestType } from '../types'
 import { formatDateTime } from '../utils'
 
@@ -1147,6 +1148,44 @@ export function OrderOnlinePage() {
           sx={{
             px: { xs: 2, md: 2.5 },
             py: { xs: 1.5, md: 1.75 },
+            borderRadius: 3,
+            border: '1px solid #d2d9e4',
+          }}
+        >
+          <OcrOrderUpload
+            title="Scan requisition attachments"
+            buildCorrections={() => ({
+              source: 'patient_portal',
+              patient: {
+                firstName: form.patient.firstName.trim(),
+                lastName: form.patient.lastName.trim(),
+                dateOfBirth: form.patient.dateOfBirth,
+                phone: form.patient.phone.trim(),
+                email: form.patient.email.trim(),
+              },
+              testCodes: form.testTypeIds,
+              clinician: form.referringPhysicianName.trim() ? {
+                name: form.referringPhysicianName.trim(),
+                email: form.referringPhysicianEmail.trim(),
+                phone: form.referringPhysicianPhone.trim(),
+              } : undefined,
+              clinicalNotes: [
+                form.diagnosis.trim(),
+                form.medicalHistory.trim(),
+                form.clinicalHistory.trim(),
+                form.additionalRequests.trim(),
+              ].filter(Boolean).join('\n\n'),
+            })}
+            onOrderCreated={(order) => setSuccess({ orderNumber: order.orderNumber, message: formCopy.success })}
+          />
+        </Paper>
+
+        <Paper
+          elevation={0}
+          sx={{
+            maxWidth: 1120,
+            mx: 'auto',
+            p: { xs: 2, md: 2.5 },
             borderRadius: 3,
             border: '1px solid #d2d9e4',
           }}
