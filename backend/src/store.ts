@@ -245,6 +245,110 @@ function collapseByKey<T>(items: T[] | undefined, getKey: (item: T) => string) {
   return Array.from(bestByKey.values());
 }
 
+function deriveOrderItems(
+  rawItems: Partial<Database>["orderItems"],
+  seedItems: Database["orderItems"],
+  orders: Database["orders"],
+) {
+  const existingItems = mergeByKey(rawItems, seedItems, (item) => item._id);
+  const bySlot = new Map(existingItems.map((item) => [`${item.orderId}:${item.itemNumber}`, item]));
+  const activeSlots = new Set<string>();
+  const derived: Database["orderItems"] = [];
+
+  for (const order of orders) {
+    order.testTypeIds.forEach((testTypeId, index) => {
+      const itemNumber = index + 1;
+      const slot = `${order._id}:${itemNumber}`;
+      activeSlots.add(slot);
+      const existing = bySlot.get(slot);
+      const derivedStatus =
+        order.status === "cancelled"
+          ? "cancelled"
+          : order.status === "released"
+            ? "released"
+            : order.status === "completed"
+              ? "completed"
+              : "pending";
+      derived.push({
+        _id: existing?._id ?? `${order._id}:item:${itemNumber}`,
+        orderId: order._id,
+        testTypeId,
+        itemNumber,
+        status: existing?.status ?? derivedStatus,
+        resolvedReason: existing?.resolvedReason ?? null,
+        resolvedBy: existing?.resolvedBy ?? null,
+        resolvedAt: existing?.resolvedAt ?? null,
+        cancelledReason: existing?.cancelledReason ?? null,
+        cancelledBy: existing?.cancelledBy ?? null,
+        cancelledAt: existing?.cancelledAt ?? null,
+        releasedAt: existing?.releasedAt ?? (order.status === "released" ? order.releasedAt ?? order.updatedAt : null),
+        createdAt: existing?.createdAt ?? order.createdAt,
+        updatedAt: existing?.updatedAt ?? order.updatedAt,
+      });
+    });
+  }
+
+  return derived.filter((item) => activeSlots.has(`${item.orderId}:${item.itemNumber}`));
+}
+
+function deriveSpecimenAssignments(
+  rawAssignments: Partial<Database>["specimenAssignments"],
+  seedAssignments: Database["specimenAssignments"],
+  orders: Database["orders"],
+  orderItems: Database["orderItems"],
+  samples: Database["samples"],
+) {
+  const orderIds = new Set(orders.map((order) => order._id));
+  const itemIdsByOrder = new Map<string, string[]>();
+  for (const item of orderItems) {
+    const current = itemIdsByOrder.get(item.orderId) ?? [];
+    current.push(item._id);
+    itemIdsByOrder.set(item.orderId, current);
+  }
+
+  const assignments = mergeByKey(rawAssignments, seedAssignments, (item) => item._id)
+    .filter((assignment) => orderIds.has(assignment.orderId))
+    .map((assignment) => {
+      const validItemIds = new Set(itemIdsByOrder.get(assignment.orderId) ?? []);
+      const orderItemIds = (assignment.orderItemIds ?? []).filter((itemId) =>
+        validItemIds.has(itemId),
+      );
+      return {
+        ...assignment,
+        orderItemIds,
+        assignmentType:
+          assignment.assignmentType ?? (orderItemIds.length > 1 ? ("shared" as const) : ("dedicated" as const)),
+        accessionId: assignment.accessionId ?? null,
+        sampleId: assignment.sampleId ?? null,
+      };
+    })
+    .filter((assignment) => assignment.orderItemIds.length > 0);
+
+  const bySpecimen = new Map(assignments.map((assignment) => [assignment.specimenId, assignment]));
+  for (const sample of samples) {
+    const orderItemIds = itemIdsByOrder.get(sample.orderId) ?? [];
+    if (!orderItemIds.length || bySpecimen.has(sample._id)) {
+      continue;
+    }
+    const timestamp = sample.createdAt ?? sample.receivedAt;
+    const assignment = {
+      _id: `${sample.orderId}:${sample._id}:assignment`,
+      specimenId: sample._id,
+      orderId: sample.orderId,
+      orderItemIds,
+      accessionId: sample.accessionId,
+      sampleId: sample._id,
+      assignmentType: orderItemIds.length > 1 ? ("shared" as const) : ("dedicated" as const),
+      createdAt: timestamp,
+      updatedAt: sample.updatedAt ?? timestamp,
+    };
+    assignments.push(assignment);
+    bySpecimen.set(sample._id, assignment);
+  }
+
+  return assignments;
+}
+
 function normalizeDatabase(raw: Partial<Database>): Database {
   const seed = createSeedDatabase();
   const { specimens, specimenStatusHistory } = deriveSpecimenCollections(raw, seed);
@@ -403,6 +507,62 @@ function normalizeDatabase(raw: Partial<Database>): Database {
     rawAuditEvents.length > 0 && verifyAuditTrail(rawAuditEvents).valid
       ? rawAuditEvents.slice().sort((left, right) => right.sequence - left.sequence)
       : normalizeAuditTrail(rawAuditEvents);
+  const normalizedOrders = (raw.orders ?? seed.orders).map((order) => ({
+    ...order,
+    testTypeIds: (order.testTypeIds ?? [])
+      .map((testTypeId) => legacyTestIds.get(testTypeId) ?? testTypeId)
+      .filter((testTypeId, index, all) => {
+        if (all.indexOf(testTypeId) !== index) {
+          return false;
+        }
+        return (
+          canonicalTestTypesById.has(testTypeId) ||
+          testTypes.some((item) => item._id === testTypeId)
+        );
+      }),
+    validationStatus: order.validationStatus ?? "pending",
+    intakeSource: order.intakeSource ?? "manual",
+    financialClearance: order.financialClearance ?? "pending",
+    lockStatus: order.lockStatus ?? (order.lockedAt ? "locked" : "unlocked"),
+    lockedAt: order.lockedAt ?? null,
+    lockedBy: order.lockedBy ?? null,
+    lockReason: order.lockReason ?? null,
+    courierStatus: normalizeCourierStatus(order.courierStatus),
+    receivedByUserId: order.receivedByUserId ?? null,
+    triagedAt: order.triagedAt ?? null,
+    triagedBy: order.triagedBy ?? null,
+    workflowReleasedAt: order.workflowReleasedAt ?? null,
+    workflowReleasedBy: order.workflowReleasedBy ?? null,
+    paymentCollectionStatus: order.paymentCollectionStatus ?? "unpaid",
+    paymentCollectionMethod: order.paymentCollectionMethod ?? null,
+    paymentCollectionAmount: order.paymentCollectionAmount ?? null,
+    paymentCollectionReference: order.paymentCollectionReference ?? null,
+    paymentCollectionDeclaredBy: order.paymentCollectionDeclaredBy ?? null,
+    paymentCollectionDeclaredAt: order.paymentCollectionDeclaredAt ?? null,
+    paymentPromptSentAt: order.paymentPromptSentAt ?? null,
+    paymentPromptRecipient: order.paymentPromptRecipient ?? null,
+    anonymousCaseCode: order.anonymousCaseCode ?? `CASE-${order.orderNumber}`,
+    requesterNotificationEmail: order.requesterNotificationEmail ?? null,
+    requesterNotificationPhone: order.requesterNotificationPhone ?? null,
+    completedAt:
+      order.completedAt ??
+      (raw.reports ?? seed.reports).find((report) => report.orderId === order._id)?.lockedAt ??
+      null,
+    siteId:
+      order.siteId ?? userSiteById.get(order.createdBy) ?? normalizeSiteId(order.siteId),
+  }));
+  const normalizedSamples = (raw.samples ?? seed.samples).map((sample) => ({
+    ...sample,
+    status: sample.status ?? "received",
+  }));
+  const orderItems = deriveOrderItems(raw.orderItems, seed.orderItems, normalizedOrders);
+  const specimenAssignments = deriveSpecimenAssignments(
+    raw.specimenAssignments,
+    seed.specimenAssignments,
+    normalizedOrders,
+    orderItems,
+    normalizedSamples,
+  );
   const normalizedBase: Database = {
     users,
     doctors,
@@ -417,50 +577,9 @@ function normalizeDatabase(raw: Partial<Database>): Database {
     resultRecords,
     specimenImages,
     orderNumberReservations,
-    orders: (raw.orders ?? seed.orders).map((order) => ({
-      ...order,
-      testTypeIds: (order.testTypeIds ?? [])
-        .map((testTypeId) => legacyTestIds.get(testTypeId) ?? testTypeId)
-        .filter((testTypeId, index, all) => {
-          if (all.indexOf(testTypeId) !== index) {
-            return false;
-          }
-          return (
-            canonicalTestTypesById.has(testTypeId) ||
-            testTypes.some((item) => item._id === testTypeId)
-          );
-        }),
-      validationStatus: order.validationStatus ?? "pending",
-      intakeSource: order.intakeSource ?? "manual",
-      financialClearance: order.financialClearance ?? "pending",
-      lockStatus: order.lockStatus ?? (order.lockedAt ? "locked" : "unlocked"),
-      lockedAt: order.lockedAt ?? null,
-      lockedBy: order.lockedBy ?? null,
-      lockReason: order.lockReason ?? null,
-      courierStatus: normalizeCourierStatus(order.courierStatus),
-      receivedByUserId: order.receivedByUserId ?? null,
-      triagedAt: order.triagedAt ?? null,
-      triagedBy: order.triagedBy ?? null,
-      workflowReleasedAt: order.workflowReleasedAt ?? null,
-      workflowReleasedBy: order.workflowReleasedBy ?? null,
-      paymentCollectionStatus: order.paymentCollectionStatus ?? "unpaid",
-      paymentCollectionMethod: order.paymentCollectionMethod ?? null,
-      paymentCollectionAmount: order.paymentCollectionAmount ?? null,
-      paymentCollectionReference: order.paymentCollectionReference ?? null,
-      paymentCollectionDeclaredBy: order.paymentCollectionDeclaredBy ?? null,
-      paymentCollectionDeclaredAt: order.paymentCollectionDeclaredAt ?? null,
-      paymentPromptSentAt: order.paymentPromptSentAt ?? null,
-      paymentPromptRecipient: order.paymentPromptRecipient ?? null,
-      anonymousCaseCode: order.anonymousCaseCode ?? `CASE-${order.orderNumber}`,
-      requesterNotificationEmail: order.requesterNotificationEmail ?? null,
-      requesterNotificationPhone: order.requesterNotificationPhone ?? null,
-      completedAt:
-        order.completedAt ??
-        (raw.reports ?? seed.reports).find((report) => report.orderId === order._id)?.lockedAt ??
-        null,
-      siteId:
-        order.siteId ?? userSiteById.get(order.createdBy) ?? normalizeSiteId(order.siteId),
-    })),
+    orders: normalizedOrders,
+    orderItems,
+    specimenAssignments,
     orderAmendments: (raw.orderAmendments ?? seed.orderAmendments).map((amendment) => ({
       ...amendment,
       status: amendment.status ?? "applied",
@@ -522,10 +641,7 @@ function normalizeDatabase(raw: Partial<Database>): Database {
     accountingExportBatches: raw.accountingExportBatches ?? seed.accountingExportBatches,
     zohoBooksSyncLogs: raw.zohoBooksSyncLogs ?? seed.zohoBooksSyncLogs,
     accessions: raw.accessions ?? seed.accessions,
-    samples: (raw.samples ?? seed.samples).map((sample) => ({
-      ...sample,
-      status: sample.status ?? "received",
-    })),
+    samples: normalizedSamples,
     barcodes: (raw.barcodes ?? seed.barcodes).map((barcode) => ({
       ...barcode,
       assignedAt: barcode.assignedAt ?? null,

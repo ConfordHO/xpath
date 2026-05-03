@@ -20,6 +20,8 @@ services:
         value: xpath-clients
       - key: JWT_EXPIRY
         value: 7d
+      - key: PUBLIC_REGISTRATION_ENABLED
+        value: false
       - key: HL7_MLLP_ENABLED
         value: false
       - key: DATABASE_URL

@@ -822,8 +822,8 @@ export function LandingPage() {
 export function LoginPage() {
   const { signIn, user } = useAuth()
   const navigate = useNavigate()
-  const [email, setEmail] = useState('admin@xpath.lims')
-  const [password, setPassword] = useState('admin123')
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
 
@@ -875,9 +875,6 @@ export function LoginPage() {
           <Button disabled={submitting} variant="contained" onClick={submit} fullWidth>
             Sign in
           </Button>
-          <Typography color="text.secondary" sx={{ textAlign: 'center' }}>
-            Use your seeded staff credentials to access the correct role dashboard.
-          </Typography>
           <Button component={RouterLink} to="/patient-portal" variant="text">
             Patient? Look up your test results
           </Button>

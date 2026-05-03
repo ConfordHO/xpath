@@ -325,6 +325,8 @@ The sample remains department-owned until transferred, but all user actions are 
 6. Dashboard shows pending, blocked, completed, and released items separately.
 7. Final order completion requires every item to be released, cancelled, or formally resolved.
 
+Implementation status: covered in the backend hardening regression suite. The API now returns item-level workflow plans, shared specimen assignments, explicit IHC dependency state, dashboard item counts, and report release gates that block final order release until every item is completed, released, cancelled, or formally resolved.
+
 ### Workflow F: Printable Billing Before and After Payment
 
 1. Invoice is printable immediately after order pricing.

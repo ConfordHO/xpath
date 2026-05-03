@@ -2,7 +2,11 @@ import { randomBytes } from "node:crypto";
 
 import type { AuthRequest } from "../auth.js";
 import { isSuperAdmin, normalizeSiteId } from "../auth.js";
-import { describeOrderWorkflowRoutes, getOrderWorkflowPlan } from "./workflowPlans.js";
+import {
+  describeOrderWorkflowRoutes,
+  getOrderWorkflowPlan,
+  getWorkflowItemDashboard,
+} from "./workflowPlans.js";
 import type {
   Accession,
   CourierStatus,
@@ -830,11 +834,22 @@ export function buildDashboardSummary(db: Database) {
     (order) => order.courierStatus && order.courierStatus !== "received_at_lab",
   ).length;
   const readyReports = db.reports.filter((report) => report.status === "complete").length;
+  const workflowItems = getWorkflowItemDashboard(db);
   return {
     totalOrders,
     reviewOrders,
     pendingPickup,
     readyReports,
+    workflowItems: {
+      total: workflowItems.total,
+      pending: workflowItems.pending,
+      blocked: workflowItems.blocked,
+      inProgress: workflowItems.inProgress,
+      completed: workflowItems.completed,
+      released: workflowItems.released,
+      cancelled: workflowItems.cancelled,
+      resolved: workflowItems.resolved,
+    },
     latestOrders: db.orders
       .slice()
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt))

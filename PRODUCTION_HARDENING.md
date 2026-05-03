@@ -65,6 +65,8 @@ Backend tests now cover:
 - TAT dashboard response
 - DMS upload, replace, and download
 - barcode enforcement on histology progression
+- multi-test single-order routing with item-level plans, shared specimen links, explicit IHC dependency checks, and final release gating
+- public registration closure for production
 - connector readiness and simulated vendor tests
 - logout/session revocation
 
@@ -95,6 +97,8 @@ Backend:
 - `GENERAL_RATE_LIMIT_MAX`
 - `AUTH_RATE_LIMIT_WINDOW_MS`
 - `AUTH_RATE_LIMIT_MAX`
+- `PUBLIC_REGISTRATION_ENABLED=false`
+- `MFA_ENFORCED=true` for admin/super-admin production accounts
 
 ### Required for live Maviance
 

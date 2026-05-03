@@ -2,9 +2,15 @@ import type {
   CytologyCase,
   Database,
   Order,
+  OrderItem,
+  OrderItemStatus,
+  OrderWorkflowDependency,
+  OrderWorkflowItemPlan,
+  OrderWorkflowItemSummary,
   OrderWorkflowModule,
   OrderWorkflowPlan,
   OrderWorkflowRouteGuide,
+  OrderWorkflowSpecimenLink,
   OrderWorkflowStageId,
   OrderWorkflowStageState,
 } from "../types.js";
@@ -260,9 +266,142 @@ function getReport(db: Database, orderId: string) {
   return db.reports.find((entry) => entry.orderId === orderId) ?? null;
 }
 
+function routeStagesForTest(testTypeId: string) {
+  return workflowByTestId[testTypeId] ?? ["pathologist_review", "report_signout", "result_release"];
+}
+
+function terminalOrderItemStatus(status: OrderItemStatus) {
+  return ["released", "cancelled", "resolved"].includes(status);
+}
+
+function isHistologyStage(stageId: OrderWorkflowStageId) {
+  return ["accessioning", "grossing", "processing", "embedding", "sectioning", "staining"].includes(stageId);
+}
+
+function itemTerminalStatusFromOrder(order: Order): OrderItemStatus | null {
+  if (order.status === "cancelled") return "cancelled";
+  if (order.status === "released") return "released";
+  return null;
+}
+
+function getOrderItemRecords(db: Database, order: Order): OrderItem[] {
+  const persisted = db.orderItems
+    .filter((item) => item.orderId === order._id)
+    .sort((a, b) => a.itemNumber - b.itemNumber);
+  if (persisted.length === order.testTypeIds.length) {
+    return persisted;
+  }
+
+  return order.testTypeIds.map((testTypeId, index) => ({
+    _id: `${order._id}:item:${index + 1}`,
+    orderId: order._id,
+    testTypeId,
+    itemNumber: index + 1,
+    status: itemTerminalStatusFromOrder(order) ?? (order.status === "completed" ? "completed" : "pending"),
+    resolvedReason: null,
+    resolvedBy: null,
+    resolvedAt: null,
+    cancelledReason: null,
+    cancelledBy: null,
+    cancelledAt: null,
+    releasedAt: order.status === "released" ? order.releasedAt ?? order.updatedAt : null,
+    createdAt: order.createdAt,
+    updatedAt: order.updatedAt,
+  }));
+}
+
+function histologyBlockAvailable(db: Database, orderId: string) {
+  const accession = db.accessions.find((entry) => entry.orderId === orderId) ?? null;
+  return Boolean(
+    accession?.blocks.some(
+      (block) => block.embeddedAt && (block.sectionedAt || block.slides.length > 0),
+    ),
+  );
+}
+
+function getSpecimenLinks(
+  db: Database,
+  order: Order,
+  orderItem: OrderItem,
+): OrderWorkflowSpecimenLink[] {
+  const assignments = db.specimenAssignments.filter(
+    (assignment) =>
+      assignment.orderId === order._id && assignment.orderItemIds.includes(orderItem._id),
+  );
+  const directSample = db.samples.find((sample) => sample.orderId === order._id) ?? null;
+  const fallbackAssignments =
+    assignments.length || !directSample
+      ? assignments
+      : [
+          {
+            _id: `${order._id}:${directSample._id}:assignment:fallback`,
+            specimenId: directSample._id,
+            orderId: order._id,
+            orderItemIds: getOrderItemRecords(db, order).map((item) => item._id),
+            accessionId: directSample.accessionId,
+            sampleId: directSample._id,
+            assignmentType: order.testTypeIds.length > 1 ? ("shared" as const) : ("dedicated" as const),
+            createdAt: directSample.createdAt,
+            updatedAt: directSample.updatedAt,
+          },
+        ];
+
+  return fallbackAssignments.map((assignment) => {
+    const sample = db.samples.find((entry) => entry._id === assignment.sampleId) ?? directSample;
+    const accession = db.accessions.find((entry) => entry._id === assignment.accessionId) ?? null;
+    return {
+      specimenId: assignment.specimenId,
+      accessionId: assignment.accessionId ?? accession?._id ?? null,
+      sampleId: assignment.sampleId ?? sample?._id ?? null,
+      label: sample?.label ?? accession?.accessionId ?? assignment.specimenId,
+      sharedWithOrderItemIds: assignment.orderItemIds,
+    };
+  });
+}
+
+function getItemDependencies(
+  db: Database,
+  order: Order,
+  orderItem: OrderItem,
+  stages: OrderWorkflowStageId[],
+  currentStageId?: OrderWorkflowStageId | null,
+): OrderWorkflowDependency[] {
+  if (!stages.includes("ihc")) {
+    return [];
+  }
+
+  const allItems = getOrderItemRecords(db, order);
+  const histologySourceItemIds = allItems
+    .filter(
+      (item) =>
+        item._id !== orderItem._id &&
+        routeStagesForTest(item.testTypeId).some((stageId) => isHistologyStage(stageId)),
+    )
+    .map((item) => item._id);
+  const satisfied = histologyBlockAvailable(db, order._id);
+  const status: OrderWorkflowDependency["status"] = satisfied
+    ? "satisfied"
+    : currentStageId === "ihc"
+      ? "blocked"
+      : "pending";
+
+  return [
+    {
+      code: "histology_block_available",
+      label: "Histology block availability",
+      status,
+      message: satisfied
+        ? "A histology block/slide is available for downstream IHC."
+        : "IHC is waiting for an embedded and sectioned histology block or slide from the shared specimen.",
+      dependsOnOrderItemIds: histologySourceItemIds,
+      satisfiedByStageId: "sectioning",
+    },
+  ];
+}
+
 export function getRequiredWorkflowStages(order: Order) {
   const collected = uniqueOrdered(
-    order.testTypeIds.flatMap((testTypeId) => workflowByTestId[testTypeId] ?? ["pathologist_review", "report_signout", "result_release"]),
+    order.testTypeIds.flatMap((testTypeId) => routeStagesForTest(testTypeId)),
   );
 
   if (!collected.includes("pathologist_review")) {
@@ -354,6 +493,13 @@ function hasAnalyzerRun(db: Database, order: Order) {
   );
 }
 
+function hasAnalyzerRunForTest(db: Database, order: Order, testTypeId?: string | null) {
+  if (!testTypeId) {
+    return hasAnalyzerRun(db, order);
+  }
+  return hasAnalyzerRun(db, { ...order, testTypeIds: [testTypeId] });
+}
+
 function hasMolecularSendout(db: Database, order: Order) {
   const expected = inferMolecularRunType(order);
   return db.instrumentRuns.some(
@@ -361,7 +507,19 @@ function hasMolecularSendout(db: Database, order: Order) {
   );
 }
 
-function isStageComplete(db: Database, order: Order, stageId: OrderWorkflowStageId) {
+function hasMolecularSendoutForTest(db: Database, order: Order, testTypeId?: string | null) {
+  if (!testTypeId) {
+    return hasMolecularSendout(db, order);
+  }
+  return hasMolecularSendout(db, { ...order, testTypeIds: [testTypeId] });
+}
+
+function isStageComplete(
+  db: Database,
+  order: Order,
+  stageId: OrderWorkflowStageId,
+  testTypeId?: string | null,
+) {
   const { accession, ihcDone } = getHistologyArtifacts(db, order._id);
   const cytologyCase = getCytologyCase(db, order._id);
   const report = getReport(db, order._id);
@@ -388,9 +546,9 @@ function isStageComplete(db: Database, order: Order, stageId: OrderWorkflowStage
     case "ihc":
       return ihcDone;
     case "analyzer_run":
-      return hasAnalyzerRun(db, order);
+      return hasAnalyzerRunForTest(db, order, testTypeId);
     case "molecular_sendout":
-      return hasMolecularSendout(db, order);
+      return hasMolecularSendoutForTest(db, order, testTypeId);
     case "pathologist_review":
       return ["review", "completed", "released"].includes(order.status);
     case "report_signout":
@@ -420,37 +578,244 @@ function getRouteTags(stageIds: OrderWorkflowStageId[]) {
 }
 
 export function describeOrderWorkflowRoutes(db: Database, order: Order): OrderWorkflowRouteGuide[] {
-  return order.testTypeIds
-    .map((testTypeId) => {
-      const testType = db.testTypes.find((entry) => entry._id === testTypeId);
-      if (!testType) {
-        return null;
-      }
-      const stages = workflowByTestId[testTypeId] ?? ["pathologist_review", "report_signout", "result_release"];
-      return {
-        key: `${order._id}:${testTypeId}`,
-        testTypeId,
-        testCode: testType.code,
-        testName: testType.name,
-        category: testType.category,
-        stages,
-        routeTags: getRouteTags(stages),
-        requiresAccession: stages.includes("accessioning"),
-        primaryModule: stageMeta[stages[0]].module,
-      } satisfies OrderWorkflowRouteGuide;
-    })
-    .filter((entry): entry is OrderWorkflowRouteGuide => Boolean(entry));
+  return getOrderWorkflowItemPlans(db, order).map((plan) => ({
+    key: `${order._id}:${plan.orderItemId}`,
+    orderItemId: plan.orderItemId,
+    testTypeId: plan.testTypeId,
+    testCode: plan.testCode,
+    testName: plan.testName,
+    category: plan.category,
+    status: plan.status,
+    stages: plan.stages.map((stage) => stage.id),
+    routeTags: plan.routeTags,
+    requiresAccession: plan.stages.some((stage) => stage.id === "accessioning"),
+    primaryModule: plan.stages[0]?.module ?? "pathology",
+    dependencies: plan.dependencies,
+    specimenLinks: plan.specimenLinks,
+  }));
 }
 
-export function getOrderWorkflowPlan(db: Database, order: Order): OrderWorkflowPlan {
-  const requiredStages = getRequiredWorkflowStages(order);
+function currentStageForItem(
+  db: Database,
+  order: Order,
+  orderItem: OrderItem,
+  stages: OrderWorkflowStageId[],
+) {
   let currentAssigned = false;
-  const stages: OrderWorkflowStageState[] = requiredStages.map((stageId) => {
-    const complete = isStageComplete(db, order, stageId);
+  const terminalStatus = itemTerminalStatusFromOrder(order) ?? orderItem.status;
+  if (terminalOrderItemStatus(terminalStatus) || terminalStatus === "completed") {
+    return {
+      stages: stages.map((stageId) => ({
+        id: stageId,
+        label: stageMeta[stageId].label,
+        description: stageMeta[stageId].description,
+        module: stageMeta[stageId].module,
+        status: "complete" as const,
+      })),
+      current: null,
+    };
+  }
+
+  const stageStates: OrderWorkflowStageState[] = stages.map((stageId) => {
+    const complete = isStageComplete(db, order, stageId, orderItem.testTypeId);
+    const blocked = !complete && stageId === "ihc" && !histologyBlockAvailable(db, order._id);
     const status: OrderWorkflowStageState["status"] = complete
       ? "complete"
       : !currentAssigned
-        ? ((currentAssigned = true), "current")
+        ? ((currentAssigned = true), blocked ? "blocked" : "current")
+        : "pending";
+    return {
+      id: stageId,
+      label: stageMeta[stageId].label,
+      description: stageMeta[stageId].description,
+      module: stageMeta[stageId].module,
+      status,
+    };
+  });
+
+  return {
+    stages: stageStates,
+    current:
+      stageStates.find((stage) => stage.status === "current" || stage.status === "blocked") ??
+      null,
+  };
+}
+
+function inferOrderItemStatus(
+  order: Order,
+  orderItem: OrderItem,
+  stages: OrderWorkflowStageState[],
+  dependencies: OrderWorkflowDependency[],
+): OrderItemStatus {
+  const terminalStatus = itemTerminalStatusFromOrder(order);
+  if (terminalStatus) return terminalStatus;
+  if (terminalOrderItemStatus(orderItem.status)) return orderItem.status;
+  if (order.status === "completed" || orderItem.status === "completed") return "completed";
+  if (stages.every((stage) => stage.status === "complete")) return "released";
+  if (stages.some((stage) => stage.id === "result_release" && stage.status === "complete")) {
+    return "released";
+  }
+  if (stages.some((stage) => stage.id === "report_signout" && stage.status === "complete")) {
+    return "completed";
+  }
+  if (
+    stages.some((stage) => stage.status === "blocked") ||
+    dependencies.some((dependency) => dependency.status === "blocked")
+  ) {
+    return "blocked";
+  }
+  if (stages.some((stage) => stage.status === "complete") || ["in_progress", "review"].includes(order.status)) {
+    return "in_progress";
+  }
+  return "pending";
+}
+
+function summarizeItemPlans(itemPlans: OrderWorkflowItemPlan[]): OrderWorkflowItemSummary {
+  return itemPlans.reduce<OrderWorkflowItemSummary>(
+    (summary, item) => {
+      switch (item.status) {
+        case "pending":
+          summary.pending += 1;
+          break;
+        case "blocked":
+          summary.blocked += 1;
+          break;
+        case "in_progress":
+          summary.inProgress += 1;
+          break;
+        case "completed":
+          summary.completed += 1;
+          break;
+        case "released":
+          summary.released += 1;
+          break;
+        case "cancelled":
+          summary.cancelled += 1;
+          break;
+        case "resolved":
+          summary.resolved += 1;
+          break;
+      }
+      return summary;
+    },
+    {
+      pending: 0,
+      blocked: 0,
+      inProgress: 0,
+      completed: 0,
+      released: 0,
+      cancelled: 0,
+      resolved: 0,
+    },
+  );
+}
+
+export function getOrderWorkflowItemPlans(db: Database, order: Order): OrderWorkflowItemPlan[] {
+  return getOrderItemRecords(db, order)
+    .map((orderItem) => {
+      const testType = db.testTypes.find((entry) => entry._id === orderItem.testTypeId);
+      if (!testType) {
+        return null;
+      }
+      const routeStages = routeStagesForTest(orderItem.testTypeId);
+      const itemStageState = currentStageForItem(db, order, orderItem, routeStages);
+      const dependencies = getItemDependencies(
+        db,
+        order,
+        orderItem,
+        routeStages,
+        itemStageState.current?.id ?? null,
+      );
+      const stages = itemStageState.stages.map((stage) =>
+        stage.id === "ihc" && dependencies.some((dependency) => dependency.status === "blocked")
+          ? { ...stage, status: "blocked" as const }
+          : stage,
+      );
+      const current =
+        stages.find((stage) => stage.status === "current" || stage.status === "blocked") ?? null;
+      const status = inferOrderItemStatus(order, orderItem, stages, dependencies);
+      return {
+        orderItemId: orderItem._id,
+        itemNumber: orderItem.itemNumber,
+        testTypeId: testType._id,
+        testCode: testType.code,
+        testName: testType.name,
+        category: testType.category,
+        status,
+        terminal: terminalOrderItemStatus(status),
+        routeTags: getRouteTags(routeStages),
+        nextStageId: terminalOrderItemStatus(status) ? null : current?.id ?? null,
+        nextStageLabel: terminalOrderItemStatus(status) ? null : current?.label ?? null,
+        nextModule: terminalOrderItemStatus(status) ? null : current?.module ?? null,
+        reviewReady: current?.id === "pathologist_review",
+        dependencies,
+        specimenLinks: getSpecimenLinks(db, order, orderItem),
+        stages,
+      } satisfies OrderWorkflowItemPlan;
+    })
+    .filter((entry): entry is OrderWorkflowItemPlan => Boolean(entry));
+}
+
+export function orderWorkflowTerminalForCompletion(db: Database, order: Order) {
+  return getOrderWorkflowItemPlans(db, order).every((item) =>
+    ["completed", "released", "cancelled", "resolved"].includes(item.status) ||
+    item.nextStageId === "report_signout",
+  );
+}
+
+export function orderWorkflowTerminalForRelease(db: Database, order: Order) {
+  return getOrderWorkflowItemPlans(db, order).every((item) =>
+    ["completed", "released", "cancelled", "resolved"].includes(item.status),
+  );
+}
+
+export function markOrderItemsReleased(db: Database, order: Order, timestamp: string) {
+  for (const item of db.orderItems.filter((entry) => entry.orderId === order._id)) {
+    if (item.status === "cancelled" || item.status === "resolved") {
+      continue;
+    }
+    item.status = "released";
+    item.releasedAt = item.releasedAt ?? timestamp;
+    item.updatedAt = timestamp;
+  }
+}
+
+export function markOrderItemsCompleted(db: Database, order: Order, timestamp: string) {
+  for (const item of db.orderItems.filter((entry) => entry.orderId === order._id)) {
+    if (terminalOrderItemStatus(item.status)) {
+      continue;
+    }
+    item.status = "completed";
+    item.updatedAt = timestamp;
+  }
+}
+
+export function getWorkflowItemDashboard(db: Database) {
+  const allPlans = db.orders.flatMap((order) => getOrderWorkflowItemPlans(db, order));
+  return {
+    total: allPlans.length,
+    ...summarizeItemPlans(allPlans),
+    pendingItems: allPlans.filter((item) => item.status === "pending"),
+    blockedItems: allPlans.filter((item) => item.status === "blocked"),
+    completedItems: allPlans.filter((item) => item.status === "completed"),
+    releasedItems: allPlans.filter((item) => item.status === "released"),
+  };
+}
+
+export function getOrderWorkflowPlan(db: Database, order: Order): OrderWorkflowPlan {
+  const itemPlans = getOrderWorkflowItemPlans(db, order);
+  const requiredStages = uniqueOrdered(itemPlans.flatMap((item) => item.stages.map((stage) => stage.id)));
+  let currentAssigned = false;
+  const stages: OrderWorkflowStageState[] = requiredStages.map((stageId) => {
+    const itemStages = itemPlans.flatMap((item) =>
+      item.stages.filter((stage) => stage.id === stageId),
+    );
+    const complete = itemStages.length > 0 && itemStages.every((stage) => stage.status === "complete");
+    const blocked = itemStages.some((stage) => stage.status === "blocked");
+    const status: OrderWorkflowStageState["status"] = complete
+      ? "complete"
+      : !currentAssigned
+        ? ((currentAssigned = true), blocked ? "blocked" : "current")
         : "pending";
     return {
       id: stageId,
@@ -462,15 +827,25 @@ export function getOrderWorkflowPlan(db: Database, order: Order): OrderWorkflowP
   });
 
   const current = stages.find((stage) => stage.status === "current") ?? null;
+  const blockedCurrent = stages.find((stage) => stage.status === "blocked") ?? null;
+  const actionableItem =
+    itemPlans.find((item) => item.status === "blocked") ??
+    itemPlans.find((item) => item.nextStageId && item.nextModule !== "pathology") ??
+    itemPlans.find((item) => item.nextStageId) ??
+    null;
   const routeTags = getRouteTags(requiredStages);
   return {
     summary: routeTags.join(" -> "),
     routeTags,
-    requiresTechnician: orderRequiresTechnicianWorkflow(order),
-    nextStageId: current?.id ?? null,
-    nextStageLabel: current?.label ?? null,
-    nextModule: current?.module ?? null,
-    reviewReady: current?.id === "pathologist_review",
+    requiresTechnician: itemPlans.some((item) => item.stages.some((stage) => stage.module !== "pathology")),
+    nextStageId: actionableItem?.nextStageId ?? blockedCurrent?.id ?? current?.id ?? null,
+    nextStageLabel: actionableItem?.nextStageLabel ?? blockedCurrent?.label ?? current?.label ?? null,
+    nextModule: actionableItem?.nextModule ?? blockedCurrent?.module ?? current?.module ?? null,
+    reviewReady:
+      itemPlans.length > 0 &&
+      itemPlans.every((item) => item.terminal || item.reviewReady || ["completed", "released"].includes(item.status)),
+    itemSummary: summarizeItemPlans(itemPlans),
+    itemPlans,
     stages,
   };
 }

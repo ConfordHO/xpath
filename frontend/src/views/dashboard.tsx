@@ -52,6 +52,17 @@ function MetricsGrid({ children }: { children: ReactNode }) {
   return <Box sx={{ display: 'grid', gap: 2, gridTemplateColumns: { xs: '1fr', md: 'repeat(4, 1fr)' } }}>{children}</Box>
 }
 
+function WorkflowItemStatusGrid({ summary }: { summary: DashboardSummary['workflowItems'] }) {
+  return (
+    <MetricsGrid>
+      <MetricCard label="Pending items" value={String(summary.pending)} />
+      <MetricCard label="Blocked items" value={String(summary.blocked)} />
+      <MetricCard label="Completed items" value={String(summary.completed)} />
+      <MetricCard label="Released items" value={String(summary.released)} />
+    </MetricsGrid>
+  )
+}
+
 function NotificationsPanel({ items }: { items: NotificationEntry[] }) {
   return (
     <SectionCard title="Notifications">
@@ -622,6 +633,7 @@ export function DashboardPage() {
     <Stack spacing={3}>
       <PageHeader title="Dashboard" description="Role-focused laboratory workspace." />
       <RoleIntro user={user} />
+      <WorkflowItemStatusGrid summary={summaryState.data.workflowItems} />
       {content}
     </Stack>
   )

@@ -2,6 +2,8 @@
 
 The application now ensures canonical demo users exist for each core role, including site-scoped admins and a global super admin.
 
+These credentials are for local/demo validation only. Before any live public deployment, create production users through the authenticated admin console, rotate or disable all seeded accounts, enable MFA for admin roles, and keep `PUBLIC_REGISTRATION_ENABLED=false`.
+
 All passwords:
 
 `admin123`

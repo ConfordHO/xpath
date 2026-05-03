@@ -730,9 +730,20 @@ export function registerOrderGovernanceRoutes(app: express.Express) {
         record.appliedAt = now();
         record.beforeSnapshot ??= JSON.stringify(order);
         if (record.type === "cancellation") {
+          const cancelledAt = now();
           order.status = "cancelled";
-          order.cancelledAt = now();
+          order.cancelledAt = cancelledAt;
           order.cancellationReason = record.reason;
+          for (const item of db.orderItems.filter((entry) => entry.orderId === order._id)) {
+            if (item.status === "released" || item.status === "resolved") {
+              continue;
+            }
+            item.status = "cancelled";
+            item.cancelledAt = item.cancelledAt ?? cancelledAt;
+            item.cancelledBy = item.cancelledBy ?? user._id;
+            item.cancelledReason = item.cancelledReason ?? record.reason;
+            item.updatedAt = cancelledAt;
+          }
         } else {
           order.notes = [order.notes, `${record.reason}: ${record.details}`].filter(Boolean).join("\n");
         }

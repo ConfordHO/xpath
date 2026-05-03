@@ -29,6 +29,7 @@ import {
   POSTGRES_STATE_TABLE,
   POSTGRES_EXTERNAL_HOST_SUFFIX,
   PORT,
+  PUBLIC_REGISTRATION_ENABLED,
   isAllowedOrigin,
 } from "./config.js";
 import { appendAuditEvent, auditActorDetails } from "./server/audit.js";
@@ -77,9 +78,13 @@ import {
 } from "./server/helpers.js";
 import {
   getOrderWorkflowPlan,
+  markOrderItemsCompleted,
+  markOrderItemsReleased,
   inferAnalyzerRunType,
   inferCytologyCaseDefaults,
   inferMolecularRunType,
+  orderWorkflowTerminalForCompletion,
+  orderWorkflowTerminalForRelease,
   orderHasCytologyWorkflow,
   orderHasHistologyWorkflow,
   orderRequiresIhcWorkflow,
@@ -91,6 +96,7 @@ import {
   orderSchema,
   patientSchema,
   settingsSchema,
+  strongPasswordSchema,
   testTypeSchema,
   userSchema,
 } from "./server/schemas.js";
@@ -783,9 +789,16 @@ app.post("/api/auth/login", authLimiter, async (req, res) => {
 });
 
 app.post("/api/auth/register", async (req, res) => {
+  if (!PUBLIC_REGISTRATION_ENABLED) {
+    return res.status(404).json({ message: "Not found" });
+  }
+
   const parsed = userSchema.safeParse(req.body);
   if (!parsed.success) {
     return res.status(400).json({ message: "Invalid registration payload" });
+  }
+  if (parsed.data.role !== "doctor") {
+    return res.status(403).json({ message: "Public registration is limited to referrer portal accounts" });
   }
 
   const created = await updateDb(async (db) => {
@@ -812,7 +825,7 @@ app.post("/api/auth/register", async (req, res) => {
       role: parsed.data.role,
       preferredLanguage: preference.preferredLanguage,
       preferredLocale: preference.preferredLocale,
-      active: parsed.data.active,
+      active: false,
       passwordHash: await bcrypt.default.hash(parsed.data.password, 10),
       createdAt: timestamp,
       updatedAt: timestamp,
@@ -828,31 +841,8 @@ app.post("/api/auth/register", async (req, res) => {
     return;
   }
 
-  const sessionId = createId();
-  const sessionCreatedAt = now();
-  await updateDb((db) => {
-    db.sessionRecords.unshift({
-      _id: sessionId,
-      userId: created._id,
-      email: created.email,
-      role: created.role,
-      status: "active",
-      ipAddress: req.ip || "127.0.0.1",
-      userAgent: req.header("user-agent") ?? "unknown",
-      createdAt: sessionCreatedAt,
-      updatedAt: sessionCreatedAt,
-    });
-    db.credentialAudits.unshift({
-      _id: createId(),
-      userId: created._id,
-      action: "login",
-      outcome: "success",
-      createdAt: sessionCreatedAt,
-    });
-  });
-
-  res.status(201).json({
-    token: signToken(created, sessionId),
+  res.status(202).json({
+    message: "Registration submitted. An administrator must activate the account before sign-in.",
     user: sanitizeUser(created),
   });
 });
@@ -1674,8 +1664,8 @@ app.put("/api/users/me/password", async (req: AuthRequest, res) => {
   const parsed = z
     .object({
       currentPassword: z.string().min(1),
-      newPassword: z.string().min(6),
-      confirmPassword: z.string().min(6),
+      newPassword: strongPasswordSchema,
+      confirmPassword: z.string().min(1),
     })
     .safeParse(req.body);
   if (!parsed.success) {
@@ -2165,8 +2155,26 @@ app.post("/api/patients", requireRoles("admin", "receptionist"), async (req: Aut
 
 app.get("/api/orders/counts", async (req: AuthRequest, res) => {
   const db = getScopedDb(req, await loadDb());
+  const workflowItemSummary = db.orders
+    .flatMap((order) => getOrderWorkflowPlan(db, order).itemPlans)
+    .reduce(
+      (summary, item) => {
+        summary[item.status] = (summary[item.status] ?? 0) + 1;
+        return summary;
+      },
+      {} as Record<string, number>,
+    );
   res.json({
     total: db.orders.length,
+    workflowItems: {
+      pending: workflowItemSummary.pending ?? 0,
+      blocked: workflowItemSummary.blocked ?? 0,
+      in_progress: workflowItemSummary.in_progress ?? 0,
+      completed: workflowItemSummary.completed ?? 0,
+      released: workflowItemSummary.released ?? 0,
+      cancelled: workflowItemSummary.cancelled ?? 0,
+      resolved: workflowItemSummary.resolved ?? 0,
+    },
     byStatus: {
       draft: db.orders.filter((entry) => entry.status === "draft").length,
       received: db.orders.filter((entry) => entry.status === "received").length,
@@ -4467,22 +4475,29 @@ app.post("/api/reports/:orderId/save", requireRoles("admin", "pathologist"), asy
 app.post("/api/reports/:orderId/lock", requireRoles("admin", "pathologist"), async (req: AuthRequest, res) => {
   const report = await updateDb((db) => {
     const order = getAccessibleOrderOrThrow(db, req, req.params.orderId);
+    if (!orderWorkflowTerminalForCompletion(db, order)) {
+      const workflowPlan = getOrderWorkflowPlan(db, order);
+      throw new Error(
+        `Every order item must reach report sign-out readiness, release, cancellation, or formal resolution before final completion. Next unresolved item: ${workflowPlan.nextStageLabel ?? "workflow item"}`,
+      );
+    }
     let target = getReportByOrder(db, order._id);
     if (!target) {
       target = buildReport(db, order);
       db.reports.push(target);
     }
     if (target.status === "complete" && target.lockedAt) {
-      order.status = order.status === "released" ? order.status : "completed";
-      order.completedAt = order.completedAt ?? target.lockedAt;
+      markOrderItemsCompleted(db, order, target.lockedAt);
+      if (order.status === "released") {
+        order.completedAt = order.completedAt ?? target.lockedAt;
+      }
       return target;
     }
     target.status = "complete";
     target.lockedAt = now();
     target.releaseRuleStatus = "ready";
     target.updatedAt = now();
-    order.status = "completed";
-    order.completedAt = target.lockedAt;
+    markOrderItemsCompleted(db, order, target.lockedAt);
     order.updatedAt = now();
     appendRequestAudit(db, req, {
       module: "Reporting",
@@ -4516,17 +4531,31 @@ app.post("/api/reports/:orderId/email", requireRoles("admin", "pathologist"), as
       return target;
     }
     if (target.status !== "complete") {
+      if (!orderWorkflowTerminalForCompletion(db, order)) {
+        const workflowPlan = getOrderWorkflowPlan(db, order);
+        throw new Error(
+          `Every order item must reach report sign-out readiness, release, cancellation, or formal resolution before final completion. Next unresolved item: ${workflowPlan.nextStageLabel ?? "workflow item"}`,
+        );
+      }
       target.status = "complete";
       target.lockedAt = target.lockedAt ?? now();
-      order.completedAt = order.completedAt ?? target.lockedAt;
-      order.status = "completed";
+      markOrderItemsCompleted(db, order, target.lockedAt);
     }
-    target.emailedAt = now();
+    if (!orderWorkflowTerminalForRelease(db, order)) {
+      const workflowPlan = getOrderWorkflowPlan(db, order);
+      throw new Error(
+        `Every order item must be completed, released, cancelled, or formally resolved before final release. Next unresolved item: ${workflowPlan.nextStageLabel ?? "workflow item"}`,
+      );
+    }
+    const releaseTimestamp = now();
+    target.emailedAt = releaseTimestamp;
     target.releaseRuleStatus = "released";
     target.updatedAt = now();
+    markOrderItemsReleased(db, order, releaseTimestamp);
     order.status = "released";
-    order.releasedAt = now();
-    order.updatedAt = now();
+    order.completedAt = order.completedAt ?? target.lockedAt ?? releaseTimestamp;
+    order.releasedAt = releaseTimestamp;
+    order.updatedAt = releaseTimestamp;
     db.communicationLogs.unshift({
       _id: createId(),
       orderId: order._id,

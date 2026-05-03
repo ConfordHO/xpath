@@ -85,7 +85,62 @@ export interface OrderWorkflowStageState {
   label: string;
   description: string;
   module: OrderWorkflowModule;
-  status: "complete" | "current" | "pending";
+  status: "complete" | "current" | "pending" | "blocked";
+}
+
+export type OrderItemStatus =
+  | "pending"
+  | "blocked"
+  | "in_progress"
+  | "completed"
+  | "released"
+  | "cancelled"
+  | "resolved";
+
+export interface OrderWorkflowDependency {
+  code: string;
+  label: string;
+  status: "satisfied" | "pending" | "blocked";
+  message: string;
+  dependsOnOrderItemIds: string[];
+  satisfiedByStageId?: OrderWorkflowStageId | null;
+}
+
+export interface OrderWorkflowSpecimenLink {
+  specimenId: string;
+  accessionId?: string | null;
+  sampleId?: string | null;
+  label: string;
+  sharedWithOrderItemIds: string[];
+}
+
+export interface OrderWorkflowItemSummary {
+  pending: number;
+  blocked: number;
+  inProgress: number;
+  completed: number;
+  released: number;
+  cancelled: number;
+  resolved: number;
+}
+
+export interface OrderWorkflowItemPlan {
+  orderItemId: string;
+  itemNumber: number;
+  testTypeId: string;
+  testCode: string;
+  testName: string;
+  category: string;
+  status: OrderItemStatus;
+  terminal: boolean;
+  routeTags: string[];
+  nextStageId: OrderWorkflowStageId | null;
+  nextStageLabel: string | null;
+  nextModule: OrderWorkflowModule | null;
+  reviewReady: boolean;
+  dependencies: OrderWorkflowDependency[];
+  specimenLinks: OrderWorkflowSpecimenLink[];
+  stages: OrderWorkflowStageState[];
 }
 
 export interface OrderWorkflowPlan {
@@ -96,19 +151,25 @@ export interface OrderWorkflowPlan {
   nextStageLabel: string | null;
   nextModule: OrderWorkflowModule | null;
   reviewReady: boolean;
+  itemSummary: OrderWorkflowItemSummary;
+  itemPlans: OrderWorkflowItemPlan[];
   stages: OrderWorkflowStageState[];
 }
 
 export interface OrderWorkflowRouteGuide {
   key: string;
+  orderItemId: string;
   testTypeId: string;
   testCode: string;
   testName: string;
   category: string;
+  status: OrderItemStatus;
   stages: OrderWorkflowStageId[];
   routeTags: string[];
   requiresAccession: boolean;
   primaryModule: OrderWorkflowModule;
+  dependencies: OrderWorkflowDependency[];
+  specimenLinks: OrderWorkflowSpecimenLink[];
 }
 
 export interface OrderVisibilityBlocker {
@@ -477,6 +538,35 @@ export interface WorkflowHistoryEntry {
   patientName?: string;
   completedAt: string;
   notes?: string;
+}
+
+export interface OrderItem {
+  _id: string;
+  orderId: string;
+  testTypeId: string;
+  itemNumber: number;
+  status: OrderItemStatus;
+  resolvedReason?: string | null;
+  resolvedBy?: string | null;
+  resolvedAt?: string | null;
+  cancelledReason?: string | null;
+  cancelledBy?: string | null;
+  cancelledAt?: string | null;
+  releasedAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SpecimenAssignment {
+  _id: string;
+  specimenId: string;
+  orderId: string;
+  orderItemIds: string[];
+  accessionId?: string | null;
+  sampleId?: string | null;
+  assignmentType: "shared" | "dedicated";
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface Notification {
@@ -1697,6 +1787,8 @@ export interface Database {
   specimenImages: SpecimenImageRecord[];
   orderNumberReservations: OrderNumberReservation[];
   orders: Order[];
+  orderItems: OrderItem[];
+  specimenAssignments: SpecimenAssignment[];
   orderAmendments: OrderAmendment[];
   ocrIntakeJobs: OcrIntakeJob[];
   orderCorrections: OrderCorrection[];

@@ -92,7 +92,7 @@ export function UsersPage() {
     email: '',
     role: 'receptionist',
     active: true,
-    password: 'admin123',
+    password: 'ChangeMe123!',
     siteId: defaultSiteIdForUser(user),
     preferredLocale: user?.preferredLocale ?? 'fr',
   })
@@ -106,7 +106,7 @@ export function UsersPage() {
       email: '',
       role: 'receptionist',
       active: true,
-      password: 'admin123',
+      password: 'ChangeMe123!',
       siteId: defaultSiteIdForUser(user),
       preferredLocale: user?.preferredLocale ?? 'fr',
     })
@@ -128,7 +128,7 @@ export function UsersPage() {
       email: user.email,
       role: user.role,
       active: user.active,
-      password: 'admin123',
+      password: '',
       siteId: user.siteId ?? '',
       preferredLocale: user.preferredLocale ?? 'fr',
     })
@@ -147,6 +147,9 @@ export function UsersPage() {
             : defaultSiteIdForUser(user),
       preferredLocale: form.preferredLocale,
       preferredLanguage: form.preferredLocale === 'fr' ? 'french' : 'english',
+    }
+    if (editing && !form.password.trim()) {
+      delete (payload as Partial<typeof payload>).password
     }
     try {
       if (editing) {
@@ -314,7 +317,12 @@ export function UsersPage() {
                 <MenuItem value="fr">Francais</MenuItem>
               </Select>
             </FormControl>
-            <TextField label="Password" value={form.password} onChange={(event) => setForm((prev) => ({ ...prev, password: event.target.value }))} />
+            <TextField
+              label={editing ? 'New password' : 'Temporary password'}
+              value={form.password}
+              helperText={editing ? 'Leave blank to keep the current password.' : 'Use at least 10 characters with upper, lower, number, and symbol.'}
+              onChange={(event) => setForm((prev) => ({ ...prev, password: event.target.value }))}
+            />
             <FormControlLabel control={<Checkbox checked={form.active} onChange={(event) => setForm((prev) => ({ ...prev, active: event.target.checked }))} />} label="Active" />
           </Stack>
         </DialogContent>

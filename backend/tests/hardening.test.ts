@@ -62,6 +62,14 @@ describe("production hardening", () => {
     assert.equal(health.status, 200);
     assert.equal(health.body.ok, true);
 
+    const publicRegister = await request.post("/api/auth/register").send({
+      name: "Unexpected Public Admin",
+      email: `public-admin-${Date.now()}@xpath.test`,
+      role: "admin",
+      password: "UnsafePublic1!",
+    });
+    assert.equal(publicRegister.status, 404);
+
     authToken = await loginAdmin();
 
     const auditVerify = await request
@@ -233,6 +241,229 @@ describe("production hardening", () => {
         ["create", "accession", "grossing"].includes(entry.action),
       ),
     );
+  });
+
+  test("multi-test single order keeps independent item plans, shared specimens, explicit IHC dependency, and final release gate", async () => {
+    const timestamp = Date.now();
+    const patientCreate = await request
+      .post("/api/patients")
+      .set("Authorization", `Bearer ${authToken}`)
+      .send({
+        firstName: "Multi",
+        lastName: `Route${timestamp}`,
+        dateOfBirth: "1982-06-12",
+        gender: "female",
+        phone: `+23769111${String(timestamp).slice(-4)}`,
+        email: `multi.route.${timestamp}@xpath.test`,
+        address: "Douala",
+      });
+    assert.equal(patientCreate.status, 201);
+
+    const orderCreate = await request
+      .post("/api/orders")
+      .set("Authorization", `Bearer ${authToken}`)
+      .send({
+        patientId: patientCreate.body._id,
+        testTypeIds: ["test-biopsy", "test-tumor-ihc"],
+        priority: "urgent",
+        orderSource: "walk_in",
+        notes: "Automated Workflow E test",
+        clinicalHistory: "Shared tissue specimen with IHC dependency",
+      });
+    assert.equal(orderCreate.status, 201);
+    assert.equal(orderCreate.body.workflowPlan.itemPlans.length, 2);
+    assert.equal(orderCreate.body.workflowPlan.itemSummary.pending, 2);
+
+    const payment = await request
+      .post(`/api/orders/${orderCreate.body._id}/payment`)
+      .set("Authorization", `Bearer ${authToken}`)
+      .send({
+        amount: 185000,
+        method: "cash",
+        status: "completed",
+      });
+    assert.equal(payment.status, 201);
+
+    const receptionIntake = await request
+      .post(`/api/orders/${orderCreate.body._id}/reception-intake`)
+      .set("Authorization", `Bearer ${authToken}`)
+      .send({
+        paymentCollectionStatus: "reconciled",
+        paymentCollectionMethod: "cash",
+        paymentCollectionAmount: 185000,
+        paymentCollectionReference: "TEST-MULTI-E2E",
+        transportTemperature: "ambient",
+        transportCondition: "stable",
+        sampleCondition: "One tissue specimen received intact",
+        scannedCode: orderCreate.body.orderNumber,
+      });
+    assert.equal(receptionIntake.status, 200);
+
+    const users = await request
+      .get("/api/users")
+      .set("Authorization", `Bearer ${authToken}`);
+    assert.equal(users.status, 200);
+    const technician = users.body.find((entry: { role: string }) => entry.role === "technician");
+    const pathologist = users.body.find((entry: { role: string }) => entry.role === "pathologist");
+    assert.ok(technician);
+    assert.ok(pathologist);
+
+    const releaseToLab = await request
+      .post(`/api/orders/${orderCreate.body._id}/release-to-lab`)
+      .set("Authorization", `Bearer ${authToken}`)
+      .send({ technicianId: technician._id, scannedCode: orderCreate.body.orderNumber });
+    assert.equal(releaseToLab.status, 200);
+
+    const startProcessing = await request
+      .post(`/api/orders/${orderCreate.body._id}/start-processing`)
+      .set("Authorization", `Bearer ${authToken}`)
+      .send({ scannedCode: orderCreate.body.orderNumber });
+    assert.equal(startProcessing.status, 200);
+
+    const accessionLookup = await request
+      .get(`/api/accessions/by-order/${orderCreate.body._id}`)
+      .set("Authorization", `Bearer ${authToken}`);
+    assert.equal(accessionLookup.status, 200);
+    const accessionId = accessionLookup.body._id as string;
+
+    const itemDetailAfterAccession = await request
+      .get(`/api/orders/${orderCreate.body._id}`)
+      .set("Authorization", `Bearer ${authToken}`);
+    assert.equal(itemDetailAfterAccession.status, 200);
+    assert.equal(itemDetailAfterAccession.body.workflowPlan.itemPlans.length, 2);
+    assert.ok(
+      itemDetailAfterAccession.body.workflowPlan.itemPlans.every(
+        (item: { specimenLinks: Array<{ sharedWithOrderItemIds: string[] }> }) =>
+          item.specimenLinks.some((link) => link.sharedWithOrderItemIds.length === 2),
+      ),
+    );
+    const ihcItemAfterAccession = itemDetailAfterAccession.body.workflowPlan.itemPlans.find(
+      (item: { testTypeId: string }) => item.testTypeId === "test-tumor-ihc",
+    );
+    assert.ok(ihcItemAfterAccession.dependencies.some((dependency: { code: string; status: string }) =>
+      dependency.code === "histology_block_available" && dependency.status === "pending",
+    ));
+
+    const grossing = await request
+      .post(`/api/accessions/${accessionId}/grossing`)
+      .set("Authorization", `Bearer ${authToken}`)
+      .send({
+        grossDescription: "Shared biopsy specimen for H&E and IHC",
+        numberOfBlocks: 1,
+        scannedCode: accessionLookup.body.accessionId,
+      });
+    assert.equal(grossing.status, 200);
+    const blockId = grossing.body.blocks[0].blockId as string;
+
+    const processing = await request
+      .post(`/api/accessions/${accessionId}/processing`)
+      .set("Authorization", `Bearer ${authToken}`)
+      .send({ processingNotes: "Routine processing", scannedCode: accessionLookup.body.accessionId });
+    assert.equal(processing.status, 200);
+
+    const embedding = await request
+      .post(`/api/accessions/${accessionId}/embedding`)
+      .set("Authorization", `Bearer ${authToken}`)
+      .send({ blockId, scannedCode: blockId });
+    assert.equal(embedding.status, 200);
+
+    const sectioning = await request
+      .post(`/api/accessions/${accessionId}/sectioning`)
+      .set("Authorization", `Bearer ${authToken}`)
+      .send({ blockId, slideCount: 1, scannedCode: blockId });
+    assert.equal(sectioning.status, 200);
+    const slideId = sectioning.body.blocks[0].slides[0].slideId as string;
+
+    const staining = await request
+      .post(`/api/accessions/${accessionId}/staining`)
+      .set("Authorization", `Bearer ${authToken}`)
+      .send({ slideId, stainType: "H&E", scannedCode: slideId });
+    assert.equal(staining.status, 200);
+
+    const prematureReview = await request
+      .post(`/api/orders/${orderCreate.body._id}/ready-for-review`)
+      .set("Authorization", `Bearer ${authToken}`)
+      .send({ pathologistId: pathologist._id, scannedCode: accessionLookup.body.accessionId });
+    assert.equal(prematureReview.status, 400);
+    assert.match(prematureReview.body.message, /IHC/i);
+
+    const afterHistology = await request
+      .get(`/api/orders/${orderCreate.body._id}`)
+      .set("Authorization", `Bearer ${authToken}`);
+    assert.equal(afterHistology.status, 200);
+    const ihcItemReady = afterHistology.body.workflowPlan.itemPlans.find(
+      (item: { testTypeId: string }) => item.testTypeId === "test-tumor-ihc",
+    );
+    assert.equal(ihcItemReady.nextStageId, "ihc");
+    assert.ok(ihcItemReady.dependencies.some((dependency: { code: string; status: string }) =>
+      dependency.code === "histology_block_available" && dependency.status === "satisfied",
+    ));
+    const biopsyItemReady = afterHistology.body.workflowPlan.itemPlans.find(
+      (item: { testTypeId: string }) => item.testTypeId === "test-biopsy",
+    );
+    assert.equal(biopsyItemReady.nextStageId, "pathologist_review");
+
+    const ihc = await request
+      .post(`/api/slides/${slideId}/ihc`)
+      .set("Authorization", `Bearer ${authToken}`)
+      .send({
+        antibody: "Ki-67",
+        clone: "MIB-1",
+        antigenRetrieval: "HIER",
+        detection: "DAB",
+        counterstain: "Hematoxylin",
+        lotNumber: "LOT-KI67-001",
+        controlSlideStatus: "pass",
+        quantity: 1,
+        qcNotes: "Control acceptable",
+        scannedCode: slideId,
+      });
+    assert.equal(ihc.status, 200);
+
+    const readyForReview = await request
+      .post(`/api/orders/${orderCreate.body._id}/ready-for-review`)
+      .set("Authorization", `Bearer ${authToken}`)
+      .send({ pathologistId: pathologist._id, scannedCode: accessionLookup.body.accessionId });
+    assert.equal(readyForReview.status, 200);
+
+    const reportSave = await request
+      .post(`/api/reports/${orderCreate.body._id}/save`)
+      .set("Authorization", `Bearer ${authToken}`)
+      .send({
+        diagnosis: "Benign tissue with proliferative index recorded",
+        microscopicDescription: "H&E and Ki-67 reviewed.",
+        grossDescription: "One tissue block.",
+        comment: "Multi-test order completed.",
+      });
+    assert.equal(reportSave.status, 200);
+
+    const reportLock = await request
+      .post(`/api/reports/${orderCreate.body._id}/lock`)
+      .set("Authorization", `Bearer ${authToken}`)
+      .send({});
+    assert.equal(reportLock.status, 200);
+
+    const reportRelease = await request
+      .post(`/api/reports/${orderCreate.body._id}/email`)
+      .set("Authorization", `Bearer ${authToken}`)
+      .send({});
+    assert.equal(reportRelease.status, 200);
+
+    const finalDetail = await request
+      .get(`/api/orders/${orderCreate.body._id}`)
+      .set("Authorization", `Bearer ${authToken}`);
+    assert.equal(finalDetail.status, 200);
+    assert.equal(finalDetail.body.status, "released");
+    assert.equal(finalDetail.body.workflowPlan.itemSummary.released, 2);
+
+    const dashboard = await request
+      .get("/api/dashboard/summary")
+      .set("Authorization", `Bearer ${authToken}`);
+    assert.equal(dashboard.status, 200);
+    assert.ok(Number(dashboard.body.workflowItems.released) >= 2);
+    assert.equal(typeof dashboard.body.workflowItems.pending, "number");
+    assert.equal(typeof dashboard.body.workflowItems.blocked, "number");
+    assert.equal(typeof dashboard.body.workflowItems.completed, "number");
   });
 
   test("connector and payment readiness endpoints return production configuration details", async () => {

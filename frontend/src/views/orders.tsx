@@ -50,6 +50,7 @@ import { errorMessage, PageError, TablePlaceholder, useActionLock, useLoadable }
 import type {
   Doctor,
   HydratedOrder,
+  OrderWorkflowItemPlan,
   Patient,
   Payment,
   TestType,
@@ -551,14 +552,35 @@ export function OrderDetailPage() {
       <SectionCard title="Workflow route">
         <Typography color="text.secondary">{detail.workflowPlan.summary}</Typography>
         <Stack spacing={1.25} sx={{ mt: 2 }}>
-          {detail.workflowPlan.stages.map((stage: any) => (
-            <Paper key={stage.id} sx={{ p: 2 }}>
+          {detail.workflowPlan.itemPlans.map((item: OrderWorkflowItemPlan) => (
+            <Paper key={item.orderItemId} sx={{ p: 2 }}>
               <Typography fontWeight={700}>
-                {stage.label} {stage.status === 'current' ? '• Current' : stage.status === 'complete' ? '• Done' : '• Pending'}
+                {item.testCode} — {item.testName}
               </Typography>
               <Typography color="text.secondary" sx={{ mt: 0.5 }}>
-                {stage.description}
+                Status: {item.status.replace('_', ' ')} · Next: {item.nextStageLabel ?? 'Terminal'}
               </Typography>
+              {item.dependencies.length ? (
+                <Stack spacing={0.75} sx={{ mt: 1 }}>
+                  {item.dependencies.map((dependency) => (
+                    <Typography key={dependency.code} variant="body2" color={dependency.status === 'blocked' ? 'error.main' : 'text.secondary'}>
+                      {dependency.label}: {dependency.status} — {dependency.message}
+                    </Typography>
+                  ))}
+                </Stack>
+              ) : null}
+              {item.specimenLinks.length ? (
+                <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+                  Specimen: {item.specimenLinks.map((link) => `${link.label} shared with ${link.sharedWithOrderItemIds.length} item(s)`).join(', ')}
+                </Typography>
+              ) : null}
+              <Stack spacing={0.75} sx={{ mt: 1.25 }}>
+                {item.stages.map((stage) => (
+                  <Typography key={`${item.orderItemId}-${stage.id}`} variant="body2" color="text.secondary">
+                    {stage.label}: {stage.status === 'current' ? 'Current' : stage.status === 'complete' ? 'Done' : stage.status === 'blocked' ? 'Blocked' : 'Pending'}
+                  </Typography>
+                ))}
+              </Stack>
             </Paper>
           ))}
         </Stack>
