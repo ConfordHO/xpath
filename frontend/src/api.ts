@@ -23,6 +23,19 @@ export const storageKeys = {
   user: 'lims_user',
 } as const
 
+function envFlagEnabled(value: string | undefined, fallback: boolean) {
+  if (value === undefined) {
+    return fallback
+  }
+  return !['0', 'false', 'no', 'off'].includes(value.trim().toLowerCase())
+}
+
+export const testAccess = {
+  enabled: envFlagEnabled(process.env.NEXT_PUBLIC_TEST_ACCESS, true),
+  email: process.env.NEXT_PUBLIC_TEST_ACCESS_EMAIL?.trim() || 'admin@xpath.lims',
+  password: process.env.NEXT_PUBLIC_TEST_ACCESS_PASSWORD?.trim() || 'admin123',
+} as const
+
 export const api = axios.create({
   baseURL: apiBaseUrl,
 })

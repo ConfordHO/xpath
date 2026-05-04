@@ -1,7 +1,7 @@
 {
   "name": "backend",
   "version": "1.0.0",
-  "description": "Backend API for the X-PATH LIMS replica",
+  "description": "Backend API for the PathNovate LIMS",
   "main": "dist/src/server.js",
   "scripts": {
     "dev": "tsx watch src/server.ts",

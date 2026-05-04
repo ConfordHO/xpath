@@ -7,7 +7,7 @@ import {
   type PropsWithChildren,
 } from 'react'
 
-import { api, getStoredToken, setStoredToken, storageKeys } from './api'
+import { api, getStoredToken, setStoredToken, storageKeys, testAccess } from './api'
 import type { SafeUser } from './types'
 
 interface AuthContextValue {
@@ -22,6 +22,25 @@ interface AuthContextValue {
 
 const AuthContext = createContext<AuthContextValue | null>(null)
 
+function normalizeSafeUser(value: Partial<SafeUser> & { id?: string } | null | undefined) {
+  if (!value) {
+    return null
+  }
+  const id = value._id ?? value.id
+  if (!id || !value.email || !value.name || !value.role) {
+    return null
+  }
+  return {
+    ...value,
+    _id: id,
+    preferredLanguage: value.preferredLanguage ?? 'french',
+    preferredLocale: value.preferredLocale ?? 'fr',
+    active: value.active ?? true,
+    createdAt: value.createdAt ?? '',
+    updatedAt: value.updatedAt ?? '',
+  } as SafeUser
+}
+
 function readStoredUser() {
   if (typeof window === 'undefined') {
     return null
@@ -32,17 +51,7 @@ function readStoredUser() {
   }
   try {
     const parsed = JSON.parse(raw) as Partial<SafeUser>
-    if (!parsed || !parsed._id || !parsed.email || !parsed.name || !parsed.role) {
-      return null
-    }
-    return {
-      ...parsed,
-      preferredLanguage: parsed.preferredLanguage ?? 'french',
-      preferredLocale: parsed.preferredLocale ?? 'fr',
-      active: parsed.active ?? true,
-      createdAt: parsed.createdAt ?? '',
-      updatedAt: parsed.updatedAt ?? '',
-    } as SafeUser
+    return normalizeSafeUser(parsed)
   } catch {
     return null
   }
@@ -51,28 +60,40 @@ function readStoredUser() {
 export function AuthProvider({ children }: PropsWithChildren) {
   const [token, setToken] = useState<string | null>(() => getStoredToken())
   const [user, setUserState] = useState<SafeUser | null>(() => readStoredUser())
-  const [loading, setLoading] = useState<boolean>(!!getStoredToken())
+  const [loading, setLoading] = useState<boolean>(!!getStoredToken() || testAccess.enabled)
+  const [testAccessAttempted, setTestAccessAttempted] = useState(false)
 
   const setUser = (nextUser: SafeUser | null) => {
-    setUserState(nextUser)
+    const normalizedUser = normalizeSafeUser(nextUser)
+    setUserState(normalizedUser)
     if (typeof window === 'undefined') {
       return
     }
-    if (!nextUser) {
+    if (!normalizedUser) {
       window.localStorage.removeItem(storageKeys.user)
       return
     }
-    window.localStorage.setItem(storageKeys.user, JSON.stringify(nextUser))
+    window.localStorage.setItem(storageKeys.user, JSON.stringify(normalizedUser))
   }
 
   const refreshUser = async () => {
     if (!token) {
-      setLoading(false)
+      if (!testAccess.enabled || testAccessAttempted) {
+        setLoading(false)
+      }
       return
     }
     try {
       const response = await api.get<SafeUser>('/users/me')
-      setUser(response.data)
+      const normalizedUser = normalizeSafeUser(response.data)
+      if (!normalizedUser) {
+        throw new Error('The server returned an invalid user session')
+      }
+      setUser(normalizedUser)
+    } catch {
+      setStoredToken(null)
+      setToken(null)
+      setUser(null)
     } finally {
       setLoading(false)
     }
@@ -82,14 +103,55 @@ export function AuthProvider({ children }: PropsWithChildren) {
     void refreshUser()
   }, [token])
 
+  useEffect(() => {
+    if (token || !testAccess.enabled || testAccessAttempted) {
+      return
+    }
+    let cancelled = false
+    setTestAccessAttempted(true)
+    setLoading(true)
+    api
+      .post<{ token: string; user: SafeUser }>('/auth/login', {
+        email: testAccess.email,
+        password: testAccess.password,
+      })
+      .then((response) => {
+        if (cancelled) {
+          return
+        }
+        const normalizedUser = normalizeSafeUser(response.data.user)
+        if (!normalizedUser) {
+          throw new Error('The server returned an invalid testing user')
+        }
+        setStoredToken(response.data.token)
+        setToken(response.data.token)
+        setUser(normalizedUser)
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setStoredToken(null)
+          setToken(null)
+          setUser(null)
+          setLoading(false)
+        }
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [testAccessAttempted, token])
+
   const signIn = async (email: string, password: string) => {
     const response = await api.post<{ token: string; user: SafeUser }>('/auth/login', {
       email,
       password,
     })
+    const normalizedUser = normalizeSafeUser(response.data.user)
+    if (!normalizedUser) {
+      throw new Error('The server returned an invalid user session')
+    }
     setStoredToken(response.data.token)
     setToken(response.data.token)
-    setUser(response.data.user)
+    setUser(normalizedUser)
     setLoading(false)
   }
 

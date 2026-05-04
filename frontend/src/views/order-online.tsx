@@ -251,7 +251,7 @@ const copy = {
   en: {
     chooseLanguage: 'Choose your requisition language',
     chooseLanguageBody:
-      'We will reserve a unique XPath order number first, then render the requisition form in your selected language.',
+      'We will reserve a unique PathNovate order number first, then render the requisition form in your selected language.',
     english: 'English',
     french: 'Francais',
     formTitle: 'PATHOLOGY REQUISITION FORM',
@@ -279,17 +279,17 @@ const copy = {
     submit: 'Submit requisition',
     submitting: 'Submitting requisition...',
     success:
-      'The requisition was submitted successfully. Keep this XPath order number for patient portal tracking and authenticity checks.',
-    authenticityTitle: 'XPath order authenticity',
+      'The requisition was submitted successfully. Keep this PathNovate order number for patient portal tracking and authenticity checks.',
+    authenticityTitle: 'PathNovate order authenticity',
     authenticityGood: 'Verified order',
     authenticityReserved: 'Reserved requisition number',
     authenticityBad: 'Number not found',
-    authenticityLookup: 'This page confirms whether a QR or order number was issued by XPath Labs.',
+    authenticityLookup: 'This page confirms whether a QR or order number was issued by PathNovate.',
   },
   fr: {
     chooseLanguage: 'Choisissez la langue de votre formulaire',
     chooseLanguageBody:
-      "Nous allons d'abord reserver un numero de commande XPath unique, puis afficher le formulaire de demande dans la langue choisie.",
+      "Nous allons d'abord reserver un numero de commande PathNovate unique, puis afficher le formulaire de demande dans la langue choisie.",
     english: 'English',
     french: 'Francais',
     formTitle: "FORMULAIRE DE DEMANDE D'EXAMEN ANATOMOPATHOLOGIQUE",
@@ -318,13 +318,13 @@ const copy = {
     submit: 'Envoyer la demande',
     submitting: 'Envoi de la demande...',
     success:
-      'Le formulaire a ete envoye avec succes. Conservez ce numero XPath pour le suivi dans le portail patient et pour les controles d’authenticite.',
-    authenticityTitle: "Authenticite du numero XPath",
+      'Le formulaire a ete envoye avec succes. Conservez ce numero PathNovate pour le suivi dans le portail patient et pour les controles d’authenticite.',
+    authenticityTitle: "Authenticite du numero PathNovate",
     authenticityGood: 'Commande verifiee',
     authenticityReserved: 'Numero reserve',
     authenticityBad: 'Numero introuvable',
     authenticityLookup:
-      'Cette page confirme si un QR code ou un numero de commande a bien ete emis par XPath Labs.',
+      'Cette page confirme si un QR code ou un numero de commande a bien ete emis par PathNovate.',
   },
 } as const
 
@@ -473,8 +473,8 @@ const testLabelByLanguage: Record<
     fr: 'Deuxieme avis expert (international)',
   },
   'test-strategy-insight': {
-    en: 'X.PATH Strategy Insight',
-    fr: 'Analyse strategique X.PATH (Orientation therapeutique)',
+    en: 'PathNovate Strategy Insight',
+    fr: 'Analyse strategique PathNovate (Orientation therapeutique)',
   },
   'test-tumor-marker': {
     en: 'TumorMarker (Blood Test)',
@@ -1308,7 +1308,7 @@ export function OrderOnlinePage() {
                     }}
                   >
                     <Typography sx={{ fontSize: 10.5, textTransform: 'uppercase', color: '#6a3d53' }}>
-                      XPath Order Number
+                      PathNovate Order Number
                     </Typography>
                     <Typography sx={{ fontSize: 20, fontWeight: 800, color: '#23314d' }}>
                       {session.orderNumber}
@@ -2212,7 +2212,7 @@ export function OrderAuthenticityPage() {
                 <strong>Status:</strong> {authenticityState.data?.status ?? 'not_found'}
               </Typography>
               <Typography>
-                <strong>Issued by:</strong> {authenticityState.data?.labName ?? 'XPath Labs'}
+                <strong>Issued by:</strong> {authenticityState.data?.labName ?? 'PathNovate'}
               </Typography>
               <Typography>
                 <strong>Created at:</strong> {authenticityState.data?.createdAt ? formatDateTime(authenticityState.data.createdAt) : '—'}

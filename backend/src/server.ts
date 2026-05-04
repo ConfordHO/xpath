@@ -1441,7 +1441,7 @@ app.get("/api/public/order-authenticity/:orderNumber", async (req, res) => {
       createdAt: order.createdAt,
       updatedAt: order.updatedAt,
       labName: db.settings.labName,
-      message: "This order number is authentic and exists in XPath Labs.",
+      message: "This order number is authentic and exists in PathNovate.",
     });
   }
 
@@ -1461,7 +1461,7 @@ app.get("/api/public/order-authenticity/:orderNumber", async (req, res) => {
       createdAt: reservation.createdAt,
       expiresAt: reservation.expiresAt,
       labName: db.settings.labName,
-      message: "This requisition number was issued by XPath Labs and is currently reserved for intake.",
+        message: "This requisition number was issued by PathNovate and is currently reserved for intake.",
     });
   }
 
@@ -1469,7 +1469,7 @@ app.get("/api/public/order-authenticity/:orderNumber", async (req, res) => {
     valid: false,
     status: "not_found",
     orderNumber,
-    message: "We could not verify this order number in the XPath Labs pool.",
+    message: "We could not verify this order number in the PathNovate pool.",
   });
 });
 
@@ -3370,8 +3370,8 @@ app.post(
           findPatient(db, order.patientId).phone,
         message:
           order.financialClearance === "cleared"
-            ? `XPath has received your sample ${order.orderNumber} and payment is confirmed.`
-            : `XPath has received your sample ${order.orderNumber}. Payment is still pending.`,
+            ? `PathNovate has received your sample ${order.orderNumber} and payment is confirmed.`
+            : `PathNovate has received your sample ${order.orderNumber}. Payment is still pending.`,
         status: "queued",
         mandatory: false,
         createdAt: timestamp,
@@ -3712,7 +3712,7 @@ app.post(
           order.requesterNotificationPhone ||
           order.requesterNotificationEmail ||
           findPatient(db, order.patientId).phone,
-        message: `Your sample for ${order.orderNumber} has arrived at the XPath lab reception desk and is awaiting intake confirmation.`,
+        message: `Your sample for ${order.orderNumber} has arrived at the PathNovate reception desk and is awaiting intake confirmation.`,
         status: "queued",
         mandatory: false,
         createdAt: timestamp,
@@ -5559,7 +5559,7 @@ export { app };
 
 export function startServer() {
   return app.listen(PORT, () => {
-    console.log(`X-PATH backend listening on http://0.0.0.0:${PORT}`);
+    console.log(`PathNovate backend listening on http://0.0.0.0:${PORT}`);
     startHl7MllpListener();
   });
 }

@@ -83,6 +83,9 @@ const legacySettingDefaults = {
   currency: "USD",
   locale: "en",
 } as const;
+const legacyLabNames = new Set(["X-PATH LIMS", "X.PATH LIMS", "X.PATH LABS", "XPATH LIMS"]);
+
+type LegacyRecord = Record<string, unknown>;
 
 type PostgresSslMode = "require" | "disable";
 
@@ -245,6 +248,86 @@ function collapseByKey<T>(items: T[] | undefined, getKey: (item: T) => string) {
   return Array.from(bestByKey.values());
 }
 
+function asLegacyRecord(value: unknown): LegacyRecord {
+  return value && typeof value === "object" ? (value as LegacyRecord) : {};
+}
+
+function legacyString(value: unknown) {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function legacyStringField(record: LegacyRecord, ...keys: string[]) {
+  for (const key of keys) {
+    const value = legacyString(record[key]);
+    if (value) {
+      return value;
+    }
+  }
+  return undefined;
+}
+
+function legacyNumberField(record: LegacyRecord, ...keys: string[]) {
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === "number" && Number.isFinite(value)) {
+      return value;
+    }
+    if (typeof value === "string" && value.trim()) {
+      const parsed = Number(value);
+      if (Number.isFinite(parsed)) {
+        return parsed;
+      }
+    }
+  }
+  return undefined;
+}
+
+function legacyBooleanField(record: LegacyRecord, fallback: boolean, ...keys: string[]) {
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === "boolean") {
+      return value;
+    }
+  }
+  return fallback;
+}
+
+function legacyArrayField<T = unknown>(record: LegacyRecord, ...keys: string[]) {
+  for (const key of keys) {
+    const value = record[key];
+    if (Array.isArray(value)) {
+      return value as T[];
+    }
+  }
+  return [];
+}
+
+function legacyTimestamp(value: unknown, fallback: string) {
+  const candidate = legacyString(value);
+  if (!candidate) {
+    return fallback;
+  }
+  const parsed = new Date(candidate);
+  return Number.isFinite(parsed.getTime()) ? parsed.toISOString() : fallback;
+}
+
+function legacyEntityId(record: LegacyRecord, fallback: string, ...extraKeys: string[]) {
+  return legacyStringField(record, "_id", "id", ...extraKeys) ?? fallback;
+}
+
+function legacySiteId(record: LegacyRecord, fallback?: string | null) {
+  const value = legacyStringField(record, "siteId", "site_id");
+  return value ?? fallback ?? null;
+}
+
+function safeSlug(value: string) {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 64);
+}
+
 function deriveOrderItems(
   rawItems: Partial<Database>["orderItems"],
   seedItems: Database["orderItems"],
@@ -370,9 +453,40 @@ function normalizeDatabase(raw: Partial<Database>): Database {
       (item) => !legacyTestIds.has(item._id) && !canonicalTestCodes.has(item.code),
     ),
   ];
+  const testTypeByCode = new Map(testTypes.map((item) => [item.code.toUpperCase(), item._id]));
   const seedUserByEmail = new Map(seed.users.map((user) => [user.email.toLowerCase(), user]));
-  const users = mergeByKey(raw.users, seed.users, (item) => item.email).map((user) => ({
+  const rawUsers = (raw.users ?? [])
+    .map((user) => {
+      const record = asLegacyRecord(user);
+      const email = legacyStringField(record, "email")?.toLowerCase();
+      if (!email) {
+        return null;
+      }
+      const seedUser = seedUserByEmail.get(email);
+      const preferredLocale = legacyStringField(record, "preferredLocale", "preferred_locale");
+      const preferredLanguage = legacyStringField(record, "preferredLanguage", "preferred_language");
+      const createdAt = legacyTimestamp(record.createdAt, seedUser?.createdAt ?? new Date().toISOString());
+      return {
+        ...user,
+        _id: legacyEntityId(record, seedUser?._id ?? `legacy-user-${safeSlug(email)}`),
+        email,
+        name: legacyStringField(record, "name") ?? seedUser?.name ?? email,
+        role: (legacyStringField(record, "role") ?? seedUser?.role ?? "receptionist") as Database["users"][number]["role"],
+        siteId: legacySiteId(record, seedUser?.siteId ?? null),
+        active: legacyBooleanField(record, seedUser?.active ?? true, "active"),
+        preferredLocale: preferredLocale === "en" || preferredLocale === "fr" ? preferredLocale : undefined,
+        preferredLanguage:
+          preferredLanguage === "english" || preferredLanguage === "french"
+            ? preferredLanguage
+            : undefined,
+        createdAt,
+        updatedAt: legacyTimestamp(record.updatedAt, createdAt),
+      } as Database["users"][number];
+    })
+    .filter((user): user is Database["users"][number] => Boolean(user));
+  const users = mergeByKey(rawUsers, seed.users, (item) => item.email.toLowerCase()).map((user) => ({
     ...user,
+    _id: user._id || seedUserByEmail.get(user.email.toLowerCase())?._id || `legacy-user-${safeSlug(user.email)}`,
     passwordHash: user.passwordHash ?? seedUserByEmail.get(user.email.toLowerCase())?.passwordHash ?? "",
     active:
       user.passwordHash || seedUserByEmail.has(user.email.toLowerCase())
@@ -402,10 +516,55 @@ function normalizeDatabase(raw: Partial<Database>): Database {
           : user.siteId ?? normalizeSiteId(user.siteId),
   }));
   const userSiteById = new Map(users.map((user) => [user._id, user.siteId ?? null]));
-  const doctors = mergeByKey(raw.doctors, seed.doctors, (item) => item.email).map((doctor) => ({
+  const userIdByAnyId = new Map<string, string>();
+  const userIdByEmail = new Map<string, string>();
+  rawUsers.forEach((user) => {
+    const record = asLegacyRecord(user);
+    const canonicalUser = users.find((entry) => entry.email.toLowerCase() === user.email.toLowerCase());
+    if (!canonicalUser) {
+      return;
+    }
+    [legacyString(record._id), legacyString(record.id), user._id].filter(Boolean).forEach((value) => {
+      userIdByAnyId.set(value as string, canonicalUser._id);
+    });
+    userIdByEmail.set(canonicalUser.email.toLowerCase(), canonicalUser._id);
+  });
+  users.forEach((user) => {
+    userIdByAnyId.set(user._id, user._id);
+    userIdByEmail.set(user.email.toLowerCase(), user._id);
+  });
+  const rawDoctors = (raw.doctors ?? []).map((doctor) => {
+    const record = asLegacyRecord(doctor);
+    const email = legacyStringField(record, "email")?.toLowerCase() ?? doctor.email;
+    const userId = legacyStringField(record, "userId", "user_id");
+    const createdAt = legacyTimestamp(record.createdAt, new Date().toISOString());
+    return {
+      ...doctor,
+      _id: legacyEntityId(record, `legacy-doctor-${safeSlug(email ?? doctor.code ?? "doctor")}`),
+      email,
+      userId: userId ? userIdByAnyId.get(userId) ?? userId : doctor.userId ?? null,
+      siteId: legacySiteId(record, doctor.siteId ?? null),
+      createdAt,
+      updatedAt: legacyTimestamp(record.updatedAt, createdAt),
+    } as Database["doctors"][number];
+  });
+  const doctors = mergeByKey(rawDoctors, seed.doctors, (item) => item.email.toLowerCase()).map((doctor) => ({
     ...doctor,
+    _id: doctor._id || `legacy-doctor-${safeSlug(doctor.email)}`,
     siteId: doctor.siteId ?? userSiteById.get(doctor.userId ?? "") ?? normalizeSiteId(doctor.siteId),
   }));
+  const doctorIdByAnyId = new Map<string, string>();
+  for (const doctor of doctors) {
+    doctorIdByAnyId.set(doctor._id, doctor._id);
+  }
+  for (const doctor of rawDoctors) {
+    const canonicalDoctor = doctors.find((entry) => entry.email.toLowerCase() === doctor.email.toLowerCase());
+    if (!canonicalDoctor) continue;
+    const record = asLegacyRecord(doctor);
+    [legacyString(record._id), legacyString(record.id), doctor._id].filter(Boolean).forEach((value) => {
+      doctorIdByAnyId.set(value as string, canonicalDoctor._id);
+    });
+  }
   const digitalSlides = mergeByKey(raw.digitalSlides, seed.digitalSlides, (item) => item._id).map((slide) => ({
     ...slide,
     ownerLockedAt: slide.ownerLockedAt ?? null,
@@ -450,7 +609,7 @@ function normalizeDatabase(raw: Partial<Database>): Database {
     ...seed.settings,
     ...(rawSettings ?? {}),
     labName:
-      !rawSettings?.labName || rawSettings.labName === legacySettingDefaults.labName
+      !rawSettings?.labName || legacyLabNames.has(rawSettings.labName)
         ? seed.settings.labName
         : rawSettings.labName,
     tagline:
@@ -460,7 +619,7 @@ function normalizeDatabase(raw: Partial<Database>): Database {
     aboutText:
       !rawSettings?.aboutText || rawSettings.aboutText === legacySettingDefaults.aboutText
         ? seed.settings.aboutText
-        : rawSettings.aboutText,
+        : rawSettings.aboutText.replace(/X\.PATH Labs|X-PATH Labs|XPath Labs/g, "PathNovate"),
     contactEmail:
       !rawSettings?.contactEmail || rawSettings.contactEmail === legacySettingDefaults.contactEmail
         ? seed.settings.contactEmail
@@ -513,64 +672,229 @@ function normalizeDatabase(raw: Partial<Database>): Database {
     rawAuditEvents.length > 0 && verifyAuditTrail(rawAuditEvents).valid
       ? rawAuditEvents.slice().sort((left, right) => right.sequence - left.sequence)
       : normalizeAuditTrail(rawAuditEvents);
-  const referredPatientDoctorIds = new Map<string, Set<string>>();
-  for (const order of raw.orders ?? seed.orders) {
-    if (!order.referringDoctorId) continue;
-    const doctors = referredPatientDoctorIds.get(order.patientId) ?? new Set<string>();
-    doctors.add(order.referringDoctorId);
-    referredPatientDoctorIds.set(order.patientId, doctors);
+  const rawPatients = (raw.patients ?? []).map((patient, index) => {
+    const record = asLegacyRecord(patient);
+    const id = legacyEntityId(record, `legacy-patient-${index + 1}`);
+    const createdAt = legacyTimestamp(record.createdAt, new Date().toISOString());
+    const gender = legacyStringField(record, "gender");
+    return {
+      ...patient,
+      _id: id,
+      firstName: legacyStringField(record, "firstName", "first_name") ?? "Unknown",
+      lastName: legacyStringField(record, "lastName", "last_name") ?? "Patient",
+      dateOfBirth: legacyStringField(record, "dateOfBirth", "date_of_birth") ?? "1900-01-01",
+      gender: gender === "female" || gender === "other" ? gender : "male",
+      phone: legacyStringField(record, "phone") ?? "",
+      email: legacyStringField(record, "email") ?? "",
+      address: legacyStringField(record, "address") ?? "",
+      siteId: legacySiteId(record, normalizeSiteId(undefined)),
+      externalPatientId: legacyStringField(record, "externalPatientId", "external_patient_id") ?? null,
+      authorizedDoctorIds: legacyArrayField<string>(record, "authorizedDoctorIds", "authorized_doctor_ids"),
+      createdAt,
+      updatedAt: legacyTimestamp(record.updatedAt, createdAt),
+    } as Database["patients"][number];
+  });
+  const patientsWithoutDoctorAuth = mergeByKey(rawPatients, seed.patients, (item) => item._id);
+  const patientIdByAnyId = new Map<string, string>();
+  for (const patient of patientsWithoutDoctorAuth) {
+    patientIdByAnyId.set(patient._id, patient._id);
   }
-  const normalizedOrders = (raw.orders ?? seed.orders).map((order) => ({
-    ...order,
-    testTypeIds: (order.testTypeIds ?? [])
+  for (const patient of rawPatients) {
+    const record = asLegacyRecord(patient);
+    [legacyString(record._id), legacyString(record.id), patient._id].filter(Boolean).forEach((value) => {
+      patientIdByAnyId.set(value as string, patient._id);
+    });
+  }
+  const normalizedOrders = (raw.orders ?? seed.orders).map((order, index) => {
+    const record = asLegacyRecord(order);
+    const orderNumber = legacyStringField(record, "orderNumber", "order_number") ?? `ORD-${String(index + 1).padStart(6, "0")}`;
+    const orderId = legacyEntityId(record, orderNumber, "orderId", "order_id");
+    const itemTestTypeIds = legacyArrayField<LegacyRecord>(record, "items")
+      .map((item) => {
+        const itemRecord = asLegacyRecord(item);
+        const explicitId = legacyStringField(itemRecord, "testTypeId", "test_type_id");
+        if (explicitId) {
+          return legacyTestIds.get(explicitId) ?? explicitId;
+        }
+        const code = legacyStringField(itemRecord, "testCode", "test_code", "code");
+        return code ? testTypeByCode.get(code.toUpperCase()) : undefined;
+      })
+      .filter((value): value is string => Boolean(value));
+    const testTypeIds = [
+      ...(Array.isArray(order.testTypeIds) ? order.testTypeIds : []),
+      ...itemTestTypeIds,
+    ]
       .map((testTypeId) => legacyTestIds.get(testTypeId) ?? testTypeId)
-      .filter((testTypeId, index, all) => {
-        if (all.indexOf(testTypeId) !== index) {
+      .filter((testTypeId, itemIndex, all) => {
+        if (all.indexOf(testTypeId) !== itemIndex) {
           return false;
         }
         return (
           canonicalTestTypesById.has(testTypeId) ||
           testTypes.some((item) => item._id === testTypeId)
         );
-      }),
-    validationStatus: order.validationStatus ?? "pending",
-    intakeSource: order.intakeSource ?? "manual",
-    payerType: order.payerType ?? "patient",
-    billingAccountName: order.billingAccountName ?? null,
-    billingInstructions: order.billingInstructions ?? null,
-    financialClearance: order.financialClearance ?? "pending",
-    lockStatus: order.lockStatus ?? (order.lockedAt ? "locked" : "unlocked"),
-    lockedAt: order.lockedAt ?? null,
-    lockedBy: order.lockedBy ?? null,
-    lockReason: order.lockReason ?? null,
-    courierStatus: normalizeCourierStatus(order.courierStatus),
-    receivedByUserId: order.receivedByUserId ?? null,
-    triagedAt: order.triagedAt ?? null,
-    triagedBy: order.triagedBy ?? null,
-    workflowReleasedAt: order.workflowReleasedAt ?? null,
-    workflowReleasedBy: order.workflowReleasedBy ?? null,
-    paymentCollectionStatus: order.paymentCollectionStatus ?? "unpaid",
-    paymentCollectionMethod: order.paymentCollectionMethod ?? null,
-    paymentCollectionAmount: order.paymentCollectionAmount ?? null,
-    paymentCollectionReference: order.paymentCollectionReference ?? null,
-    paymentCollectionDeclaredBy: order.paymentCollectionDeclaredBy ?? null,
-    paymentCollectionDeclaredAt: order.paymentCollectionDeclaredAt ?? null,
-    paymentPromptSentAt: order.paymentPromptSentAt ?? null,
-    paymentPromptRecipient: order.paymentPromptRecipient ?? null,
-    anonymousCaseCode: order.anonymousCaseCode ?? `CASE-${order.orderNumber}`,
-    requesterNotificationEmail: order.requesterNotificationEmail ?? null,
-    requesterNotificationPhone: order.requesterNotificationPhone ?? null,
-    completedAt:
-      order.completedAt ??
-      (raw.reports ?? seed.reports).find((report) => report.orderId === order._id)?.lockedAt ??
-      null,
-    siteId:
-      order.siteId ?? userSiteById.get(order.createdBy) ?? normalizeSiteId(order.siteId),
-  }));
+      });
+    const createdAt = legacyTimestamp(record.createdAt, new Date().toISOString());
+    const rawStatus = legacyStringField(record, "status");
+    const status = (
+      ["draft", "received", "in_progress", "review", "completed", "released", "cancelled"].includes(rawStatus ?? "")
+        ? rawStatus
+        : "received"
+    ) as Database["orders"][number]["status"];
+    const rawOrderSource = legacyStringField(record, "orderSource", "order_source", "source");
+    const orderSource = (
+      rawOrderSource === "online" || rawOrderSource === "referral" || rawOrderSource === "walk_in"
+        ? rawOrderSource
+        : "walk_in"
+    ) as Database["orders"][number]["orderSource"];
+    const rawPatientId = legacyStringField(record, "patientId", "patient_id");
+    const rawCreatedBy = legacyStringField(record, "createdBy", "created_by");
+    const rawDoctorId = legacyStringField(record, "referringDoctorId", "referring_doctor_id", "clinicianId", "clinician_id");
+    const payerType = legacyStringField(record, "payerType", "payer_type");
+    const financialClearance = legacyStringField(record, "financialClearance", "financial_clearance");
+    return {
+      ...order,
+      _id: orderId,
+      orderNumber,
+      patientId: rawPatientId ? patientIdByAnyId.get(rawPatientId) ?? rawPatientId : patientsWithoutDoctorAuth[0]?._id ?? "",
+      testTypeIds,
+      status,
+      priority: legacyStringField(record, "priority") === "urgent" ? "urgent" : "normal",
+      orderSource,
+      referringDoctorId: rawDoctorId ? doctorIdByAnyId.get(rawDoctorId) ?? rawDoctorId : null,
+      referringDoctorName: legacyStringField(record, "referringDoctorName", "referring_doctor_name") ?? null,
+      payerType:
+        payerType === "clinician" ||
+        payerType === "corporate" ||
+        payerType === "insurance" ||
+        payerType === "lab_policy"
+          ? payerType
+          : "patient",
+      billingAccountName: legacyStringField(record, "billingAccountName", "billing_account_name") ?? null,
+      billingInstructions: legacyStringField(record, "billingInstructions", "billing_instructions") ?? null,
+      createdBy: rawCreatedBy ? userIdByAnyId.get(rawCreatedBy) ?? rawCreatedBy : userIdByEmail.get("admin@xpath.lims") ?? users[0]?._id ?? "system",
+      notes: legacyStringField(record, "notes") ?? legacyStringField(record, "clinicalNotes", "clinical_notes") ?? order.notes,
+      clinicalHistory: legacyStringField(record, "clinicalHistory", "clinical_history", "clinicalNotes", "clinical_notes"),
+      validationStatus: order.validationStatus ?? "pending",
+      intakeSource: order.intakeSource ?? "manual",
+      financialClearance:
+        financialClearance === "cleared" || financialClearance === "blocked"
+          ? financialClearance
+          : "pending",
+      lockStatus: order.lockStatus ?? (order.lockedAt ? "locked" : "unlocked"),
+      lockedAt: order.lockedAt ?? null,
+      lockedBy: order.lockedBy ? userIdByAnyId.get(order.lockedBy) ?? order.lockedBy : null,
+      lockReason: order.lockReason ?? null,
+      courierStatus: normalizeCourierStatus(order.courierStatus),
+      receivedByUserId: order.receivedByUserId ?? null,
+      triagedAt: order.triagedAt ?? null,
+      triagedBy: order.triagedBy ?? null,
+      workflowReleasedAt: order.workflowReleasedAt ?? null,
+      workflowReleasedBy: order.workflowReleasedBy ?? null,
+      paymentCollectionStatus: order.paymentCollectionStatus ?? "unpaid",
+      paymentCollectionMethod: order.paymentCollectionMethod ?? null,
+      paymentCollectionAmount: legacyNumberField(record, "paymentCollectionAmount", "payment_collection_amount") ?? null,
+      paymentCollectionReference: order.paymentCollectionReference ?? null,
+      paymentCollectionDeclaredBy: order.paymentCollectionDeclaredBy ?? null,
+      paymentCollectionDeclaredAt: order.paymentCollectionDeclaredAt ?? null,
+      paymentPromptSentAt: order.paymentPromptSentAt ?? null,
+      paymentPromptRecipient: order.paymentPromptRecipient ?? null,
+      anonymousCaseCode: order.anonymousCaseCode ?? `CASE-${orderNumber}`,
+      requesterNotificationEmail: order.requesterNotificationEmail ?? null,
+      requesterNotificationPhone: order.requesterNotificationPhone ?? null,
+      completedAt:
+        order.completedAt ??
+        (raw.reports ?? seed.reports).find((report) => report.orderId === orderId)?.lockedAt ??
+        null,
+      siteId:
+        legacySiteId(record, userSiteById.get(rawCreatedBy ?? "") ?? normalizeSiteId(order.siteId)),
+      createdAt,
+      updatedAt: legacyTimestamp(record.updatedAt, createdAt),
+    } as Database["orders"][number];
+  });
+  const referredPatientDoctorIds = new Map<string, Set<string>>();
+  for (const order of normalizedOrders) {
+    if (!order.referringDoctorId) continue;
+    const linkedDoctors = referredPatientDoctorIds.get(order.patientId) ?? new Set<string>();
+    linkedDoctors.add(order.referringDoctorId);
+    referredPatientDoctorIds.set(order.patientId, linkedDoctors);
+  }
   const normalizedSamples = (raw.samples ?? seed.samples).map((sample) => ({
     ...sample,
     status: sample.status ?? "received",
   }));
+  const patients = patientsWithoutDoctorAuth.map((patient) => ({
+    ...patient,
+    authorizedDoctorIds: Array.from(
+      new Set([
+        ...(patient.authorizedDoctorIds ?? []),
+        ...(referredPatientDoctorIds.get(patient._id) ?? []),
+      ]),
+    ),
+    siteId: patient.siteId ?? normalizeSiteId(patient.siteId),
+  }));
+  const orderIdByNumber = new Map(normalizedOrders.map((order) => [order.orderNumber, order._id]));
+  const normalizedInvoices = (raw.invoices ?? seed.invoices).map((invoice, index) => {
+    const record = asLegacyRecord(invoice);
+    const orderNumber = legacyStringField(record, "orderNumber", "order_number");
+    const lineItems = legacyArrayField<LegacyRecord>(record, "lineItems", "line_items");
+    const lineItemTotal = lineItems.reduce((sum, item) => {
+      const itemRecord = asLegacyRecord(item);
+      const quantity = legacyNumberField(itemRecord, "quantity", "qty") ?? 1;
+      const unitPrice = legacyNumberField(itemRecord, "unitPrice", "unit_price", "price", "amount") ?? 0;
+      return sum + quantity * unitPrice;
+    }, 0);
+    const orderId =
+      legacyStringField(record, "orderId", "order_id") ??
+      (orderNumber ? orderIdByNumber.get(orderNumber) : undefined) ??
+      normalizedOrders[index]?._id ??
+      "";
+    const issuedAt = legacyTimestamp(record.issuedAt, legacyTimestamp(record.createdAt, new Date().toISOString()));
+    return {
+      ...invoice,
+      _id: legacyEntityId(record, `invoice-${orderNumber ?? index + 1}`),
+      orderId,
+      invoiceNumber:
+        legacyStringField(record, "invoiceNumber", "invoice_number", "id") ??
+        `INV-${orderNumber ?? String(index + 1).padStart(6, "0")}`,
+      subtotal: legacyNumberField(record, "subtotal") ?? lineItemTotal,
+      adjustmentAmount: legacyNumberField(record, "adjustmentAmount", "adjustment_amount") ?? 0,
+      total: legacyNumberField(record, "total") ?? lineItemTotal,
+      status: invoice.status ?? "issued",
+      paymentGateway: invoice.paymentGateway ?? "cash",
+      externalAccountingId: invoice.externalAccountingId ?? null,
+      externalCustomerId: invoice.externalCustomerId ?? null,
+      accountingSyncStatus: invoice.accountingSyncStatus ?? "pending",
+      accountingSyncedAt: invoice.accountingSyncedAt ?? null,
+      issuedAt,
+      createdAt: legacyTimestamp(record.createdAt, issuedAt),
+      updatedAt: legacyTimestamp(record.updatedAt, issuedAt),
+    } as Database["invoices"][number];
+  });
+  const normalizedSessionRecords = (raw.sessionRecords ?? seed.sessionRecords)
+    .map((session, index) => {
+      const record = asLegacyRecord(session);
+      const email = legacyStringField(record, "email")?.toLowerCase() ?? "";
+      const userId =
+        legacyStringField(record, "userId", "user_id")
+          ? userIdByAnyId.get(legacyStringField(record, "userId", "user_id") as string) ??
+            legacyStringField(record, "userId", "user_id")
+          : userIdByEmail.get(email);
+      const createdAt = legacyTimestamp(record.createdAt, new Date().toISOString());
+      return {
+        ...session,
+        _id: legacyEntityId(record, `legacy-session-${index + 1}`),
+        userId: userId ?? "",
+        email,
+        role: (legacyStringField(record, "role") ?? "receptionist") as Database["sessionRecords"][number]["role"],
+        status: session.status ?? "active",
+        ipAddress: legacyStringField(record, "ipAddress", "ip_address") ?? "127.0.0.1",
+        userAgent: legacyStringField(record, "userAgent", "user_agent") ?? "unknown",
+        createdAt,
+        updatedAt: legacyTimestamp(record.updatedAt, createdAt),
+      } as Database["sessionRecords"][number];
+    })
+    .filter((session) => Boolean(session.userId));
   const orderItems = deriveOrderItems(raw.orderItems, seed.orderItems, normalizedOrders);
   const specimenAssignments = deriveSpecimenAssignments(
     raw.specimenAssignments,
@@ -582,16 +906,7 @@ function normalizeDatabase(raw: Partial<Database>): Database {
   const normalizedBase: Database = {
     users,
     doctors,
-    patients: (raw.patients ?? seed.patients).map((patient) => ({
-      ...patient,
-      authorizedDoctorIds: Array.from(
-        new Set([
-          ...(patient.authorizedDoctorIds ?? []),
-          ...(referredPatientDoctorIds.get(patient._id) ?? []),
-        ]),
-      ),
-      siteId: patient.siteId ?? normalizeSiteId(patient.siteId),
-    })),
+    patients,
     testTypes,
     hl7Messages,
     specimens,
@@ -637,13 +952,7 @@ function normalizeDatabase(raw: Partial<Database>): Database {
     mavianceTransactions,
     insuranceAuthorizations:
       raw.insuranceAuthorizations ?? seed.insuranceAuthorizations,
-    invoices: (raw.invoices ?? seed.invoices).map((invoice) => ({
-      externalAccountingId: null,
-      externalCustomerId: null,
-      accountingSyncStatus: "pending",
-      accountingSyncedAt: null,
-      ...invoice,
-    })),
+    invoices: normalizedInvoices,
     refunds: (raw.refunds ?? seed.refunds).map((refund) => ({
       ...refund,
       createdBy: refund.createdBy ?? null,
@@ -791,7 +1100,7 @@ function normalizeDatabase(raw: Partial<Database>): Database {
     documents,
     auditEvents,
     projectReviewComments: raw.projectReviewComments ?? seed.projectReviewComments,
-    sessionRecords: raw.sessionRecords ?? seed.sessionRecords,
+    sessionRecords: normalizedSessionRecords,
     credentialAudits: raw.credentialAudits ?? seed.credentialAudits,
     validationRules: raw.validationRules ?? seed.validationRules,
     internalChatThreads: (raw.internalChatThreads ?? seed.internalChatThreads).map((thread) => ({

@@ -13,6 +13,7 @@ Set the API endpoint with:
 
 ```bash
 NEXT_PUBLIC_API_URL=https://xpath-8pc4.onrender.com/api
+NEXT_PUBLIC_TEST_ACCESS=true
 ```
 
 ## Production Build

@@ -186,7 +186,7 @@ function printBarcodeLabel(row: BarcodeRecord) {
   popup.document.write(`
     <html>
       <head>
-        <title>XPath Label ${row.code}</title>
+        <title>PathNovate Label ${row.code}</title>
         <style>
           body { font-family: Arial, sans-serif; padding: 24px; }
           .label { border: 2px solid #111; border-radius: 12px; padding: 18px; width: 320px; }
@@ -198,7 +198,7 @@ function printBarcodeLabel(row: BarcodeRecord) {
       </head>
       <body>
         <div class="label">
-          <div class="brand">XPATH LIMS</div>
+          <div class="brand">PathNovate</div>
           <div class="code">${row.code}</div>
           <div class="meta">${row.entityType.toUpperCase()} · ${row.entityId ?? 'UNASSIGNED'}</div>
           <div class="meta">Status: ${row.status}</div>

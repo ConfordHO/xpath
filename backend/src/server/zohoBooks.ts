@@ -301,7 +301,7 @@ function buildPatientContactPayload(db: Database, order: Order) {
       country: "Cameroon",
       phone: trimText(patient.phone) || undefined,
     },
-    notes: `XPath patient contact for order ${order.orderNumber}`,
+    notes: `PathNovate patient contact for order ${order.orderNumber}`,
   };
 }
 
@@ -316,7 +316,7 @@ function buildDoctorContactPayload(doctor: Doctor) {
       country: "Cameroon",
       phone: trimText(doctor.phone) || undefined,
     },
-    notes: `XPath referring doctor contact ${doctor.code}`,
+    notes: `PathNovate referring doctor contact ${doctor.code}`,
   };
 }
 
@@ -387,7 +387,7 @@ async function syncOrderInvoiceInternal(orderId: string, actor: User | null) {
     invoice_number: localInvoice.invoiceNumber,
     reference_number: order.orderNumber,
     date: localInvoice.issuedAt.slice(0, 10),
-    notes: `XPath order ${order.orderNumber}`,
+    notes: `PathNovate order ${order.orderNumber}`,
     payment_terms: 0,
     line_items,
   };
@@ -491,7 +491,7 @@ async function syncPaymentInternal(paymentId: string, actor: User | null) {
         amount_applied: payment.amount,
       },
     ],
-    description: `XPath payment for ${order.orderNumber}`,
+    description: `PathNovate payment for ${order.orderNumber}`,
   };
   const path = `customerpayments?${organizationQuery()}`;
   const response = await zohoRequest<{ payment: { payment_id: string } }>(path, {

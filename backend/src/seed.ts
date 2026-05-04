@@ -426,7 +426,7 @@ export function createSeedDatabase(): Database {
       {
         _id: "test-strategy-insight",
         code: "XSI",
-        name: "X.PATH Strategy Insight / Analyse strategique X.PATH",
+        name: "PathNovate Strategy Insight / Analyse strategique PathNovate",
         category: "Consultation",
         price: 50000,
         active: true,
@@ -1225,7 +1225,7 @@ export function createSeedDatabase(): Database {
     aiModelRegistry: [
       {
         _id: "ai-model-local-qc",
-        name: "XPath Local Slide QC Adapter",
+        name: "PathNovate Local Slide QC Adapter",
         provider: "local",
         version: "1.0.0",
         analysisTypes: ["qc", "ki67", "ihc_scoring", "tumor_detection"],
@@ -1778,7 +1778,7 @@ export function createSeedDatabase(): Database {
       {
         _id: "site-1",
         code: "HQ",
-        name: "XPath Central Lab",
+        name: "PathNovate Central Lab",
         siteType: "hub",
         active: true,
         createdAt: "2026-03-31T07:46:00.000Z",
@@ -1811,10 +1811,10 @@ export function createSeedDatabase(): Database {
       _id: "69b745b13507f37259f8186d",
       language: "english",
       locale: "fr",
-      labName: "X.PATH LABS",
+      labName: "PathNovate",
       tagline: "Center for Molecular Pathology and Genomics",
       aboutText:
-        "X.PATH Labs is a center for molecular pathology and genomics in Yaounde, Cameroon. We provide pathology consultation, histology, cytology, immunohistochemistry, molecular testing, and coordinated result delivery for clinicians, hospitals, and patients.",
+        "PathNovate is a center for molecular pathology and genomics in Yaounde, Cameroon. We provide pathology consultation, histology, cytology, immunohistochemistry, molecular testing, and coordinated result delivery for clinicians, hospitals, and patients.",
       contactEmail: "info@xpath-labs.com",
       contactPhone: "+237-691193779 / +237-677804723",
       address: "Rue 6460 Mbankolo (Petit Paris), BP: 35444, Yaounde - Cameroon",

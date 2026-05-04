@@ -202,7 +202,7 @@ const exactPhrasePairs: Array<[string, string]> = [
   ['Find your pathology orders', 'Retrouvez vos commandes de pathologie'],
   ['Use your last name and date of birth to see current and past orders, payment status, courier progress, and final results.', 'Utilisez votre nom de famille et votre date de naissance pour voir vos commandes actuelles et passees, le statut de paiement, lavancement du coursier et les resultats finaux.'],
   ['Your orders', 'Vos commandes'],
-  ['All your tests with XPath Lab. Click an order for details, timeline, results, and payment.', 'Toutes vos analyses chez XPath Lab. Cliquez sur une commande pour voir les details, le suivi, les resultats et le paiement.'],
+  ['All your tests with PathNovate. Click an order for details, timeline, results, and payment.', 'Toutes vos analyses chez PathNovate. Cliquez sur une commande pour voir les details, le suivi, les resultats et le paiement.'],
   ['Verify your identity', 'Verifiez votre identite'],
   ['Enter the same last name and date of birth used on the order before viewing the result, payment, and courier details.', 'Saisissez le meme nom de famille et la meme date de naissance que sur la commande avant de consulter les resultats, le paiement et les details du coursier.'],
   ['Order details and tracking', 'Details et suivi de la commande'],

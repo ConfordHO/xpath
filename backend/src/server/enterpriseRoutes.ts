@@ -1611,6 +1611,7 @@ export function registerEnterpriseRoutes(app: express.Express) {
     collection: "digitalSlides",
     schema: digitalSlideSchema,
     moduleName: "Digital Pathology",
+    readRoles: ["admin", "technician", "pathologist"],
   });
   registerCollectionRoutes(app, {
     path: "/api/ai-results",

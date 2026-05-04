@@ -80,7 +80,7 @@ function printDocument(title: string, rows: Array<[string, string]>) {
         </style>
       </head>
       <body>
-        <div class="brand">X.PATH LIMS CAMEROON</div>
+        <div class="brand">PathNovate Cameroon</div>
         <h1>${title}</h1>
         <table>
           ${rows.map(([label, value]) => `<tr><td>${label}</td><td>${value}</td></tr>`).join('')}

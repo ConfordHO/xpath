@@ -20,6 +20,9 @@ type AuthTokenPayload = {
 };
 
 export function signToken(user: User, sessionId: string) {
+  if (!user._id) {
+    throw new Error("Cannot sign an auth token for a user without an id");
+  }
   const signOptions: SignOptions = {
     audience: JWT_AUDIENCE,
     expiresIn: JWT_EXPIRY as SignOptions["expiresIn"],
@@ -52,7 +55,7 @@ export function hasAnyRole(user: Pick<User, "role"> | undefined, roles: UserRole
 }
 
 export function sanitizeUser(user: User) {
-  const { passwordHash, mfaSecret, ...safeUser } = user;
+  const { passwordHash, mfaSecret, password, ...safeUser } = user as User & { password?: string };
   return safeUser;
 }
 
@@ -78,6 +81,9 @@ export async function requireAuth(
       audience: JWT_AUDIENCE,
       issuer: JWT_ISSUER,
     }) as AuthTokenPayload;
+    if (!payload.userId || !payload.sessionId) {
+      return res.status(401).json({ message: "Authentication required" });
+    }
     const db = await loadDb();
     const user = db.users.find((entry) => entry._id === payload.userId);
     const session = db.sessionRecords.find((entry) => entry._id === payload.sessionId);

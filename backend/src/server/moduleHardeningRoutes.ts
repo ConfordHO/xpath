@@ -1266,7 +1266,7 @@ export function registerModuleHardeningRoutes(app: express.Express) {
     res.json(updated);
   });
 
-  app.get("/api/ai/models", requireRoles("admin", "pathologist"), async (req: AuthRequest, res) => {
+  app.get("/api/ai/models", requireRoles("admin", "technician", "pathologist"), async (req: AuthRequest, res) => {
     const db = scopeDbForUser(await loadDb(), ensureUser(req));
     res.json(db.aiModelRegistry);
   });
