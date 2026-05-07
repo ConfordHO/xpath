@@ -72,7 +72,7 @@ export function applySecurity(app: express.Express) {
 
   app.use((req, res, next) => {
     res.setHeader("Referrer-Policy", "no-referrer");
-    res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
+    res.setHeader("Permissions-Policy", "camera=(self), microphone=(self), geolocation=(self)");
     res.setHeader("X-Content-Type-Options", "nosniff");
     res.setHeader("X-Frame-Options", "DENY");
     if (NODE_ENV === "production" && (req.secure || req.header("x-forwarded-proto") === "https")) {

@@ -2,7 +2,7 @@
   "name": "xpath",
   "version": "1.0.0",
   "private": true,
-  "description": "Full-stack X-PATH LIMS replica",
+  "description": "Full-stack PathNovate LIMS",
   "scripts": {
     "dev": "concurrently \"npm run dev --prefix backend\" \"npm run dev --prefix frontend\"",
     "dev:backend": "npm run dev --prefix backend",
@@ -22,7 +22,7 @@
   "license": "ISC",
   "type": "module",
   "engines": {
-    "node": ">=20 <26"
+    "node": ">=22.13 <26"
   },
   "devDependencies": {
     "concurrently": "^9.2.1",

@@ -802,6 +802,40 @@ describe("production hardening", () => {
       .send({});
     assert.equal(mfaSetup.status, 200);
     assert.match(mfaSetup.body.otpauthUrl, /^otpauth:\/\/totp\//);
+
+    const specialistAssist = await request
+      .post("/api/ai/specialist-assist")
+      .set("Authorization", `Bearer ${authToken}`)
+      .send({
+        context: "order_intake",
+        targetField: "order_notes",
+        orderId: createdOrderId,
+        text: "Patient reports breast lump and requests histology.",
+      });
+    assert.equal(specialistAssist.status, 200);
+    assert.equal(specialistAssist.body.provider, "local-template");
+    assert.match(specialistAssist.body.safety, /Drafting aid only/);
+
+    const doctorToken = await loginUser("doctor@xpath.lims");
+    const forbiddenReportAssist = await request
+      .post("/api/ai/specialist-assist")
+      .set("Authorization", `Bearer ${doctorToken}`)
+      .send({
+        context: "pathology_report",
+        targetField: "diagnosis",
+        text: "Draft diagnosis",
+      });
+    assert.equal(forbiddenReportAssist.status, 403);
+
+    const disabledWhisper = await request
+      .post("/api/ai/transcribe")
+      .set("Authorization", `Bearer ${authToken}`)
+      .field("context", "order_intake")
+      .attach("audio", Buffer.from("not-real-audio", "utf8"), {
+        filename: "dictation.webm",
+        contentType: "audio/webm",
+      });
+    assert.equal(disabledWhisper.status, 503);
   });
 
   test("department communications support linked regulated threads, broadcasts, exceptions, read receipts, and attachments", async () => {

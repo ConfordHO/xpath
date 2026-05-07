@@ -196,6 +196,19 @@ export const AI_VALIDATED_MODEL_ENDPOINT =
   process.env.AI_VALIDATED_MODEL_ENDPOINT?.trim() || AI_API_BASE_URL;
 export const AI_VALIDATED_MODEL_API_KEY =
   process.env.AI_VALIDATED_MODEL_API_KEY?.trim() || AI_API_KEY;
+const whisperEnabledValue = process.env.WHISPER_ENABLED?.trim().toLowerCase();
+export const WHISPER_ENABLED =
+  whisperEnabledValue === "1" ||
+  whisperEnabledValue === "true" ||
+  whisperEnabledValue === "yes" ||
+  whisperEnabledValue === "on";
+export const WHISPER_COMMAND = process.env.WHISPER_COMMAND?.trim() || "whisper";
+export const WHISPER_MODEL = process.env.WHISPER_MODEL?.trim() || "base";
+export const WHISPER_LANGUAGE = process.env.WHISPER_LANGUAGE?.trim() || "en";
+export const WHISPER_TIMEOUT_MS = Number(process.env.WHISPER_TIMEOUT_MS ?? 120_000);
+export const WHISPER_MAX_AUDIO_BYTES = Number(
+  process.env.WHISPER_MAX_AUDIO_BYTES ?? 25 * 1024 * 1024,
+);
 export const ORTHANC_BASE_URL = process.env.ORTHANC_BASE_URL?.trim() || "";
 export const OHIF_VIEWER_URL = process.env.OHIF_VIEWER_URL?.trim() || "";
 export const WSI_TILE_SERVER_URL = process.env.WSI_TILE_SERVER_URL?.trim() || "";

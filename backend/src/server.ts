@@ -119,6 +119,7 @@ import {
 } from "./server/ocrIntake.js";
 import { ensureInvoiceForOrder, registerZohoBooksRoutes, syncPaymentToZoho } from "./server/zohoBooks.js";
 import { registerModuleHardeningRoutes } from "./server/moduleHardeningRoutes.js";
+import { registerSpeechAiRoutes } from "./server/speechAiRoutes.js";
 import { loadDb, updateDb } from "./store.js";
 import type {
   Accession,
@@ -5533,6 +5534,7 @@ registerZohoBooksRoutes(app);
 registerModuleHardeningRoutes(app);
 registerHl7IntegrationRoutes(app);
 registerMaviancePaymentRoutes(app);
+registerSpeechAiRoutes(app);
 
 function isDatabaseUnavailableError(error: Error) {
   const code = "code" in error ? String((error as Error & { code?: unknown }).code ?? "") : "";

@@ -1,6 +1,17 @@
 # Production Hardening Update
 
-Updated: 2026-05-03
+Updated: 2026-05-06
+
+## 2026-05-06 Camera OCR, Voice, Whisper, And AI Assist
+
+- OCR order intake now supports live camera capture for physical medical notes in HTTPS browsers, while retaining file upload and typed requisition text.
+- Backend and frontend security headers now explicitly allow same-origin camera and microphone access needed for controlled capture and dictation.
+- A new authenticated `/api/ai/transcribe` endpoint accepts audio dictation, runs open-source Whisper CLI when enabled, enforces audio-size limits, checks order access, and records immutable audit events.
+- A new authenticated `/api/ai/specialist-assist` endpoint supports order intake, lab observations, histology, IHC, cytology QC, department messages, and pathologist report drafting with role-gated contexts and audit logging.
+- The frontend now has reusable voice-assisted text fields with microphone dictation, browser text-to-speech read-back, and specialist drafting assist in order creation, OCR requisition text, histology grossing/processing, IHC QC, cytology QC, report drafting, and addenda.
+- Open-source stack readiness is documented in `OPEN_SOURCE_PRODUCTION_READINESS.md`, and `/api/oss/stack-readiness` now reports OCR, Whisper, speech output, and AI controls.
+- Dependency audits are clean after updating patched lockfile versions of frontend `axios` and backend `express-rate-limit`/`ip-address`.
+- Runtime engines are pinned to Node `>=22.13 <26` to match the PDF/OCR dependency support window.
 
 ## 2026-05-03 External Clinician Portal E2E
 
@@ -159,6 +170,23 @@ Backend:
 
 - `AI_VALIDATED_MODEL_ENDPOINT`
 - `AI_VALIDATED_MODEL_API_KEY`
+- `AI_PROVIDER`
+- `AI_API_BASE_URL`
+- `AI_API_KEY`
+- `AI_MODEL`
+
+For ChatGPT-compatible drafting assist, use an OpenAI-compatible chat-completions base URL and keep generated text as staff-verified draft content only.
+
+### Required for Whisper dictation
+
+- `WHISPER_ENABLED=true`
+- `WHISPER_COMMAND`
+- `WHISPER_MODEL`
+- `WHISPER_LANGUAGE`
+- `WHISPER_TIMEOUT_MS`
+- `WHISPER_MAX_AUDIO_BYTES`
+
+The backend host must also have open-source Whisper and `ffmpeg` installed, or a wrapper command/service that accepts the same CLI flow.
 
 ### Required for durable document storage
 
@@ -187,9 +215,11 @@ If you stay on filesystem storage:
 ### Render
 
 - `render.yaml` now deploys the backend from `rootDir: backend`.
+- `render.yaml` pins `NODE_VERSION=22.13.1` so OCR/PDF dependencies run on a supported runtime.
 - Sensitive values are declared with `sync: false`.
 - HL7 MLLP is disabled by default in the Render blueprint because the web deployment is intended for the HTTP API surface.
 - For file persistence on Render, prefer S3-compatible storage. If you intentionally use disk storage, attach a persistent disk and point `DMS_LOCAL_STORAGE_PATH` at the mounted path.
+- Whisper dictation should be enabled only on a host or Docker image where Whisper and `ffmpeg` are installed.
 
 ## What Still Needs Live Validation
 

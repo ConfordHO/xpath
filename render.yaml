@@ -8,6 +8,8 @@ services:
     healthCheckPath: /api/health
     autoDeploy: true
     envVars:
+      - key: NODE_VERSION
+        value: 22.13.1
       - key: NODE_ENV
         value: production
       - key: PORT
@@ -48,8 +50,26 @@ services:
         value: true
       - key: OCR_MAX_PDF_PAGES
         value: 8
+      - key: AI_PROVIDER
+        value: local
+      - key: AI_API_BASE_URL
+        sync: false
+      - key: AI_API_KEY
+        sync: false
       - key: AI_MODEL
         value: qwen2.5:1.5b
+      - key: WHISPER_ENABLED
+        sync: false
+      - key: WHISPER_COMMAND
+        value: whisper
+      - key: WHISPER_MODEL
+        value: base
+      - key: WHISPER_LANGUAGE
+        value: en
+      - key: WHISPER_TIMEOUT_MS
+        value: 120000
+      - key: WHISPER_MAX_AUDIO_BYTES
+        value: 26214400
       - key: ORTHANC_BASE_URL
         sync: false
       - key: OHIF_VIEWER_URL

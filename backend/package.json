@@ -7,7 +7,7 @@
     "dev": "tsx watch src/server.ts",
     "build": "tsc -p tsconfig.json",
     "start": "node dist/src/server.js",
-    "test": "node --import tsx --test tests/**/*.test.ts",
+    "test": "node --import tsx --test tests/*.test.ts",
     "seed": "tsx scripts/seed.ts",
     "migrate:postgres": "tsx scripts/migrate-to-postgres.ts"
   },
@@ -20,7 +20,7 @@
   "license": "ISC",
   "type": "module",
   "engines": {
-    "node": ">=20 <26"
+    "node": ">=22.13 <26"
   },
   "dependencies": {
     "@automerge/automerge": "^3.2.6",

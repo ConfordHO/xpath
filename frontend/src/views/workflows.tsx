@@ -38,6 +38,7 @@ import {
   PageHeader,
   SectionCard,
   StatusChip,
+  VoiceAssistField,
 } from '../components'
 
 import { useActionLock, useLoadable } from './shared'
@@ -991,7 +992,15 @@ export function HistologyPage() {
           <Stack spacing={2}>
             <TextField label="Accession ID" value={accessionId} onChange={(event) => setAccessionId(event.target.value)} />
             <Button onClick={() => void search()}>Search / Look up</Button>
-            <TextField label="Gross description (required)" multiline minRows={3} value={grossDescription} onChange={(event) => setGrossDescription(event.target.value)} />
+            <VoiceAssistField
+              label="Gross description (required)"
+              minRows={3}
+              value={grossDescription}
+              onChange={setGrossDescription}
+              context="histology_grossing"
+              targetField="gross_description"
+              accessionId={selected?.accession._id}
+            />
             <TextField label="Number of blocks" type="number" value={blockCount} onChange={(event) => setBlockCount(Number(event.target.value))} />
             <Button
               disabled={!selected || !grossDescription.trim() || blockCount <= 0 || actionLock.isPending(`grossing-${selected?.accession._id ?? ''}`)}
@@ -1042,7 +1051,15 @@ export function HistologyPage() {
           <Box sx={{ display: 'grid', gap: 2, gridTemplateColumns: { xs: '1fr', xl: 'repeat(2, 1fr)' } }}>
             <SectionCard title="Processing">
               <Stack spacing={2}>
-                <TextField label="Processing notes" value={processingNotes} onChange={(event) => setProcessingNotes(event.target.value)} />
+                <VoiceAssistField
+                  label="Processing notes"
+                  value={processingNotes}
+                  onChange={setProcessingNotes}
+                  context="histology_processing"
+                  targetField="processing_notes"
+                  accessionId={selected?.accession._id}
+                  minRows={2}
+                />
                 <Button
                   disabled={!selected.accession.grossedAt || actionLock.isPending(`processing-${selected.accession._id}`)}
                   variant="contained"
@@ -1245,7 +1262,16 @@ export function IhcPage() {
               </Select>
             </FormControl>
             <TextField label="Inventory quantity used" type="number" value={form.quantity} onChange={(event) => setForm((prev) => ({ ...prev, quantity: Number(event.target.value) }))} />
-            <TextField label="QC notes" multiline minRows={3} value={form.qcNotes} onChange={(event) => setForm((prev) => ({ ...prev, qcNotes: event.target.value }))} />
+            <VoiceAssistField
+              label="QC notes"
+              minRows={3}
+              value={form.qcNotes}
+              onChange={(value) => setForm((prev) => ({ ...prev, qcNotes: value }))}
+              context="ihc_qc"
+              targetField="ihc_qc_notes"
+              accessionId={result.accession._id}
+              sampleId={slideId}
+            />
             <Button
               disabled={!slideId || !form.antibody.trim() || !form.clone.trim() || actionLock.isPending(`ihc-${slideId}`)}
               variant="contained"
@@ -1305,7 +1331,16 @@ export function IhcPage() {
                   </Select>
                 </FormControl>
                 <TextField label="Stain / recut name" value={specialForm.stainName} onChange={(event) => setSpecialForm((prev) => ({ ...prev, stainName: event.target.value }))} />
-                <TextField label="Reason / approval note" multiline minRows={2} value={specialForm.reason} onChange={(event) => setSpecialForm((prev) => ({ ...prev, reason: event.target.value }))} />
+                <VoiceAssistField
+                  label="Reason / approval note"
+                  minRows={2}
+                  value={specialForm.reason}
+                  onChange={(value) => setSpecialForm((prev) => ({ ...prev, reason: value }))}
+                  context="ihc_qc"
+                  targetField="special_stain_reason"
+                  accessionId={result.accession._id}
+                  sampleId={slideId}
+                />
                 <TextField label="Lot number" value={specialForm.lotNumber} onChange={(event) => setSpecialForm((prev) => ({ ...prev, lotNumber: event.target.value }))} />
                 <TextField label="Billing reference" value={specialForm.billingReference} onChange={(event) => setSpecialForm((prev) => ({ ...prev, billingReference: event.target.value }))} />
                 <Button
@@ -1605,19 +1640,23 @@ export function CytologyCasesPage() {
                 <MenuItem value="fail">Fail</MenuItem>
               </Select>
             </FormControl>
-            <TextField
+            <VoiceAssistField
               label="QC notes"
-              multiline
               minRows={3}
               value={editing?.qcNotes ?? ''}
-              onChange={(event) => setEditing((prev) => (prev ? { ...prev, qcNotes: event.target.value } : prev))}
+              onChange={(value) => setEditing((prev) => (prev ? { ...prev, qcNotes: value } : prev))}
+              context="cytology_qc"
+              targetField="cytology_qc_notes"
+              sampleId={editing?._id}
             />
-            <TextField
+            <VoiceAssistField
               label="Remarks"
-              multiline
               minRows={4}
               value={editing?.remarks ?? ''}
-              onChange={(event) => setEditing((prev) => (prev ? { ...prev, remarks: event.target.value } : prev))}
+              onChange={(value) => setEditing((prev) => (prev ? { ...prev, remarks: value } : prev))}
+              context="cytology_qc"
+              targetField="cytology_remarks"
+              sampleId={editing?._id}
             />
           </Stack>
         </DialogContent>

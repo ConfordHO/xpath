@@ -43,6 +43,7 @@ import {
   PriorityChip,
   SectionCard,
   StatusChip,
+  VoiceAssistField,
 } from '../components'
 
 import { errorMessage, PageError, TablePlaceholder, useActionLock, useLoadable } from './shared'
@@ -266,7 +267,14 @@ export function CreateOrderPage() {
             renderInput={(params) => <TextField {...params} label="Referring doctor / clinic" />}
           />
           <TextField label="Referring doctor (free text if not in list)" value={doctorText} onChange={(event) => setDoctorText(event.target.value)} />
-          <TextField label="Notes" multiline minRows={3} value={notes} onChange={(event) => setNotes(event.target.value)} />
+          <VoiceAssistField
+            label="Notes"
+            value={notes}
+            onChange={setNotes}
+            context="order_intake"
+            targetField="order_notes"
+            minRows={3}
+          />
           <OcrOrderUpload
             title="Scan requisition"
             buildCorrections={() => ({
@@ -608,33 +616,41 @@ export function OrderDetailPage() {
       <SectionCard title={canManageReport ? 'Report workspace' : 'Report summary'}>
         {canManageReport ? (
           <Stack spacing={2}>
-            <TextField
+            <VoiceAssistField
               label="Diagnosis"
-              multiline
               minRows={3}
               value={reportForm.diagnosis}
-              onChange={(event) => setReportForm((prev) => ({ ...prev, diagnosis: event.target.value }))}
+              onChange={(value) => setReportForm((prev) => ({ ...prev, diagnosis: value }))}
+              context="pathology_report"
+              targetField="diagnosis"
+              orderId={orderId}
             />
-            <TextField
+            <VoiceAssistField
               label="Microscopic description"
-              multiline
               minRows={4}
               value={reportForm.microscopicDescription}
-              onChange={(event) => setReportForm((prev) => ({ ...prev, microscopicDescription: event.target.value }))}
+              onChange={(value) => setReportForm((prev) => ({ ...prev, microscopicDescription: value }))}
+              context="pathology_report"
+              targetField="microscopic_description"
+              orderId={orderId}
             />
-            <TextField
+            <VoiceAssistField
               label="Gross description"
-              multiline
               minRows={3}
               value={reportForm.grossDescription}
-              onChange={(event) => setReportForm((prev) => ({ ...prev, grossDescription: event.target.value }))}
+              onChange={(value) => setReportForm((prev) => ({ ...prev, grossDescription: value }))}
+              context="pathology_report"
+              targetField="gross_description"
+              orderId={orderId}
             />
-            <TextField
+            <VoiceAssistField
               label="Comment / summary"
-              multiline
               minRows={3}
               value={reportForm.comment}
-              onChange={(event) => setReportForm((prev) => ({ ...prev, comment: event.target.value }))}
+              onChange={(value) => setReportForm((prev) => ({ ...prev, comment: value }))}
+              context="pathology_report"
+              targetField="comment_summary"
+              orderId={orderId}
             />
             <Stack direction={{ xs: 'column', md: 'row' }} spacing={2}>
               <Button variant="contained" disabled={actionLock.isPending('save-report')} onClick={saveReportDraft}>
@@ -652,12 +668,14 @@ export function OrderDetailPage() {
             </Typography>
             {detail.report?.status === 'complete' ? (
               <Stack spacing={1.5} sx={{ pt: 1 }}>
-                <TextField
+                <VoiceAssistField
                   label="Addendum"
-                  multiline
                   minRows={3}
                   value={addendum}
-                  onChange={(event) => setAddendum(event.target.value)}
+                  onChange={setAddendum}
+                  context="pathology_report"
+                  targetField="addendum"
+                  orderId={orderId}
                 />
                 <Button disabled={actionLock.isPending('addendum')} onClick={addReportAddendum}>Add addendum</Button>
               </Stack>
@@ -729,7 +747,15 @@ export function OrderDetailPage() {
                 <MenuItem value="urgent">Urgent</MenuItem>
               </Select>
             </FormControl>
-            <TextField label="Notes" multiline minRows={4} value={editNotes} onChange={(event) => setEditNotes(event.target.value)} />
+            <VoiceAssistField
+              label="Notes"
+              value={editNotes}
+              onChange={setEditNotes}
+              context="order_intake"
+              targetField="edit_order_notes"
+              orderId={orderId}
+              minRows={4}
+            />
           </Stack>
         </DialogContent>
         <DialogActions>
