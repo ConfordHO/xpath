@@ -2320,6 +2320,46 @@ app.get("/api/doctors/me/profile", async (req: AuthRequest, res) => {
   res.json(hydrateDoctor(doctor, db));
 });
 
+app.get("/api/doctors/me/portal", requireRoles("doctor", "admin", "super_admin"), async (req: AuthRequest, res) => {
+  const user = ensureUser(req);
+  const db = await loadDb();
+  const doctor = db.doctors.find((entry) => entry.userId === user._id);
+  if (!doctor) {
+    return res.json({ linked: false });
+  }
+  const orders = db.orders
+    .filter((order) => order.referringDoctorId === doctor._id)
+    .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+  const patients = db.patients
+    .filter((patient) => doctorCanAccessPatient(doctor, patient, db))
+    .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+  const services = db.testTypes
+    .filter((entry) => entry.active)
+    .slice()
+    .sort((left, right) => left.code.localeCompare(right.code));
+  res.json({
+    linked: true,
+    profile: hydrateDoctor(doctor, db),
+    stats: {
+      totalOrders: orders.length,
+      completedOrders: orders.filter((order) => order.status === "completed").length,
+      reviewOrders: orders.filter((order) => order.status === "review").length,
+    },
+    patients,
+    orders: orders.map((order) => {
+      const report = getReportByOrder(db, order._id);
+      const invoice = db.invoices.find((entry) => entry.orderId === order._id) ?? null;
+      return {
+        ...hydrateOrder(db, order),
+        invoice,
+        report: clinicianReportPayload(order, report),
+        reportReleased: clinicianReportIsReleased(order, report),
+      };
+    }),
+    services,
+  });
+});
+
 app.get("/api/doctors/me/stats", async (req: AuthRequest, res) => {
   const user = ensureUser(req);
   const db = await loadDb();

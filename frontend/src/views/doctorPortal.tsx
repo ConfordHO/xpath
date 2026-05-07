@@ -64,6 +64,7 @@ type ClinicianOrder = HydratedOrder & {
 }
 
 type PortalData = {
+  linked: true
   profile: ClinicianProfile
   stats: {
     totalOrders: number
@@ -73,6 +74,10 @@ type PortalData = {
   patients: Patient[]
   orders: ClinicianOrder[]
   services: TestType[]
+}
+
+type UnlinkedPortalData = {
+  linked: false
 }
 
 type PatientDraft = {
@@ -110,21 +115,9 @@ function selectedOrderTests(order: ClinicianOrder) {
 }
 
 export function DoctorPortalPage() {
-  const portalState = useLoadable<PortalData | null>(null, [], async () => {
-    const [profileResponse, statsResponse, patientsResponse, ordersResponse, servicesResponse] = await Promise.all([
-      api.get('/doctors/me/profile'),
-      api.get('/doctors/me/stats'),
-      api.get('/doctors/me/patients'),
-      api.get('/doctors/me/orders'),
-      api.get('/public/services'),
-    ])
-    return {
-      profile: profileResponse.data,
-      stats: statsResponse.data,
-      patients: patientsResponse.data.data,
-      orders: ordersResponse.data.data,
-      services: servicesResponse.data,
-    }
+  const portalState = useLoadable<PortalData | UnlinkedPortalData | null>(null, [], async () => {
+    const response = await api.get<PortalData | UnlinkedPortalData>('/doctors/me/portal')
+    return response.data
   })
   const [selectedPatientId, setSelectedPatientId] = useState('')
   const [patient, setPatient] = useState(emptyPatient)
@@ -138,7 +131,7 @@ export function DoctorPortalPage() {
   const [creating, setCreating] = useState(false)
   const [message, setMessage] = useState<{ kind: 'success' | 'error'; text: string } | null>(null)
 
-  const data = portalState.data
+  const data = portalState.data?.linked ? portalState.data : null
   const selectedPatient = useMemo(
     () => data?.patients.find((entry) => entry._id === selectedPatientId) ?? null,
     [data?.patients, selectedPatientId],

@@ -1,15 +1,12 @@
 services:
   - type: web
     name: xpath-backend
-    env: node
-    rootDir: backend
-    buildCommand: npm install && npm run build
-    startCommand: npm run start
+    runtime: docker
+    dockerfilePath: backend/Dockerfile
+    dockerContext: backend
     healthCheckPath: /api/health
     autoDeploy: true
     envVars:
-      - key: NODE_VERSION
-        value: 22.13.1
       - key: NODE_ENV
         value: production
       - key: PORT
@@ -51,19 +48,22 @@ services:
       - key: OCR_MAX_PDF_PAGES
         value: 8
       - key: AI_PROVIDER
-        value: local
+        value: ollama
       - key: AI_API_BASE_URL
-        sync: false
+        fromService:
+          name: pathnovate-ollama
+          type: pserv
+          property: hostport
       - key: AI_API_KEY
         sync: false
       - key: AI_MODEL
         value: qwen2.5:1.5b
       - key: WHISPER_ENABLED
-        sync: false
+        value: true
       - key: WHISPER_COMMAND
         value: whisper
       - key: WHISPER_MODEL
-        value: base
+        value: medium
       - key: WHISPER_LANGUAGE
         value: en
       - key: WHISPER_TIMEOUT_MS
@@ -112,3 +112,18 @@ services:
         sync: false
       - key: ROCHE_SCANNER_WEBHOOK_SECRET
         sync: false
+  - type: pserv
+    name: pathnovate-ollama
+    runtime: docker
+    dockerfilePath: ollama/Dockerfile
+    dockerContext: ollama
+    plan: standard
+    envVars:
+      - key: OLLAMA_HOST
+        value: 0.0.0.0:11434
+      - key: OLLAMA_MODEL
+        value: qwen2.5:1.5b
+    disk:
+      name: ollama-models
+      mountPath: /root/.ollama
+      sizeGB: 10

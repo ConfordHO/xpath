@@ -1,0 +1,7 @@
+dist
+node_modules
+npm-debug.log
+.env
+storage
+tests/__pycache__
+tests/*.py

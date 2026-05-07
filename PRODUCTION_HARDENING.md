@@ -1,6 +1,18 @@
 # Production Hardening Update
 
-Updated: 2026-05-06
+Updated: 2026-05-07
+
+## 2026-05-07 Hosted Whisper, Ollama, And Portal Access
+
+- The public landing page now includes a direct external clinician portal link alongside the patient portal link.
+- Login now returns users to the protected portal they originally opened, so clinician portal links redirect through authentication cleanly.
+- The doctor portal frontend now uses a consolidated portal bootstrap endpoint, avoiding noisy multi-endpoint 404s for accounts that are not linked to a clinician profile yet.
+- Hosted backend deployment now uses `backend/Dockerfile` so the backend image installs `ffmpeg`, Python, and `openai-whisper`.
+- Whisper dictation is configured for the `medium` model through `WHISPER_MODEL=medium`.
+- AI drafting is configured for local Ollama via a private Render service, with backend provider `AI_PROVIDER=ollama`.
+- Production policy allows AI drafting only as staff-verified draft support. Every generated report, order note, and QC note remains a draft until staff verification.
+- Render configuration now adds a private `pathnovate-ollama` service with a persistent model disk and `qwen2.5:1.5b` as the default drafting model.
+- Validation passed: backend build, frontend build, backend/frontend audits, Render YAML parse, backend E2E suite, and browser smoke for public home, patient portal, order-online, and clinician portal redirect.
 
 ## 2026-05-06 Camera OCR, Voice, Whisper, And AI Assist
 
@@ -175,7 +187,7 @@ Backend:
 - `AI_API_KEY`
 - `AI_MODEL`
 
-For ChatGPT-compatible drafting assist, use an OpenAI-compatible chat-completions base URL and keep generated text as staff-verified draft content only.
+For hosted production, the default drafting provider is local Ollama via Render private networking. Generated text remains staff-verified draft content only.
 
 ### Required for Whisper dictation
 
@@ -186,7 +198,7 @@ For ChatGPT-compatible drafting assist, use an OpenAI-compatible chat-completion
 - `WHISPER_TIMEOUT_MS`
 - `WHISPER_MAX_AUDIO_BYTES`
 
-The backend host must also have open-source Whisper and `ffmpeg` installed, or a wrapper command/service that accepts the same CLI flow.
+The backend Docker image installs open-source Whisper and `ffmpeg`; native-host deployments must install the same packages before enabling dictation.
 
 ### Required for durable document storage
 
@@ -214,12 +226,12 @@ If you stay on filesystem storage:
 
 ### Render
 
-- `render.yaml` now deploys the backend from `rootDir: backend`.
-- `render.yaml` pins `NODE_VERSION=22.13.1` so OCR/PDF dependencies run on a supported runtime.
+- `render.yaml` now deploys the backend as Docker using `backend/Dockerfile`.
+- `render.yaml` adds a private Docker `pathnovate-ollama` service and injects its internal host/port into `AI_API_BASE_URL`.
 - Sensitive values are declared with `sync: false`.
 - HL7 MLLP is disabled by default in the Render blueprint because the web deployment is intended for the HTTP API surface.
 - For file persistence on Render, prefer S3-compatible storage. If you intentionally use disk storage, attach a persistent disk and point `DMS_LOCAL_STORAGE_PATH` at the mounted path.
-- Whisper dictation should be enabled only on a host or Docker image where Whisper and `ffmpeg` are installed.
+- Whisper dictation is enabled in the Docker deployment with the `medium` model.
 
 ## What Still Needs Live Validation
 

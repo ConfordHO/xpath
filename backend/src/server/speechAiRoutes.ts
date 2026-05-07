@@ -259,7 +259,8 @@ function localSpecialistDraft(input: z.infer<typeof specialistContextSchema>, sn
 }
 
 function normalizeBaseUrl(baseUrl: string) {
-  return baseUrl.replace(/\/+$/, "");
+  const trimmed = baseUrl.replace(/\/+$/, "");
+  return /^https?:\/\//i.test(trimmed) ? trimmed : `http://${trimmed}`;
 }
 
 async function callConfiguredAi(systemPrompt: string, userPrompt: string) {
@@ -418,7 +419,16 @@ export function registerSpeechAiRoutes(app: express.Express) {
       ]
         .filter(Boolean)
         .join("\n\n");
-      const configuredSuggestion = await callConfiguredAi(systemPrompt, userPrompt);
+      let providerWarning: string | null = null;
+      let configuredSuggestion: string | null = null;
+      try {
+        configuredSuggestion = await callConfiguredAi(systemPrompt, userPrompt);
+      } catch (providerError) {
+        providerWarning =
+          providerError instanceof Error
+            ? providerError.message
+            : "Configured AI provider was unavailable.";
+      }
       const suggestion =
         configuredSuggestion || localSpecialistDraft(parsed.data, snapshot);
       await updateDb((mutableDb) => {
@@ -436,6 +446,7 @@ export function registerSpeechAiRoutes(app: express.Express) {
             provider: configuredSuggestion ? AI_PROVIDER : "local-template",
             model: configuredSuggestion ? AI_MODEL : null,
             targetField: parsed.data.targetField ?? null,
+            providerWarning,
           },
         });
       });
@@ -443,6 +454,7 @@ export function registerSpeechAiRoutes(app: express.Express) {
         suggestion,
         provider: configuredSuggestion ? AI_PROVIDER : "local-template",
         model: configuredSuggestion ? AI_MODEL : null,
+        providerWarning,
         safety:
           "Drafting aid only. Licensed laboratory/pathology staff must verify source material, observations, interpretation, and report text before saving, sign-out, or release.",
       });

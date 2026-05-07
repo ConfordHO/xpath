@@ -25,6 +25,7 @@ import DescriptionRoundedIcon from '@mui/icons-material/DescriptionRounded'
 import DownloadRoundedIcon from '@mui/icons-material/DownloadRounded'
 import EmailRoundedIcon from '@mui/icons-material/EmailRounded'
 import LockRoundedIcon from '@mui/icons-material/LockRounded'
+import MedicalInformationRoundedIcon from '@mui/icons-material/MedicalInformationRounded'
 import PaymentsRoundedIcon from '@mui/icons-material/PaymentsRounded'
 import ScienceRoundedIcon from '@mui/icons-material/ScienceRounded'
 import ShieldRoundedIcon from '@mui/icons-material/ShieldRounded'
@@ -33,7 +34,7 @@ import VerifiedRoundedIcon from '@mui/icons-material/VerifiedRounded'
 
 import { useEffect, useState, type ReactNode } from 'react'
 
-import { Link as RouterLink, useNavigate, useParams, useSearchParams } from 'react-router-dom'
+import { Link as RouterLink, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 
 import { api } from '../api'
 import labMicroscope from '../assets/lab-microscope.jpg'
@@ -446,6 +447,21 @@ export function LandingPage() {
               >
                 Patient portal
               </Button>
+              <Button
+                component={RouterLink}
+                to="/doctor-portal"
+                variant="outlined"
+                color="inherit"
+                startIcon={<MedicalInformationRoundedIcon />}
+                sx={{
+                  borderRadius: 999,
+                  px: 1.75,
+                  borderColor: 'rgba(255,255,255,0.28)',
+                  color: 'rgba(255,255,255,0.92)',
+                }}
+              >
+                Clinician portal
+              </Button>
             </Stack>
           </Stack>
 
@@ -516,6 +532,21 @@ export function LandingPage() {
                 }}
               >
                 Patient portal
+              </Button>
+              <Button
+                component={RouterLink}
+                to="/doctor-portal"
+                variant="outlined"
+                color="inherit"
+                startIcon={<MedicalInformationRoundedIcon />}
+                sx={{
+                  borderRadius: 999,
+                  px: 2.5,
+                  borderColor: 'rgba(255,255,255,0.34)',
+                  color: 'rgba(255,255,255,0.94)',
+                }}
+              >
+                Clinician portal
               </Button>
             </Stack>
           </Box>
@@ -757,8 +788,8 @@ export function LandingPage() {
         >
           <Typography variant="h4">Ready to get started?</Typography>
           <Typography sx={{ mt: 1.25, color: 'text.secondary' }}>
-            Staff: sign in to manage orders. Patients: use the patient portal to check your
-            results securely.
+            Staff: sign in to manage orders. Patients and referring clinicians can use their
+            secure portals to track cases and released reports.
           </Typography>
           <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5} justifyContent="center" sx={{ mt: 3 }}>
             <Button component={RouterLink} to="/login" variant="contained" sx={{ borderRadius: 999, px: 2.5 }}>
@@ -766,6 +797,9 @@ export function LandingPage() {
             </Button>
             <Button component={RouterLink} to="/patient-portal" variant="outlined" sx={{ borderRadius: 999, px: 2.5 }}>
               Patient portal
+            </Button>
+            <Button component={RouterLink} to="/doctor-portal" variant="outlined" startIcon={<MedicalInformationRoundedIcon />} sx={{ borderRadius: 999, px: 2.5 }}>
+              Clinician portal
             </Button>
           </Stack>
         </Paper>
@@ -822,23 +856,26 @@ export function LandingPage() {
 export function LoginPage() {
   const { signIn, user } = useAuth()
   const navigate = useNavigate()
+  const location = useLocation()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
+  const requestedPath = (location.state as { from?: string } | null)?.from
+  const postLoginPath = requestedPath?.startsWith('/') ? requestedPath : '/dashboard'
 
   useEffect(() => {
     if (user) {
-      navigate('/dashboard', { replace: true })
+      navigate(postLoginPath, { replace: true })
     }
-  }, [navigate, user])
+  }, [navigate, postLoginPath, user])
 
   const submit = async () => {
     setSubmitting(true)
     setError(null)
     try {
       await signIn(email, password)
-      navigate('/dashboard')
+      navigate(postLoginPath)
     } catch (submitError) {
       setError(errorMessage(submitError))
     } finally {
@@ -880,6 +917,9 @@ export function LoginPage() {
           </Button>
           <Button component={RouterLink} to="/patient-portal" variant="text">
             Patient? Look up your test results
+          </Button>
+          <Button component={RouterLink} to="/doctor-portal" variant="text" startIcon={<MedicalInformationRoundedIcon />}>
+            Clinician? Open doctor portal
           </Button>
         </Stack>
       </Paper>

@@ -31,7 +31,7 @@ function envFlagEnabled(value: string | undefined, fallback: boolean) {
 }
 
 export const testAccess = {
-  enabled: envFlagEnabled(process.env.NEXT_PUBLIC_TEST_ACCESS, true),
+  enabled: envFlagEnabled(process.env.NEXT_PUBLIC_TEST_ACCESS, false),
   email: process.env.NEXT_PUBLIC_TEST_ACCESS_EMAIL?.trim() || 'admin@xpath.lims',
   password: process.env.NEXT_PUBLIC_TEST_ACCESS_PASSWORD?.trim() || 'admin123',
 } as const
