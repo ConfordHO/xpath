@@ -58,11 +58,11 @@ function localeFromLanguage(language?: "english" | "french" | null) {
 }
 
 const legacyTestCodeMap: Record<string, string> = {
-  CYT: "test-body-fluids",
-  HE: "test-biopsy",
-  HE2: "test-resection",
-  IHC: "test-tumor-ihc",
-  MOL: "test-bcr-abl",
+  CYT: "test-cy-f-001",
+  HE: "test-hi-t-001",
+  HE2: "test-hi-t-003",
+  IHC: "test-im-t-01",
+  MOL: "test-mo-b-004",
 };
 
 const canonicalConnectorSecretEnvMap: Record<string, string> = {

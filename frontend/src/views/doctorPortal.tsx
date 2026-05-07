@@ -33,7 +33,7 @@ import {
   SectionCard,
 } from '../components'
 import type { HydratedOrder, Patient, TestType } from '../types'
-import { formatDateTime, formatMoney } from '../utils'
+import { formatDateTime, formatTestPrice } from '../utils'
 import { errorMessage, useLoadable } from './shared'
 
 type ClinicianProfile = {
@@ -316,7 +316,7 @@ export function DoctorPortalPage() {
                           }
                         />
                       }
-                      label={`${test.code} | ${test.name} (${formatMoney(test.price)})`}
+                      label={`${test.code} | ${test.name} (${formatTestPrice(test)})`}
                     />
                   </Paper>
                 ))}
@@ -410,9 +410,15 @@ export function DoctorPortalPage() {
                   .map((order) => (
                     <Box key={order._id}>
                       <Typography fontWeight={700}>{order.orderNumber} | {order.patient.firstName} {order.patient.lastName}</Typography>
-                      <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap' }}>
-                        {order.report?.diagnosis || order.report?.comment || 'Released report available.'}
-                      </Typography>
+                      {order.report?.diagnosis || order.report?.comment ? (
+                        <Typography data-no-translate="true" variant="body2" sx={{ whiteSpace: 'pre-wrap' }}>
+                          {order.report.diagnosis || order.report.comment}
+                        </Typography>
+                      ) : (
+                        <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap' }}>
+                          Released report available.
+                        </Typography>
+                      )}
                     </Box>
                   ))}
               </Stack>

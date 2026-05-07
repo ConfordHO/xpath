@@ -5,7 +5,7 @@ import QRCode from 'qrcode'
 import { storageKeys } from './api'
 import logoLarge from './assets/logo_large.png'
 
-import type { CourierStatus, HydratedOrder, OrderStatus, Payment, Report } from './types'
+import type { CourierStatus, HydratedOrder, OrderStatus, Payment, Report, TestType } from './types'
 
 type AssetSource = string | StaticImageData
 
@@ -48,6 +48,53 @@ export function formatMoney(amount: number, currency = 'XAF') {
     style: 'currency',
     currency,
   }).format(amount)
+}
+
+const XAF_PER_EUR = 655.957
+const XAF_PER_USD =
+  Number(process.env.NEXT_PUBLIC_XAF_PER_USD ?? '') > 0
+    ? Number(process.env.NEXT_PUBLIC_XAF_PER_USD)
+    : 558.24
+
+function formatLegacyFrenchFranc(amount: number) {
+  const locale = typeof window !== 'undefined' ? window.localStorage.getItem(storageKeys.locale) : 'fr'
+  try {
+    return new Intl.NumberFormat(locale === 'en' ? 'en-US' : 'fr-FR', {
+      style: 'currency',
+      currency: 'FRF',
+      maximumFractionDigits: 0,
+    }).format(amount)
+  } catch {
+    return `${new Intl.NumberFormat(locale === 'en' ? 'en-US' : 'fr-FR', {
+      maximumFractionDigits: 0,
+    }).format(amount)} FRF`
+  }
+}
+
+export function formatMultiCurrencyPrice(amountXaf: number) {
+  if (!Number.isFinite(amountXaf)) {
+    return '—'
+  }
+
+  return [
+    formatMoney(amountXaf, 'XAF'),
+    formatMoney(amountXaf / XAF_PER_USD, 'USD'),
+    formatMoney(amountXaf / XAF_PER_EUR, 'EUR'),
+    formatLegacyFrenchFranc(amountXaf / 100),
+  ].join(' · ')
+}
+
+export function formatTestPrice(test: Pick<TestType, 'price' | 'priceNote'>) {
+  if (test.priceNote && test.price <= 0) {
+    return test.priceNote
+  }
+  return formatMultiCurrencyPrice(test.price)
+}
+
+export function formatInsurancePrice(test: Pick<TestType, 'insurancePrice'>) {
+  return typeof test.insurancePrice === 'number'
+    ? formatMultiCurrencyPrice(test.insurancePrice)
+    : '—'
 }
 
 export function paymentMethodLabel(method: Payment['method']) {

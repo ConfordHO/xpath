@@ -150,7 +150,7 @@ describe("production hardening", () => {
       .set("Authorization", `Bearer ${authToken}`)
       .send({
         patientId: patientCreate.body._id,
-        testTypeIds: ["test-biopsy"],
+        testTypeIds: ["test-hi-t-001"],
         priority: "normal",
         orderSource: "walk_in",
         notes: "Automated hardening test",
@@ -264,7 +264,7 @@ describe("production hardening", () => {
       .set("Authorization", `Bearer ${authToken}`)
       .send({
         patientId: patientCreate.body._id,
-        testTypeIds: ["test-biopsy", "test-tumor-ihc"],
+        testTypeIds: ["test-hi-t-001", "test-im-t-01"],
         priority: "urgent",
         orderSource: "walk_in",
         notes: "Automated Workflow E test",
@@ -278,7 +278,7 @@ describe("production hardening", () => {
       .post(`/api/orders/${orderCreate.body._id}/payment`)
       .set("Authorization", `Bearer ${authToken}`)
       .send({
-        amount: 185000,
+        amount: 170000,
         method: "cash",
         status: "completed",
       });
@@ -290,7 +290,7 @@ describe("production hardening", () => {
       .send({
         paymentCollectionStatus: "reconciled",
         paymentCollectionMethod: "cash",
-        paymentCollectionAmount: 185000,
+        paymentCollectionAmount: 170000,
         paymentCollectionReference: "TEST-MULTI-E2E",
         transportTemperature: "ambient",
         transportCondition: "stable",
@@ -338,7 +338,7 @@ describe("production hardening", () => {
       ),
     );
     const ihcItemAfterAccession = itemDetailAfterAccession.body.workflowPlan.itemPlans.find(
-      (item: { testTypeId: string }) => item.testTypeId === "test-tumor-ihc",
+      (item: { testTypeId: string }) => item.testTypeId === "test-im-t-01",
     );
     assert.ok(ihcItemAfterAccession.dependencies.some((dependency: { code: string; status: string }) =>
       dependency.code === "histology_block_available" && dependency.status === "pending",
@@ -392,14 +392,14 @@ describe("production hardening", () => {
       .set("Authorization", `Bearer ${authToken}`);
     assert.equal(afterHistology.status, 200);
     const ihcItemReady = afterHistology.body.workflowPlan.itemPlans.find(
-      (item: { testTypeId: string }) => item.testTypeId === "test-tumor-ihc",
+      (item: { testTypeId: string }) => item.testTypeId === "test-im-t-01",
     );
     assert.equal(ihcItemReady.nextStageId, "ihc");
     assert.ok(ihcItemReady.dependencies.some((dependency: { code: string; status: string }) =>
       dependency.code === "histology_block_available" && dependency.status === "satisfied",
     ));
     const biopsyItemReady = afterHistology.body.workflowPlan.itemPlans.find(
-      (item: { testTypeId: string }) => item.testTypeId === "test-biopsy",
+      (item: { testTypeId: string }) => item.testTypeId === "test-hi-t-001",
     );
     assert.equal(biopsyItemReady.nextStageId, "pathologist_review");
 
@@ -502,7 +502,7 @@ describe("production hardening", () => {
       .set("Authorization", `Bearer ${doctorToken}`)
       .send({
         patientId: patientCreate.body._id,
-        testTypeIds: ["test-biopsy"],
+        testTypeIds: ["test-hi-t-001"],
         priority: "urgent",
         clinicalHistory: "Clinician portal end-to-end referral",
         payerType: "clinician",
@@ -1047,7 +1047,7 @@ describe("production hardening", () => {
 
     const verifiedPayload = {
       ...ocrJob.body.parsedPayload,
-      testTypeIds: ["test-biopsy"],
+      testTypeIds: ["test-hi-t-001"],
       matchedTestCodes: ["HE"],
     };
     const verifyOcr = await request

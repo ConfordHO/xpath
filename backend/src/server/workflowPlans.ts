@@ -96,95 +96,68 @@ const stageMeta: Record<
   },
 };
 
+const cytologyWorkflow: OrderWorkflowStageId[] = [
+  "cytology_case",
+  "cytology_screening",
+  "cytology_qc",
+  "pathologist_review",
+  "report_signout",
+  "result_release",
+];
+const histologyWorkflow: OrderWorkflowStageId[] = [
+  "accessioning",
+  "grossing",
+  "processing",
+  "embedding",
+  "sectioning",
+  "staining",
+  "pathologist_review",
+  "report_signout",
+  "result_release",
+];
+const ihcWorkflow: OrderWorkflowStageId[] = [
+  "accessioning",
+  "grossing",
+  "processing",
+  "embedding",
+  "sectioning",
+  "staining",
+  "ihc",
+  "pathologist_review",
+  "report_signout",
+  "result_release",
+];
+const consultationWorkflow: OrderWorkflowStageId[] = ["pathologist_review", "report_signout", "result_release"];
+const molecularSendoutWorkflow: OrderWorkflowStageId[] = [
+  "molecular_sendout",
+  "pathologist_review",
+  "report_signout",
+  "result_release",
+];
+
 const workflowByTestId: Record<string, OrderWorkflowStageId[]> = {
-  "test-pap": ["cytology_case", "cytology_screening", "cytology_qc", "pathologist_review", "report_signout", "result_release"],
-  "test-body-fluids": [
-    "cytology_case",
-    "cytology_screening",
-    "cytology_qc",
-    "pathologist_review",
-    "report_signout",
-    "result_release",
-  ],
-  "test-biopsy": [
-    "accessioning",
-    "grossing",
-    "processing",
-    "embedding",
-    "sectioning",
-    "staining",
-    "pathologist_review",
-    "report_signout",
-    "result_release",
-  ],
-  "test-resection": [
-    "accessioning",
-    "grossing",
-    "processing",
-    "embedding",
-    "sectioning",
-    "staining",
-    "pathologist_review",
-    "report_signout",
-    "result_release",
-  ],
-  "test-tumor-ihc": [
-    "accessioning",
-    "grossing",
-    "processing",
-    "embedding",
-    "sectioning",
-    "staining",
-    "ihc",
-    "pathologist_review",
-    "report_signout",
-    "result_release",
-  ],
-  "test-pdl1": [
-    "accessioning",
-    "grossing",
-    "processing",
-    "embedding",
-    "sectioning",
-    "staining",
-    "ihc",
-    "pathologist_review",
-    "report_signout",
-    "result_release",
-  ],
-  "test-expert-local": ["pathologist_review", "report_signout", "result_release"],
-  "test-expert-intl": ["pathologist_review", "report_signout", "result_release"],
-  "test-strategy-insight": ["pathologist_review", "report_signout", "result_release"],
-  "test-tumor-marker": ["analyzer_run", "pathologist_review", "report_signout", "result_release"],
-  "test-peripheral-blood": [
-    "cytology_case",
-    "cytology_screening",
-    "cytology_qc",
-    "pathologist_review",
-    "report_signout",
-    "result_release",
-  ],
-  "test-bone-marrow-cytology": [
-    "cytology_case",
-    "cytology_screening",
-    "cytology_qc",
-    "pathologist_review",
-    "report_signout",
-    "result_release",
-  ],
-  "test-bone-marrow-histology": [
-    "accessioning",
-    "grossing",
-    "processing",
-    "embedding",
-    "sectioning",
-    "staining",
-    "ihc",
-    "pathologist_review",
-    "report_signout",
-    "result_release",
-  ],
-  "test-bone-marrow-complete": [
+  "test-cy-f-001": cytologyWorkflow,
+  "test-cy-f-002": cytologyWorkflow,
+  "test-he-b-002": cytologyWorkflow,
+  "test-he-bm-003": cytologyWorkflow,
+  "test-he-bm-001": ["analyzer_run", "pathologist_review", "report_signout", "result_release"],
+  "test-hi-t-001": histologyWorkflow,
+  "test-hi-t-002": histologyWorkflow,
+  "test-hi-t-003": histologyWorkflow,
+  "test-hi-t-004": histologyWorkflow,
+  "test-hs-t-005": ihcWorkflow,
+  "test-im-t-01": ihcWorkflow,
+  "test-im-t-02": ihcWorkflow,
+  "test-im-t-03": ihcWorkflow,
+  "test-im-t-04": ihcWorkflow,
+  "test-im-t-05": ihcWorkflow,
+  "test-im-t-06": ihcWorkflow,
+  "test-bt-b-001": ["analyzer_run", "pathologist_review", "report_signout", "result_release"],
+  "test-co-t-01": consultationWorkflow,
+  "test-co-t-02": consultationWorkflow,
+  "test-co-n-03": consultationWorkflow,
+  "test-pk-t-001": ihcWorkflow,
+  "test-pk-bm-002": [
     "accessioning",
     "grossing",
     "processing",
@@ -199,33 +172,12 @@ const workflowByTestId: Record<string, OrderWorkflowStageId[]> = {
     "report_signout",
     "result_release",
   ],
-  "test-bcr-abl": ["molecular_sendout", "analyzer_run", "pathologist_review", "report_signout", "result_release"],
-  "test-package-diagnostic": [
-    "accessioning",
-    "grossing",
-    "processing",
-    "embedding",
-    "sectioning",
-    "staining",
-    "ihc",
-    "pathologist_review",
-    "report_signout",
-    "result_release",
-  ],
-  "test-package-precision": [
-    "accessioning",
-    "grossing",
-    "processing",
-    "embedding",
-    "sectioning",
-    "staining",
-    "ihc",
-    "analyzer_run",
-    "pathologist_review",
-    "report_signout",
-    "result_release",
-  ],
-  "test-package-ngs": ["molecular_sendout", "pathologist_review", "report_signout", "result_release"],
+  "test-mo-b-001": molecularSendoutWorkflow,
+  "test-mo-t-002": molecularSendoutWorkflow,
+  "test-mo-t-003": molecularSendoutWorkflow,
+  "test-mo-b-004": ["molecular_sendout", "analyzer_run", "pathologist_review", "report_signout", "result_release"],
+  "test-mo-b-05": molecularSendoutWorkflow,
+  "test-mo-s-06": molecularSendoutWorkflow,
 };
 
 function uniqueOrdered(values: OrderWorkflowStageId[]) {
@@ -443,23 +395,23 @@ export function inferCytologyCaseDefaults(db: Database, order: Order) {
   const tests = db.testTypes.filter((entry) => order.testTypeIds.includes(entry._id));
   const specimenType =
     order.requisitionForm?.specimenType?.trim() ||
-    (order.testTypeIds.includes("test-pap")
+    (order.testTypeIds.includes("test-cy-f-002")
       ? "Cervical smear"
-      : order.testTypeIds.includes("test-body-fluids")
+      : order.testTypeIds.includes("test-cy-f-001")
         ? "Body fluid specimen"
-        : order.testTypeIds.includes("test-peripheral-blood")
+        : order.testTypeIds.includes("test-he-b-002")
           ? "Peripheral blood smear"
-          : order.testTypeIds.includes("test-bone-marrow-cytology") ||
-              order.testTypeIds.includes("test-bone-marrow-complete")
+          : order.testTypeIds.includes("test-he-bm-003") ||
+              order.testTypeIds.includes("test-pk-bm-002")
             ? "Bone marrow aspirate"
             : "Cytology specimen");
 
   return {
     specimenType,
-    routeType: order.testTypeIds.includes("test-pap") ? ("gyn" as const) : ("non_gyn" as const),
-    preparationType: order.testTypeIds.includes("test-pap")
+    routeType: order.testTypeIds.includes("test-cy-f-002") ? ("gyn" as const) : ("non_gyn" as const),
+    preparationType: order.testTypeIds.includes("test-cy-f-002")
       ? ("liquid_based" as const)
-      : order.testTypeIds.includes("test-body-fluids")
+      : order.testTypeIds.includes("test-cy-f-001")
         ? ("cell_block" as const)
         : ("smear" as const),
     remarks: `Auto-routed from ${tests.map((entry) => entry.code).join(", ")} workflow.`,
@@ -467,21 +419,24 @@ export function inferCytologyCaseDefaults(db: Database, order: Order) {
 }
 
 export function inferAnalyzerRunType(order: Order) {
-  if (order.testTypeIds.includes("test-bcr-abl")) {
+  if (order.testTypeIds.includes("test-mo-b-004")) {
     return "bcr_abl_analysis";
   }
-  if (order.testTypeIds.includes("test-tumor-marker")) {
+  if (order.testTypeIds.includes("test-bt-b-001")) {
     return "tumor_marker_panel";
   }
-  if (order.testTypeIds.includes("test-package-precision")) {
-    return "precision_oncology_profile";
+  if (order.testTypeIds.includes("test-he-bm-001")) {
+    return "flow_cytometry_facs";
   }
   return "analyzer_run";
 }
 
 export function inferMolecularRunType(order: Order) {
-  if (order.testTypeIds.includes("test-package-ngs")) {
-    return "ngs_sendout";
+  if (order.testTypeIds.includes("test-mo-s-06")) {
+    return "paternity_sendout";
+  }
+  if (order.testTypeIds.some((id) => ["test-mo-b-001", "test-mo-t-002", "test-mo-t-003", "test-mo-b-05"].includes(id))) {
+    return "molecular_panel_sendout";
   }
   return "molecular_sendout";
 }

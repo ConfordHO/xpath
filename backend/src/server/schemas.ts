@@ -74,7 +74,10 @@ export const testTypeSchema = z.object({
   name: z.string().min(1),
   description: z.string().optional(),
   category: z.string().min(1),
+  sampleType: z.string().optional(),
   price: z.number().min(0),
+  insurancePrice: z.number().min(0).optional(),
+  priceNote: z.string().optional(),
   turnaroundHours: z.number().optional(),
   active: z.boolean().default(true),
 });

@@ -64,7 +64,15 @@ import type {
   TestType,
 } from '../types'
 
-import { downloadPathologyReportPdf, formatDate, formatDateTime, formatMoney, paymentMethodLabel } from '../utils'
+import {
+  downloadPathologyReportPdf,
+  formatDate,
+  formatDateTime,
+  formatInsurancePrice,
+  formatMoney,
+  formatTestPrice,
+  paymentMethodLabel,
+} from '../utils'
 
 type AssetSource = string | StaticImageData
 
@@ -727,7 +735,9 @@ export function LandingPage() {
                       <TableRow>
                         <TableCell>Code</TableCell>
                         <TableCell>Test / service</TableCell>
-                        <TableCell align="right">Price ({settings.currency})</TableCell>
+                        <TableCell>Sample</TableCell>
+                        <TableCell align="right">Patient price</TableCell>
+                        <TableCell align="right">Insurer price</TableCell>
                       </TableRow>
                     </TableHead>
                     <TableBody>
@@ -742,7 +752,9 @@ export function LandingPage() {
                               </Typography>
                             ) : null}
                           </TableCell>
-                          <TableCell align="right">{formatMoney(item.price, settings.currency)}</TableCell>
+                          <TableCell>{item.sampleType ?? '—'}</TableCell>
+                          <TableCell align="right">{formatTestPrice(item)}</TableCell>
+                          <TableCell align="right">{formatInsurancePrice(item)}</TableCell>
                         </TableRow>
                       ))}
                     </TableBody>
@@ -1130,7 +1142,7 @@ export function OrderOnlinePage() {
                     }}
                   />
                 }
-                label={`${test.code} — ${test.name} (${formatMoney(test.price)})`}
+                label={`${test.code} — ${test.name} (${formatTestPrice(test)})`}
               />
             </Paper>
           ))}
@@ -1472,13 +1484,23 @@ export function PatientOrderDetailPage() {
         <SectionCard title="Results">
           <Stack spacing={2}>
             <Typography variant="h6">Pathologist summary</Typography>
-            <Typography color="text.secondary">
-              {detail.reportSummary ?? 'The report is not yet finalized. Once the case is signed out and released, the result summary will appear here.'}
-            </Typography>
+            {detail.reportSummary ? (
+              <Typography data-no-translate="true" color="text.secondary">
+                {detail.reportSummary}
+              </Typography>
+            ) : (
+              <Typography color="text.secondary">
+                The report is not yet finalized. Once the case is signed out and released, the result summary will appear here.
+              </Typography>
+            )}
             <Typography variant="h6">Diagnosis</Typography>
-            <Typography color="text.secondary">
-              {detail.pathologistDiagnosis ?? 'Diagnosis pending final review.'}
-            </Typography>
+            {detail.pathologistDiagnosis ? (
+              <Typography data-no-translate="true" color="text.secondary">
+                {detail.pathologistDiagnosis}
+              </Typography>
+            ) : (
+              <Typography color="text.secondary">Diagnosis pending final review.</Typography>
+            )}
             <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
               <Button
                 startIcon={<DownloadRoundedIcon />}

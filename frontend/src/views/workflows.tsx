@@ -1310,9 +1310,15 @@ export function IhcPage() {
                     <Paper key={entry._id} sx={{ p: 2 }}>
                       <Typography fontWeight={700}>{entry.antibody} / {entry.clone}</Typography>
                       <Typography color="text.secondary">{entry.detection} · {entry.counterstain}</Typography>
-                      <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
-                        {entry.qcNotes || 'No QC notes recorded.'}
-                      </Typography>
+                      {entry.qcNotes ? (
+                        <Typography data-no-translate="true" variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+                          {entry.qcNotes}
+                        </Typography>
+                      ) : (
+                        <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+                          No QC notes recorded.
+                        </Typography>
+                      )}
                     </Paper>
                   ))}
                 </Stack>

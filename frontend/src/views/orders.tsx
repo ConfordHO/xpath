@@ -683,9 +683,21 @@ export function OrderDetailPage() {
           </Stack>
         ) : (
           <Stack spacing={1.25}>
-            <Typography fontWeight={700}>{detail.report?.diagnosis || 'Diagnosis pending.'}</Typography>
-            <Typography color="text.secondary">{detail.report?.microscopicDescription || 'Microscopic description pending.'}</Typography>
-            <Typography>{detail.report?.comment || 'No report summary available yet.'}</Typography>
+            {detail.report?.diagnosis ? (
+              <Typography data-no-translate="true" fontWeight={700}>{detail.report.diagnosis}</Typography>
+            ) : (
+              <Typography fontWeight={700}>Diagnosis pending.</Typography>
+            )}
+            {detail.report?.microscopicDescription ? (
+              <Typography data-no-translate="true" color="text.secondary">{detail.report.microscopicDescription}</Typography>
+            ) : (
+              <Typography color="text.secondary">Microscopic description pending.</Typography>
+            )}
+            {detail.report?.comment ? (
+              <Typography data-no-translate="true">{detail.report.comment}</Typography>
+            ) : (
+              <Typography>No report summary available yet.</Typography>
+            )}
             <Typography color="text.secondary">
               Signed by {detail.report?.signedBy ?? 'Not yet signed'} · Released {detail.releasedAt ? formatDateTime(detail.releasedAt) : 'No'}
             </Typography>
@@ -699,7 +711,11 @@ export function OrderDetailPage() {
               <Paper key={`${version.version}-${version.createdAt}`} sx={{ p: 2 }}>
                 <Typography fontWeight={700}>Version {version.version}</Typography>
                 <Typography color="text.secondary">{formatDateTime(version.createdAt)}</Typography>
-                <Typography sx={{ mt: 1 }}>{version.diagnosis || 'No diagnosis recorded.'}</Typography>
+                {version.diagnosis ? (
+                  <Typography data-no-translate="true" sx={{ mt: 1 }}>{version.diagnosis}</Typography>
+                ) : (
+                  <Typography sx={{ mt: 1 }}>No diagnosis recorded.</Typography>
+                )}
               </Paper>
             ))}
           </Stack>
@@ -710,7 +726,7 @@ export function OrderDetailPage() {
           <Stack spacing={1.5}>
             {detail.report.addenda.map((entry: any) => (
               <Paper key={entry._id} sx={{ p: 2 }}>
-                <Typography>{entry.note}</Typography>
+                <Typography data-no-translate="true">{entry.note}</Typography>
                 <Typography color="text.secondary" sx={{ mt: 0.75 }}>{formatDateTime(entry.createdAt)}</Typography>
               </Paper>
             ))}

@@ -192,7 +192,10 @@ export interface TestType {
   name: string
   description?: string
   category: string
+  sampleType?: string
   price: number
+  insurancePrice?: number
+  priceNote?: string
   turnaroundHours?: number
   active: boolean
   createdAt: string

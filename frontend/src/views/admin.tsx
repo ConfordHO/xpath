@@ -62,7 +62,7 @@ import type {
   WorkflowTemplate,
 } from '../types'
 
-import { formatMoney } from '../utils'
+import { formatInsurancePrice, formatTestPrice } from '../utils'
 
 export function UsersPage() {
   const { user } = useAuth()
@@ -446,16 +446,33 @@ export function DoctorsPage() {
 }
 
 export function TestTypesPage() {
+  const emptyTestTypeForm = {
+    code: '',
+    name: '',
+    description: '',
+    category: 'Histology',
+    sampleType: '',
+    price: 0,
+    insurancePrice: '',
+    priceNote: '',
+    active: true,
+  }
   const testsState = useLoadable<TestType[]>([], [], async () => {
     const response = await api.get<TestType[]>('/test-types')
     return response.data
   })
   const [dialogOpen, setDialogOpen] = useState(false)
   const [editing, setEditing] = useState<TestType | null>(null)
-  const [form, setForm] = useState({ code: '', name: '', description: '', category: 'Histology', price: 0, active: true })
+  const [form, setForm] = useState(emptyTestTypeForm)
 
   const save = async () => {
-    const payload = { ...form, price: Number(form.price) }
+    const payload = {
+      ...form,
+      price: Number(form.price),
+      insurancePrice: form.insurancePrice === '' ? undefined : Number(form.insurancePrice),
+      priceNote: form.priceNote.trim() || undefined,
+      sampleType: form.sampleType.trim() || undefined,
+    }
     if (editing) {
       await api.put(`/test-types/${editing._id}`, payload)
     } else {
@@ -467,8 +484,8 @@ export function TestTypesPage() {
 
   return (
     <Stack spacing={3}>
-      <PageHeader title="Test types" action={<Button variant="contained" onClick={() => { setEditing(null); setDialogOpen(true) }}>Create test type</Button>} />
-      <SectionCard description="Prices use the system currency and are shown on the public landing page. Only active test types appear there.">
+      <PageHeader title="Test types" action={<Button variant="contained" onClick={() => { setEditing(null); setForm(emptyTestTypeForm); setDialogOpen(true) }}>Create test type</Button>} />
+      <SectionCard description="Patient prices are stored in FCFA and shown with USD, EUR, and legacy French franc equivalents. Only active test types appear on public order screens.">
         <TableContainer>
           <Table>
             <TableHead>
@@ -476,7 +493,9 @@ export function TestTypesPage() {
                 <TableCell>Code</TableCell>
                 <TableCell>Name</TableCell>
                 <TableCell>Category</TableCell>
-                <TableCell>Price</TableCell>
+                <TableCell>Sample</TableCell>
+                <TableCell>Patient price</TableCell>
+                <TableCell>Insurer price</TableCell>
                 <TableCell>Active</TableCell>
                 <TableCell />
               </TableRow>
@@ -487,10 +506,26 @@ export function TestTypesPage() {
                   <TableCell>{test.code}</TableCell>
                   <TableCell>{test.name}</TableCell>
                   <TableCell>{test.category}</TableCell>
-                  <TableCell>{formatMoney(test.price)}</TableCell>
+                  <TableCell>{test.sampleType ?? '—'}</TableCell>
+                  <TableCell>{formatTestPrice(test)}</TableCell>
+                  <TableCell>{formatInsurancePrice(test)}</TableCell>
                   <TableCell>{test.active ? 'Yes' : 'No'}</TableCell>
                   <TableCell>
-                    <Button onClick={() => { setEditing(test); setForm({ code: test.code, name: test.name, description: test.description ?? '', category: test.category, price: test.price, active: test.active }); setDialogOpen(true) }}>
+                    <Button onClick={() => {
+                      setEditing(test)
+                      setForm({
+                        code: test.code,
+                        name: test.name,
+                        description: test.description ?? '',
+                        category: test.category,
+                        sampleType: test.sampleType ?? '',
+                        price: test.price,
+                        insurancePrice: typeof test.insurancePrice === 'number' ? String(test.insurancePrice) : '',
+                        priceNote: test.priceNote ?? '',
+                        active: test.active,
+                      })
+                      setDialogOpen(true)
+                    }}>
                       Edit
                     </Button>
                   </TableCell>
@@ -508,7 +543,10 @@ export function TestTypesPage() {
             <TextField label="Name" value={form.name} onChange={(event) => setForm((prev) => ({ ...prev, name: event.target.value }))} />
             <TextField label="Description" value={form.description} onChange={(event) => setForm((prev) => ({ ...prev, description: event.target.value }))} />
             <TextField label="Category" value={form.category} onChange={(event) => setForm((prev) => ({ ...prev, category: event.target.value }))} />
-            <TextField label="Price" type="number" value={form.price} onChange={(event) => setForm((prev) => ({ ...prev, price: Number(event.target.value) }))} />
+            <TextField label="Sample type" value={form.sampleType} onChange={(event) => setForm((prev) => ({ ...prev, sampleType: event.target.value }))} />
+            <TextField label="Patient price (FCFA)" type="number" value={form.price} onChange={(event) => setForm((prev) => ({ ...prev, price: Number(event.target.value) }))} />
+            <TextField label="Insurer price (FCFA)" type="number" value={form.insurancePrice} onChange={(event) => setForm((prev) => ({ ...prev, insurancePrice: event.target.value }))} />
+            <TextField label="Price note" value={form.priceNote} onChange={(event) => setForm((prev) => ({ ...prev, priceNote: event.target.value }))} />
             <FormControlLabel control={<Checkbox checked={form.active} onChange={(event) => setForm((prev) => ({ ...prev, active: event.target.checked }))} />} label="Active" />
           </Stack>
         </DialogContent>
@@ -650,7 +688,8 @@ export function SystemSettingsPage() {
               <TableRow>
                 <TableCell>Code</TableCell>
                 <TableCell>Name</TableCell>
-                <TableCell>Price</TableCell>
+                <TableCell>Patient price</TableCell>
+                <TableCell>Insurer price</TableCell>
                 <TableCell>Category</TableCell>
               </TableRow>
             </TableHead>
@@ -659,7 +698,8 @@ export function SystemSettingsPage() {
                 <TableRow key={test._id}>
                   <TableCell>{test.code}</TableCell>
                   <TableCell>{test.name}</TableCell>
-                  <TableCell>{formatMoney(test.price, form.currency)}</TableCell>
+                  <TableCell>{formatTestPrice(test)}</TableCell>
+                  <TableCell>{formatInsurancePrice(test)}</TableCell>
                   <TableCell>{test.category}</TableCell>
                 </TableRow>
               ))}

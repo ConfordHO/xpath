@@ -120,27 +120,37 @@ interface RequisitionFormState {
 }
 
 const regularTestIds = [
-  'test-pap',
-  'test-body-fluids',
-  'test-biopsy',
-  'test-resection',
-  'test-tumor-ihc',
-  'test-pdl1',
-  'test-expert-local',
-  'test-expert-intl',
-  'test-strategy-insight',
-  'test-tumor-marker',
-  'test-peripheral-blood',
-  'test-bone-marrow-cytology',
-  'test-bone-marrow-histology',
-  'test-bone-marrow-complete',
-  'test-bcr-abl',
+  'test-cy-f-001',
+  'test-cy-f-002',
+  'test-he-b-002',
+  'test-he-bm-003',
+  'test-he-bm-001',
+  'test-hi-t-001',
+  'test-hi-t-002',
+  'test-hi-t-003',
+  'test-hi-t-004',
+  'test-hs-t-005',
+  'test-im-t-01',
+  'test-im-t-02',
+  'test-im-t-03',
+  'test-im-t-04',
+  'test-im-t-05',
+  'test-im-t-06',
+  'test-bt-b-001',
+  'test-co-t-01',
+  'test-co-t-02',
+  'test-co-n-03',
+  'test-mo-b-001',
+  'test-mo-t-002',
+  'test-mo-t-003',
+  'test-mo-b-004',
+  'test-mo-b-05',
+  'test-mo-s-06',
 ] as const
 
 const packageTestIds = [
-  'test-package-diagnostic',
-  'test-package-precision',
-  'test-package-ngs',
+  'test-pk-t-001',
+  'test-pk-bm-002',
 ] as const
 
 const solidTumorPanels = [
@@ -440,78 +450,38 @@ const testLabelByLanguage: Record<
     fr: string
   }
 > = {
-  'test-pap': {
-    en: 'Cervical Cancer Screening (PAP)',
-    fr: "Depistage du cancer du col de l'uterus (frottis cervico-uterin / test PAP)",
-  },
-  'test-body-fluids': {
-    en: 'Body Fluids (Cytology)',
-    fr: 'Liquides biologiques (cytologie)',
-  },
-  'test-biopsy': {
-    en: 'Biopsy Examination',
-    fr: 'Examen biopsique',
-  },
-  'test-resection': {
-    en: 'Resection Specimen Histopathology',
-    fr: 'Histopathologie sur piece operatoire',
-  },
-  'test-tumor-ihc': {
-    en: 'Tumor Subtyping & IHC',
-    fr: 'Caracterisation tumorale et immunophenotypage (IHC)',
-  },
-  'test-pdl1': {
-    en: 'PD-L1 Expression',
-    fr: "Expression PD-L1 (Marqueur d'Immunotherapie)",
-  },
-  'test-expert-local': {
-    en: 'Expert Review (Local)',
-    fr: 'Deuxieme avis expert (local)',
-  },
-  'test-expert-intl': {
-    en: 'Expert Review (International)',
-    fr: 'Deuxieme avis expert (international)',
-  },
-  'test-strategy-insight': {
-    en: 'PathNovate Strategy Insight',
-    fr: 'Analyse strategique PathNovate (Orientation therapeutique)',
-  },
-  'test-tumor-marker': {
-    en: 'TumorMarker (Blood Test)',
-    fr: 'Marqueurs sanguins',
-  },
-  'test-peripheral-blood': {
-    en: 'Peripheral Blood Cytology',
-    fr: 'Cytologie du sang peripherique',
-  },
-  'test-bone-marrow-cytology': {
-    en: 'Bone Marrow Cytology',
-    fr: 'Cytologie de la moelle osseuse (Myelogramme)',
-  },
-  'test-bone-marrow-histology': {
-    en: 'Bone Marrow Histology/IHC',
-    fr: 'Histologie sur biopsie osteo-medullaire avec IHC',
-  },
-  'test-bone-marrow-complete': {
-    en: 'Complete Bone Marrow Diagnostic (Cytology + IHC)',
-    fr: 'Diagnostic medullaire complet (Cytologie + HIST + IHC)',
-  },
-  'test-bcr-abl': {
-    en: 'BCR-ABL Testing',
-    fr: 'Test BCR-ABL (Suivi moleculaire)',
-  },
-  'test-package-diagnostic': {
-    en: 'Comprehensive Diagnostic Package',
-    fr: 'Forfait diagnostic approfondi',
-  },
-  'test-package-precision': {
-    en: 'Precision Oncology & Profiling',
-    fr: "Forfait oncologie de precision et profilage",
-  },
-  'test-package-ngs': {
-    en: 'Ultimate Genomic Blueprint (NGS) (Done Abroad)',
-    fr: "Profilage genomique complet (NGS) (Fait a l'etranger)",
-  },
+  'test-cy-f-001': { en: 'Body Fluids Cytology', fr: 'Cytologie des liquides biologiques' },
+  'test-cy-f-002': { en: 'Cervical Cancer Screening (Pap)', fr: 'Depistage du cancer du col (Pap)' },
+  'test-he-b-002': { en: 'Blood Cytology', fr: 'Cytologie sanguine' },
+  'test-he-bm-003': { en: 'Bone Marrow Aspirate Cytology', fr: 'Cytologie de ponction de moelle osseuse' },
+  'test-he-bm-001': { en: 'Flow Cytometry (FACS) / Leukemia Immunophenotyping', fr: 'Cytometrie en flux (FACS) / immunophenotypage leucemie' },
+  'test-hi-t-001': { en: 'Biopsy Examination', fr: 'Examen biopsique' },
+  'test-hi-t-002': { en: 'Biopsy Examination - Multiple Samples / Prostate Biopsies', fr: 'Examen biopsique - echantillons multiples / biopsies prostatiques' },
+  'test-hi-t-003': { en: 'Resection Specimen Histopathology - Small Specimen', fr: 'Histopathologie de piece operatoire - petite piece' },
+  'test-hi-t-004': { en: 'Resection Specimen Histopathology - Large Specimen', fr: 'Histopathologie de piece operatoire - grande piece' },
+  'test-hs-t-005': { en: 'Special Stains', fr: 'Colorations speciales' },
+  'test-im-t-01': { en: 'Tumor Subtyping & IHC', fr: 'Sous-typage tumoral et IHC' },
+  'test-im-t-02': { en: 'IHC with 1-2 Antibodies', fr: 'IHC avec 1-2 anticorps' },
+  'test-im-t-03': { en: 'IHC with 3-5 Antibodies', fr: 'IHC avec 3-5 anticorps' },
+  'test-im-t-04': { en: 'IHC with > 5 Antibodies', fr: 'IHC avec plus de 5 anticorps' },
+  'test-im-t-05': { en: 'PD-L1 Expression', fr: 'Expression PD-L1' },
+  'test-im-t-06': { en: 'TP-53 Mutation', fr: 'Mutation TP-53' },
+  'test-bt-b-001': { en: 'Tumor Marker Panel', fr: 'Panel de marqueurs tumoraux' },
+  'test-co-t-01': { en: 'Expert Revision (International)', fr: 'Revision experte internationale' },
+  'test-co-t-02': { en: 'Expert Revision (Local)', fr: 'Revision experte locale' },
+  'test-co-n-03': { en: 'PathNovate Therapeutic Strategy', fr: 'Strategie therapeutique PathNovate' },
+  'test-pk-t-001': { en: 'Comprehensive Diagnostic Package - Tumor', fr: 'Forfait diagnostic complet - tumeur' },
+  'test-pk-bm-002': { en: 'Comprehensive Diagnostic Package - Bone Marrow', fr: 'Forfait diagnostic complet - moelle osseuse' },
+  'test-mo-b-001': { en: 'BRCA1/2 Germline Mutation Test', fr: 'Test mutation germinale BRCA1/2' },
+  'test-mo-t-002': { en: 'BRCA 1/2 Somatic Mutation', fr: 'Mutation somatique BRCA 1/2' },
+  'test-mo-t-003': { en: 'KRAS/NRAS/BRAF/PIK3CA Mutation', fr: 'Mutation KRAS/NRAS/BRAF/PIK3CA' },
+  'test-mo-b-004': { en: 'BCR-ABL Quantitative', fr: 'BCR-ABL quantitatif' },
+  'test-mo-b-05': { en: 'JAK2 Mutation', fr: 'Mutation JAK2' },
+  'test-mo-s-06': { en: 'Paternity Test', fr: 'Test de paternite' },
+}
+
+function localizedTestLabel(test: TestType, language: FormLanguage) {
+  return testLabelByLanguage[test._id]?.[language] ?? test.name
 }
 
 function createEmptySpecimenRows() {
@@ -1665,28 +1635,34 @@ export function OrderOnlinePage() {
                 <SectionRibbon title={formCopy.testsOrdered} />
                 <Cell minHeight={278}>
                   <Stack spacing={0.15} sx={{ width: '100%' }}>
-                    {regularTests.map((testId) => (
-                      <CompactCheckbox
-                        key={testId}
-                        checked={form.testTypeIds.includes(testId)}
-                        label={testLabelByLanguage[testId][language]}
-                        onChange={(checked) => toggleTest(testId, checked)}
-                      />
-                    ))}
+                    {regularTests.map((testId) => {
+                      const test = serviceMap.get(testId)
+                      return (
+                        <CompactCheckbox
+                          key={testId}
+                          checked={form.testTypeIds.includes(testId)}
+                          label={test ? localizedTestLabel(test, language) : testId}
+                          onChange={(checked) => toggleTest(testId, checked)}
+                        />
+                      )
+                    })}
                   </Stack>
                 </Cell>
 
                 <SectionRibbon title={formCopy.packages} />
                 <Cell minHeight={116}>
                   <Stack spacing={0.15} sx={{ width: '100%' }}>
-                    {packageTests.map((testId) => (
-                      <CompactCheckbox
-                        key={testId}
-                        checked={form.testTypeIds.includes(testId)}
-                        label={testLabelByLanguage[testId][language]}
-                        onChange={(checked) => toggleTest(testId, checked)}
-                      />
-                    ))}
+                    {packageTests.map((testId) => {
+                      const test = serviceMap.get(testId)
+                      return (
+                        <CompactCheckbox
+                          key={testId}
+                          checked={form.testTypeIds.includes(testId)}
+                          label={test ? localizedTestLabel(test, language) : testId}
+                          onChange={(checked) => toggleTest(testId, checked)}
+                        />
+                      )
+                    })}
                     <PlainInput
                       placeholder={labels.otherTests}
                       value={form.otherTestsRequested}

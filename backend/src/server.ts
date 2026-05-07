@@ -3934,8 +3934,7 @@ app.post(
         orderId: order._id,
         label: accessionId,
         type:
-          order.testTypeIds.includes("test-bone-marrow-histology") ||
-          order.testTypeIds.includes("test-bone-marrow-complete")
+          order.testTypeIds.includes("test-pk-bm-002")
             ? "bone marrow"
             : "tissue",
         status: "received",

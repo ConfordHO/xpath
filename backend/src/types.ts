@@ -246,7 +246,10 @@ export interface TestType {
   name: string;
   description?: string;
   category: "Histology" | "Cytology" | "Molecular" | "IHC" | string;
+  sampleType?: string;
   price: number;
+  insurancePrice?: number;
+  priceNote?: string;
   turnaroundHours?: number;
   active: boolean;
   createdAt: string;
