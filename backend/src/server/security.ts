@@ -65,8 +65,24 @@ export function applySecurity(app: express.Express) {
 
   app.use(
     helmet({
-      contentSecurityPolicy: false,
+      contentSecurityPolicy: {
+        directives: {
+          defaultSrc: ["'self'"],
+          scriptSrc: ["'self'"],
+          styleSrc: ["'self'", "'unsafe-inline'"],
+          imgSrc: ["'self'", "data:", "blob:"],
+          connectSrc: ["'self'"],
+          fontSrc: ["'self'", "data:"],
+          objectSrc: ["'none'"],
+          mediaSrc: ["'self'", "blob:"],
+          frameSrc: ["'none'"],
+          baseUri: ["'self'"],
+          formAction: ["'self'"],
+          frameAncestors: ["'none'"],
+        },
+      },
       crossOriginEmbedderPolicy: false,
+      crossOriginResourcePolicy: { policy: "same-origin" },
     }),
   );
 
@@ -75,8 +91,10 @@ export function applySecurity(app: express.Express) {
     res.setHeader("Permissions-Policy", "camera=(self), microphone=(self), geolocation=(self)");
     res.setHeader("X-Content-Type-Options", "nosniff");
     res.setHeader("X-Frame-Options", "DENY");
-    if (NODE_ENV === "production" && (req.secure || req.header("x-forwarded-proto") === "https")) {
-      res.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
+    // Enforce HSTS whenever the connection is secure (production or behind TLS proxy)
+    const isSecure = req.secure || req.header("x-forwarded-proto") === "https";
+    if (isSecure) {
+      res.setHeader("Strict-Transport-Security", "max-age=63072000; includeSubDomains; preload");
     }
     next();
   });

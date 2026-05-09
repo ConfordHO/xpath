@@ -164,13 +164,23 @@ export function CreateOrderPage() {
     email: '',
     address: '',
     nationalId: '',
+    consentGiven: false,
+    consentTimestamp: '',
+    consentVersion: '1.0',
   })
   const [error, setError] = useState<string | null>(null)
 
   const createPatient = async () => {
+    if (!patientDraft.consentGiven) {
+      setError('Patient informed consent must be obtained and recorded before creating a patient record.')
+      return
+    }
     await actionLock.runLocked('create-patient', async () => {
       try {
-        const response = await api.post<Patient>('/patients', patientDraft)
+        const response = await api.post<Patient>('/patients', {
+          ...patientDraft,
+          consentTimestamp: new Date().toISOString(),
+        })
         patientsState.setData((prev) => ({ data: [response.data, ...prev.data] }))
         setPatientId(response.data._id)
         setPatientDraft({
@@ -182,6 +192,9 @@ export function CreateOrderPage() {
           email: '',
           address: '',
           nationalId: '',
+          consentGiven: false,
+          consentTimestamp: '',
+          consentVersion: '1.0',
         })
         setOpenPatientDialog(false)
       } catch (createError) {
@@ -330,11 +343,22 @@ export function CreateOrderPage() {
             </Box>
             <TextField label="Address" value={patientDraft.address} onChange={(event) => setPatientDraft((prev) => ({ ...prev, address: event.target.value }))} />
             <TextField label="National ID" value={patientDraft.nationalId} onChange={(event) => setPatientDraft((prev) => ({ ...prev, nationalId: event.target.value }))} />
+            <Stack direction="row" alignItems="flex-start" spacing={1}>
+              <Checkbox
+                size="small"
+                checked={patientDraft.consentGiven}
+                onChange={(e) => setPatientDraft((prev) => ({ ...prev, consentGiven: e.target.checked }))}
+                sx={{ mt: -0.5 }}
+              />
+              <Typography variant="body2" color="text.secondary">
+                Patient has given informed consent to the collection and processing of their health data in accordance with Cameroon Law No. 2010/012 of 21 December 2010.
+              </Typography>
+            </Stack>
           </Stack>
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setOpenPatientDialog(false)}>Cancel</Button>
-          <Button variant="contained" disabled={actionLock.isPending('create-patient')} onClick={createPatient}>
+          <Button variant="contained" disabled={actionLock.isPending('create-patient') || !patientDraft.consentGiven} onClick={createPatient}>
             Save patient
           </Button>
         </DialogActions>

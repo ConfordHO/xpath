@@ -37,6 +37,8 @@ type DatabaseDocument = {
 const canonicalSiteByEmail: Record<string, string | null> = {
   "superadmin@xpath.lims": null,
   "admin@xpath.lims": "site-1",
+  "admin.douala@xpath.lims": "site-2",
+  // Legacy mapping kept so existing DB records are not broken
   "admin.nairobi@xpath.lims": "site-2",
   "receptionist@xpath.lims": "site-1",
   "technician@xpath.lims": "site-1",
@@ -71,17 +73,17 @@ const canonicalConnectorSecretEnvMap: Record<string, string> = {
 };
 
 const legacySettingDefaults = {
-  labName: "X-PATH LIMS",
-  tagline: "Reliable results. Clear pricing. Fast turnaround.",
+  labName: "PathNovate LIMS",
+  tagline: "Résultats fiables. Tarification claire. Délais rapides.",
   aboutText:
-    "We are a pathology and molecular diagnostics laboratory committed to accurate diagnosis, transparent pricing, and timely reporting. Our team of pathologists and laboratory staff work with referring physicians and patients to deliver reliable results and secure, HIPAA-compliant reporting.",
+    "Nous sommes un laboratoire de pathologie et de diagnostic moléculaire engagé dans le diagnostic précis, la tarification transparente et le rendu des résultats dans les délais. Notre équipe de pathologistes et de personnel de laboratoire travaille avec les médecins référents et les patients pour fournir des résultats fiables conformément aux exigences de la loi camerounaise n° 2010/012 du 21 décembre 2010 relative à la cybersécurité et à la cybercriminalité ainsi qu'aux réglementations sanitaires applicables.",
   contactEmail: "info@xpath.lims",
-  contactPhone: "+254 759 466 446",
-  address: "Nairobi, Kenya",
-  businessHours: "Mon–Fri 8:00–18:00; Sat 8:00–12:00",
-  timezone: "UTC",
-  currency: "USD",
-  locale: "en",
+  contactPhone: "+237 699 000 000",
+  address: "Yaoundé, Cameroun",
+  businessHours: "Lun–Ven 7:30–17:30; Sam 8:00–13:00",
+  timezone: "Africa/Douala",
+  currency: "XAF",
+  locale: "fr",
 } as const;
 const legacyLabNames = new Set(["X-PATH LIMS", "X.PATH LIMS", "X.PATH LABS", "XPATH LIMS"]);
 
@@ -1139,6 +1141,10 @@ function normalizeDatabase(raw: Partial<Database>): Database {
     sites: raw.sites ?? seed.sites,
     siteTransfers: raw.siteTransfers ?? seed.siteTransfers,
     moduleAuditTargets: raw.moduleAuditTargets ?? seed.moduleAuditTargets,
+    consentRecords: raw.consentRecords ?? seed.consentRecords,
+    dataSubjectRequests: raw.dataSubjectRequests ?? seed.dataSubjectRequests,
+    dataBreachLogs: raw.dataBreachLogs ?? seed.dataBreachLogs,
+    passwordResetTokens: raw.passwordResetTokens ?? seed.passwordResetTokens,
     settings,
   };
 

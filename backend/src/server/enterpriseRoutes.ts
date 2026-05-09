@@ -801,7 +801,7 @@ export function registerEnterpriseRoutes(app: express.Express) {
       readValue(/clinical history[:\-]\s*(.+)/i) ||
       "Parsed from OCR/NLP intake";
     const dob = readValue(/dob[:\-]\s*([0-9/\-]+)/i) || "1990-01-01";
-    const phone = readValue(/phone[:\-]\s*(.+)/i) || "+254700000000";
+    const phone = readValue(/phone[:\-]\s*(.+)/i) || "+237 699 000 000";
     const email = readValue(/email[:\-]\s*(.+)/i) || "patient@example.com";
     const address = readValue(/address[:\-]\s*(.+)/i) || "Unknown address";
     const matchedTestTypes = db.testTypes.filter((testType) =>
