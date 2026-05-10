@@ -157,12 +157,48 @@ export interface SafeUser {
   role: UserRole
   preferredLanguage: 'english' | 'french'
   preferredLocale: 'en' | 'fr'
+  organizationId?: string | null
   siteId?: string | null
   active: boolean
   mfaEnabled?: boolean
   mfaVerifiedAt?: string | null
   failedLoginCount?: number
   lockedUntil?: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export type OrgPlan = 'trial' | 'starter' | 'standard' | 'enterprise'
+export type OrgStatus = 'active' | 'suspended' | 'trial' | 'cancelled'
+
+export interface Organization {
+  id: string
+  slug: string
+  name: string
+  plan: OrgPlan
+  status: OrgStatus
+  trialEndsAt?: string | null
+  ownerEmail: string
+  contactPhone?: string | null
+  address?: string | null
+  country: string
+  timezone: string
+  currency: 'XAF' | 'USD' | 'EUR'
+  maxBranches?: number | null
+  maxUsers?: number | null
+  createdAt: string
+  updatedAt: string
+}
+
+export interface Branch {
+  _id: string
+  code: string
+  name: string
+  organizationId?: string | null
+  address?: string | null
+  phone?: string | null
+  siteType: 'hub' | 'spoke' | 'collection' | 'lab'
+  active: boolean
   createdAt: string
   updatedAt: string
 }

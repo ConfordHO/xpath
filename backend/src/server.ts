@@ -120,6 +120,9 @@ import {
 import { ensureInvoiceForOrder, registerZohoBooksRoutes, syncPaymentToZoho } from "./server/zohoBooks.js";
 import { registerModuleHardeningRoutes } from "./server/moduleHardeningRoutes.js";
 import { registerSpeechAiRoutes } from "./server/speechAiRoutes.js";
+import { privacyRouter } from "./server/privacyRoutes.js";
+import { orgRouter } from "./server/orgRoutes.js";
+import { accountingRouter } from "./server/accountingExports.js";
 import { loadDb, updateDb } from "./store.js";
 import type {
   Accession,
@@ -243,6 +246,21 @@ app.get("/api/health/storage", async (_req, res) => {
 
 function sameTestTypeSelection(left: string[], right: string[]) {
   return left.slice().sort().join("|") === right.slice().sort().join("|");
+}
+
+/** Returns the org/tenant ID for the current request. Falls back to primary org. */
+function getReqOrgId(req: AuthRequest): string {
+  return req.organizationId || req.user?.organizationId || POSTGRES_STATE_ID;
+}
+
+/** Loads the org-scoped database for the current request's tenant. */
+async function loadOrgDb(req: AuthRequest): Promise<Database> {
+  return loadDb(getReqOrgId(req));
+}
+
+/** Runs a mutation against the org-scoped database for the current request's tenant. */
+async function updateOrgDb<T>(req: AuthRequest, updater: (db: Database) => T | Promise<T>): Promise<T> {
+  return updateDb(getReqOrgId(req), updater);
 }
 
 function getScopedDb(req: AuthRequest, db: Database) {
@@ -887,13 +905,26 @@ app.post("/api/auth/login", authLimiter, async (req, res) => {
     return res.status(400).json({ message: "Invalid login payload" });
   }
 
-  const db = await loadDb();
+  // SaaS: caller can pass organizationSlug to target a specific tenant's data partition.
+  // If omitted, fall back to the primary org (single-tenant / legacy mode).
+  const orgSlug = typeof req.body.organizationSlug === "string" ? req.body.organizationSlug.trim() : null;
+  let resolvedOrgId: string = POSTGRES_STATE_ID;
+  if (orgSlug) {
+    const { getOrganizationBySlug } = await import("./store.js");
+    const org = await getOrganizationBySlug(orgSlug);
+    if (!org || org.status === "suspended" || org.status === "cancelled") {
+      return res.status(401).json({ message: "Invalid email or password" });
+    }
+    resolvedOrgId = org.id;
+  }
+
+  const db = await loadDb(resolvedOrgId);
   const user = db.users.find(
     (entry) => entry.email.toLowerCase() === parsed.data.email.toLowerCase(),
   );
 
   if (!user || !user.active) {
-    await updateDb((mutableDb) => {
+    await updateDb(resolvedOrgId, (mutableDb) => {
       mutableDb.credentialAudits.unshift({
         _id: createId(),
         userId: user?._id ?? "unknown",
@@ -906,7 +937,7 @@ app.post("/api/auth/login", authLimiter, async (req, res) => {
   }
 
   if (user.lockedUntil && new Date(user.lockedUntil).getTime() > Date.now()) {
-    await updateDb((mutableDb) => {
+    await updateDb(resolvedOrgId, (mutableDb) => {
       mutableDb.credentialAudits.unshift({
         _id: createId(),
         userId: user._id,
@@ -920,7 +951,7 @@ app.post("/api/auth/login", authLimiter, async (req, res) => {
 
   const valid = await verifyPassword(parsed.data.password, user.passwordHash);
   if (!valid) {
-    await updateDb((mutableDb) => {
+    await updateDb(resolvedOrgId, (mutableDb) => {
       const mutableUser = mutableDb.users.find((entry) => entry._id === user._id);
       if (mutableUser) {
         mutableUser.failedLoginCount = (mutableUser.failedLoginCount ?? 0) + 1;
@@ -942,7 +973,7 @@ app.post("/api/auth/login", authLimiter, async (req, res) => {
 
   const mfaRequiredForRole = MFA_ENFORCED && MFA_ENFORCED_ROLES.includes(user.role);
   if ((user.mfaEnabled || mfaRequiredForRole) && !verifyTotpToken(user.mfaSecret, parsed.data.mfaToken)) {
-    await updateDb((mutableDb) => {
+    await updateDb(resolvedOrgId, (mutableDb) => {
       mutableDb.credentialAudits.unshift({
         _id: createId(),
         userId: user._id,
@@ -966,13 +997,21 @@ app.post("/api/auth/login", authLimiter, async (req, res) => {
     });
   }
 
+  // Ensure user carries the resolved orgId (handles legacy users without orgId)
+  if (!user.organizationId) {
+    user.organizationId = resolvedOrgId !== POSTGRES_STATE_ID ? resolvedOrgId : null;
+  }
+
   const sessionId = createId();
   const sessionCreatedAt = now();
-  await updateDb((db) => {
+  await updateDb(resolvedOrgId, (db) => {
     const mutableUser = db.users.find((entry) => entry._id === user._id);
     if (mutableUser) {
       mutableUser.failedLoginCount = 0;
       mutableUser.lockedUntil = null;
+      if (!mutableUser.organizationId && resolvedOrgId !== POSTGRES_STATE_ID) {
+        mutableUser.organizationId = resolvedOrgId;
+      }
       mutableUser.updatedAt = sessionCreatedAt;
     }
     db.sessionRecords.unshift({
@@ -997,13 +1036,14 @@ app.post("/api/auth/login", authLimiter, async (req, res) => {
       module: "Security",
       action: "login",
       targetId: user._id,
-      summary: `${user.email} signed in`,
+      summary: `${user.email} signed in (org: ${resolvedOrgId})`,
     });
   });
 
   res.json({
     token: signToken(user, sessionId),
     user: sanitizeUser(user),
+    organizationId: resolvedOrgId,
   });
 });
 
@@ -1543,6 +1583,10 @@ app.post("/api/public/order-request", async (req, res) => {
       actor: null,
     });
     const patientId = createId();
+    const rawPatient = (req.body as { patient?: Record<string, unknown> }).patient ?? {};
+    const patientConsentGiven = Boolean(rawPatient.consentGiven);
+    const patientConsentTimestamp = typeof rawPatient.consentTimestamp === "string" ? rawPatient.consentTimestamp : null;
+    const patientConsentVersion = typeof rawPatient.consentVersion === "string" ? rawPatient.consentVersion : "1.0";
     db.patients.push({
       _id: patientId,
       firstName: parsed.patient.firstName,
@@ -1554,9 +1598,33 @@ app.post("/api/public/order-request", async (req, res) => {
       address: parsed.patient.address,
       siteId,
       nationalId: undefined,
+      consentGiven: patientConsentGiven,
+      consentTimestamp: patientConsentGiven ? (patientConsentTimestamp ?? timestamp) : null,
+      consentVersion: patientConsentVersion,
       createdAt: timestamp,
       updatedAt: timestamp,
     });
+    // Record explicit consent entry for audit
+    if (patientConsentGiven) {
+      db.consentRecords.push({
+        _id: createId(),
+        patientId,
+        orderId: null,
+        purposes: ["diagnostic_testing", "billing"],
+        consentText: "Patient accepted the privacy policy and consent notice on the public online order form.",
+        consentVersion: patientConsentVersion,
+        givenBy: "patient",
+        givenByName: `${parsed.patient.firstName} ${parsed.patient.lastName}`,
+        channel: "online_portal",
+        ipAddress: req.ip ?? null,
+        userAgent: req.header("user-agent") ?? null,
+        withdrawn: false,
+        withdrawnAt: null,
+        withdrawnReason: null,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      });
+    }
     const requisitionForm: RequisitionForm = {
       ...parsed.requisition,
       patientEthnicity: parsed.patient.ethnicity ?? parsed.requisition.patientEthnicity ?? "",
@@ -2040,7 +2108,11 @@ app.delete("/api/security/mfa", async (req: AuthRequest, res) => {
 
 app.get("/api/users", requireRoles("admin"), async (req: AuthRequest, res) => {
   const db = await loadDb();
-  res.json(getScopedDb(req, db).users.map((entry) => sanitizeUser(entry)));
+  const all = getScopedDb(req, db).users.map((entry) => sanitizeUser(entry));
+  const page = Math.max(1, Number(req.query.page ?? 1));
+  const limit = Math.min(200, Math.max(1, Number(req.query.limit ?? 50)));
+  const start = (page - 1) * limit;
+  res.json({ data: all.slice(start, start + limit), total: all.length, page, limit });
 });
 
 app.post("/api/users", requireRoles("admin"), async (req: AuthRequest, res) => {
@@ -2656,11 +2728,21 @@ app.post(
 
 app.get("/api/patients", requireRoles("admin", "receptionist"), async (req: AuthRequest, res) => {
   const db = getScopedDb(req, await loadDb());
-  const page = Number(req.query.page ?? 1);
-  const limit = Number(req.query.limit ?? 50);
+  const search = String(req.query.search ?? "").trim().toLowerCase();
+  const all = search
+    ? db.patients.filter(
+        (p) =>
+          p.firstName.toLowerCase().includes(search) ||
+          p.lastName.toLowerCase().includes(search) ||
+          (p.phone ?? "").includes(search) ||
+          (p.nationalId ?? "").toLowerCase().includes(search) ||
+          (p.externalPatientId ?? "").toLowerCase().includes(search),
+      )
+    : db.patients;
+  const page = Math.max(1, Number(req.query.page ?? 1));
+  const limit = Math.min(200, Math.max(1, Number(req.query.limit ?? 50)));
   const start = (page - 1) * limit;
-  const data = db.patients.slice(start, start + limit);
-  res.json({ data, total: db.patients.length, page, limit });
+  res.json({ data: all.slice(start, start + limit), total: all.length, page, limit });
 });
 
 app.post("/api/patients", requireRoles("admin", "receptionist"), async (req: AuthRequest, res) => {
@@ -2671,18 +2753,50 @@ app.post("/api/patients", requireRoles("admin", "receptionist"), async (req: Aut
 
   const currentUser = ensureUser(req);
 
+  const rawConsent = req.body as { consentGiven?: boolean; consentTimestamp?: string; consentVersion?: string };
+  const consentGiven = Boolean(rawConsent.consentGiven);
   const created = await updateDb((db) => {
     const timestamp = now();
+    const patientId = createId();
     const patient = {
-      _id: createId(),
+      _id: patientId,
       ...parsed.data,
       siteId: isSuperAdmin(currentUser)
         ? normalizeSiteId(parsed.data.siteId)
         : normalizeSiteId(currentUser.siteId),
+      consentGiven,
+      consentTimestamp: consentGiven ? (rawConsent.consentTimestamp ?? timestamp) : null,
+      consentVersion: rawConsent.consentVersion ?? "1.0",
       createdAt: timestamp,
       updatedAt: timestamp,
     };
     db.patients.push(patient);
+    if (consentGiven) {
+      db.consentRecords.push({
+        _id: createId(),
+        patientId,
+        orderId: null,
+        purposes: ["diagnostic_testing", "billing"],
+        consentText: "Informed consent obtained in person at reception by staff member.",
+        consentVersion: rawConsent.consentVersion ?? "1.0",
+        givenBy: "patient",
+        givenByName: `${parsed.data.firstName} ${parsed.data.lastName}`,
+        channel: "in_person",
+        ipAddress: req.ip ?? null,
+        userAgent: req.header("user-agent") ?? null,
+        withdrawn: false,
+        withdrawnAt: null,
+        withdrawnReason: null,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      });
+    }
+    appendRequestAudit(db, req, {
+      module: "patients",
+      action: "patient_created",
+      targetId: patientId,
+      summary: `Patient created: ${parsed.data.firstName} ${parsed.data.lastName}; consent: ${consentGiven}`,
+    });
     return patient;
   });
 
@@ -5574,6 +5688,9 @@ registerModuleHardeningRoutes(app);
 registerHl7IntegrationRoutes(app);
 registerMaviancePaymentRoutes(app);
 registerSpeechAiRoutes(app);
+app.use("/api", privacyRouter);
+app.use("/api", orgRouter);
+app.use("/api", accountingRouter);
 
 function isDatabaseUnavailableError(error: Error) {
   const code = "code" in error ? String((error as Error & { code?: unknown }).code ?? "") : "";

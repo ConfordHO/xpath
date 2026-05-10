@@ -11,12 +11,15 @@ export const DEFAULT_SITE_ID = "site-1";
 export interface AuthRequest extends Request {
   user?: User;
   session?: SessionRecord;
+  /** organizationId extracted from the JWT — the tenant the request belongs to. */
+  organizationId?: string;
 }
 
 type AuthTokenPayload = {
   userId: string;
   role: UserRole;
   sessionId: string;
+  organizationId: string;
 };
 
 export function signToken(user: User, sessionId: string) {
@@ -28,7 +31,12 @@ export function signToken(user: User, sessionId: string) {
     expiresIn: JWT_EXPIRY as SignOptions["expiresIn"],
     issuer: JWT_ISSUER,
   };
-  return jwt.sign({ userId: user._id, role: user.role, sessionId } satisfies AuthTokenPayload, JWT_SECRET, signOptions);
+  const organizationId = user.organizationId ?? "";
+  return jwt.sign(
+    { userId: user._id, role: user.role, sessionId, organizationId } satisfies AuthTokenPayload,
+    JWT_SECRET,
+    signOptions,
+  );
 }
 
 export async function verifyPassword(password: string, hash: string) {
@@ -84,7 +92,8 @@ export async function requireAuth(
     if (!payload.userId || !payload.sessionId) {
       return res.status(401).json({ message: "Authentication required" });
     }
-    const db = await loadDb();
+    const orgId = payload.organizationId || undefined;
+    const db = await loadDb(orgId);
     const user = db.users.find((entry) => entry._id === payload.userId);
     const session = db.sessionRecords.find((entry) => entry._id === payload.sessionId);
     if (!user || !user.active || !session || session.userId !== user._id || session.status !== "active") {
@@ -92,6 +101,7 @@ export async function requireAuth(
     }
     req.user = user;
     req.session = session;
+    req.organizationId = orgId ?? user.organizationId ?? undefined;
     return next();
   } catch {
     return res.status(401).json({ message: "Authentication required" });

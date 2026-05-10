@@ -864,6 +864,7 @@ export function OrderOnlinePage() {
   const [form, setForm] = useState<RequisitionFormState>(createInitialFormState)
   const [sessionLoading, setSessionLoading] = useState(false)
   const [submitting, setSubmitting] = useState(false)
+  const [consentGiven, setConsentGiven] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<{ orderNumber: string; message: string } | null>(null)
   const [qrSrc, setQrSrc] = useState('')
@@ -1002,6 +1003,14 @@ export function OrderOnlinePage() {
       setError(problems[0])
       return
     }
+    if (!consentGiven) {
+      setError(
+        language === 'fr'
+          ? 'Vous devez accepter la politique de confidentialité et donner votre consentement au traitement de vos données de santé avant de soumettre.'
+          : 'You must accept the privacy policy and consent to health data processing before submitting.',
+      )
+      return
+    }
 
     setSubmitting(true)
     setError(null)
@@ -1029,6 +1038,9 @@ export function OrderOnlinePage() {
           email: form.patient.email.trim(),
           address: form.patient.address.trim(),
           ethnicity: form.patient.ethnicity.trim(),
+          consentGiven: true,
+          consentTimestamp: new Date().toISOString(),
+          consentVersion: '1.0',
         },
         testTypeIds: form.testTypeIds,
         requisition: {
@@ -2088,9 +2100,24 @@ export function OrderOnlinePage() {
                 {authenticityUrl}
               </Link>
             </Stack>
-            <Button variant="contained" disabled={submitting} onClick={submit}>
-              {submitting ? formCopy.submitting : formCopy.submit}
-            </Button>
+            <Stack spacing={1}>
+              <Stack direction="row" alignItems="flex-start" spacing={1}>
+                <Checkbox
+                  size="small"
+                  checked={consentGiven}
+                  onChange={(e) => setConsentGiven(e.target.checked)}
+                  sx={{ mt: -0.5 }}
+                />
+                <Typography variant="body2" color="text.secondary">
+                  {language === 'fr'
+                    ? "J'accepte la politique de confidentialité et je consens au traitement de mes données de santé conformément à la loi camerounaise n° 2010/012 du 21 décembre 2010 relative à la cybersécurité et à la protection des données personnelles."
+                    : 'I accept the privacy policy and consent to the processing of my health data in accordance with Cameroon Law No. 2010/012 of 21 December 2010 on cybersecurity and personal data protection.'}
+                </Typography>
+              </Stack>
+              <Button variant="contained" disabled={submitting || !consentGiven} onClick={submit}>
+                {submitting ? formCopy.submitting : formCopy.submit}
+              </Button>
+            </Stack>
           </Stack>
         </Paper>
       </Stack>

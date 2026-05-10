@@ -20,6 +20,8 @@ import TuneOutlinedIcon from '@mui/icons-material/TuneOutlined'
 import VerifiedUserOutlinedIcon from '@mui/icons-material/VerifiedUserOutlined'
 import ViewInArOutlinedIcon from '@mui/icons-material/ViewInArOutlined'
 import WorkspacesOutlinedIcon from '@mui/icons-material/WorkspacesOutlined'
+import BusinessOutlinedIcon from '@mui/icons-material/BusinessOutlined'
+import AccountBalanceOutlinedIcon from '@mui/icons-material/AccountBalanceOutlined'
 
 import type { NavGroup } from '../components'
 import type { SafeUser } from '../types'
@@ -44,7 +46,7 @@ export function getNavGroups(user: SafeUser): NavGroup[] {
             { label: 'Orders', to: '/orders', icon: <ListAltOutlinedIcon /> },
             { label: 'Create order', to: '/orders/create', icon: <AddCircleOutlineRoundedIcon /> },
             { label: 'Financial', to: '/financial', icon: <PaymentsOutlinedIcon /> },
-            { label: 'Zoho Books', to: '/accounting', icon: <PaymentsOutlinedIcon /> },
+            { label: 'Accounting', to: '/accounting', icon: <AccountBalanceOutlinedIcon /> },
             { label: 'Courier', to: '/courier', icon: <LocalShippingOutlinedIcon /> },
             { label: 'Receptionist workflow', to: '/receptionist/workflow', icon: <VerifiedUserOutlinedIcon /> },
             { label: 'Technician workflow', to: '/technician/workflow', icon: <ScienceOutlinedIcon /> },
@@ -68,6 +70,7 @@ export function getNavGroups(user: SafeUser): NavGroup[] {
             { label: 'Test types', to: '/admin/test-types', icon: <TuneOutlinedIcon /> },
             { label: 'Workflow templates', to: '/admin/workflow-templates', icon: <FolderCopyOutlinedIcon /> },
             { label: 'System settings', to: '/admin/settings', icon: <SettingsSuggestOutlinedIcon /> },
+            { label: 'My organisation', to: '/admin/organization', icon: <BusinessOutlinedIcon /> },
             { label: 'Doctor portal', to: '/doctor-portal', icon: <MedicalInformationOutlinedIcon /> },
           ],
         },
@@ -84,6 +87,12 @@ export function getNavGroups(user: SafeUser): NavGroup[] {
             { label: 'Production readiness', to: '/operations/production-hardening', icon: <SettingsSuggestOutlinedIcon /> },
           ],
         },
+        {
+          label: 'Platform',
+          items: [
+            { label: 'All organizations', to: '/platform/organizations', icon: <BusinessOutlinedIcon /> },
+          ],
+        },
         settingsGroup(),
       ]
     case 'admin':
@@ -94,7 +103,7 @@ export function getNavGroups(user: SafeUser): NavGroup[] {
             { label: 'Orders', to: '/orders', icon: <ListAltOutlinedIcon /> },
             { label: 'Create order', to: '/orders/create', icon: <AddCircleOutlineRoundedIcon /> },
             { label: 'Financial', to: '/financial', icon: <PaymentsOutlinedIcon /> },
-            { label: 'Zoho Books', to: '/accounting', icon: <PaymentsOutlinedIcon /> },
+            { label: 'Accounting', to: '/accounting', icon: <AccountBalanceOutlinedIcon /> },
             { label: 'Courier', to: '/courier', icon: <LocalShippingOutlinedIcon /> },
             { label: 'Receptionist workflow', to: '/receptionist/workflow', icon: <VerifiedUserOutlinedIcon /> },
             { label: 'Technician workflow', to: '/technician/workflow', icon: <ScienceOutlinedIcon /> },
@@ -118,6 +127,7 @@ export function getNavGroups(user: SafeUser): NavGroup[] {
             { label: 'Test types', to: '/admin/test-types', icon: <TuneOutlinedIcon /> },
             { label: 'Workflow templates', to: '/admin/workflow-templates', icon: <FolderCopyOutlinedIcon /> },
             { label: 'System settings', to: '/admin/settings', icon: <SettingsSuggestOutlinedIcon /> },
+            { label: 'My organisation', to: '/admin/organization', icon: <BusinessOutlinedIcon /> },
           ],
         },
         {
@@ -188,7 +198,7 @@ export function getNavGroups(user: SafeUser): NavGroup[] {
           items: [
             { label: 'Dashboard', to: '/dashboard', icon: <DashboardOutlinedIcon /> },
             { label: 'Financial', to: '/financial', icon: <PaymentsOutlinedIcon /> },
-            { label: 'Zoho Books', to: '/accounting', icon: <PaymentsOutlinedIcon /> },
+            { label: 'Accounting', to: '/accounting', icon: <AccountBalanceOutlinedIcon /> },
             { label: 'Communications', to: '/communications', icon: <ChatBubbleOutlineRoundedIcon /> },
             { label: 'Notifications', to: '/notifications', icon: <NotificationsNoneOutlinedIcon /> },
           ],

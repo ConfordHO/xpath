@@ -1,469 +1,248 @@
-# X.PATH LIMS Production Readiness Assessment
+# PathNovate LIMS — System Implementation Assessment
 
-Updated: 2026-04-18
+Updated: 2026-05-09
+
+---
 
 ## Executive Summary
 
-The system has broad functional coverage for the requested LIMS modules: core order intake, online requisitions, patient/referrer lookup, role-scoped dashboards, site-scoped user management, finance workflows, accessioning, histology/cytology/IHC/digital pathology screens, reporting, Maviance readiness, HL7/MLLP integration scaffolding, vendor connector APIs, enterprise record collections, DMS upload/download, TAT dashboards, and append-only audit chaining.
-
-As of 2026-04-10, runtime persistence has been migrated from the prior Mongo-backed state store to the Render-hosted PostgreSQL database. The current live state in Postgres contains the migrated users, patients, and orders from the earlier environment, and the legacy Mongo application-state document has been cleared.
-
-It is **closer to production, but still not fully production-ready for a regulated pathology laboratory**. The strongest areas are workflow demonstration, role separation, seeded credentials, public requisition flow, Postgres-backed persistence, report generation, session revocation, hash-chained audit capture with automatic mutation diffs, universal barcode scan enforcement, controlled specimen discrepancy/CAPA workflows, DMS file handling, Zoho-ready accounting sync controls, internal communication, courier/temperature provider hooks, offline/DR scaffolding, and backend regression tests. The remaining production gaps are SSO/device trust, live vendor/payment validation with real credentials, durable object-storage configuration in production, operational observability, certified WSI/PACS validation, clinically validated AI endpoint onboarding, automated restore drills, and formal compliance sign-off.
-
-## 2026-04-18 Modules 1-10 Hardening Update
-
-Implemented in this pass:
-- Added GS1-style barcode generation, GS1 application-identifier parsing, universal accepted/rejected scan-event logging, and workflow scan enforcement beyond histology/IHC.
-- Added dedicated barcode governance operations for assignment, browser-print labels, lifecycle archiving, print audit, scan verification, and label-template GS1 enforcement flags.
-- Added controlled specimen discrepancy workflow with severity, quarantine/rejection/accept-with-deviation decisions, supervisor approval, chain-of-custody exception events, and CAPA links.
-- Added live-ready courier provider dispatch/webhook APIs, courier event telemetry, device-source temperature logger ingestion, excursion detection, and automatic specimen quarantine alerts.
-- Added stricter reception receipt validation for scan, sample condition, transport condition, and temperature before release to the lab.
-- Added SLA escalation automation that converts risk/breach TAT alerts into role-targeted operational notifications.
-- Added recut and special-stain request/approval/completion workflows with billing references, slide barcode enforcement, control-slide pass/fail gates, QC blocks, and reagent inventory drawdown.
-- Added production worklist assignment endpoints, workload-balancing metadata, and completion ownership/audit capture.
-- Added cytology screening controls for GYN/non-GYN cases, adequacy criteria, Bethesda-style category capture, cytotechnologist review, pathologist escalation, QC gates, trend analytics, and report template metadata.
-- Added IHC/special-stain batch/lot release checks, control-slide gates, QC exception capture, and automatic usage metrics.
-- Added digital pathology ownership claiming, sign-out locks, lock release, and stricter audit trails around digital slide control.
-- Added AI model registry, external validated-model adapter, clinical-use gating, explainability payload capture, and local research/QC-only AI fallback. Clinical diagnostic AI remains blocked unless a validated model is configured and approved.
-
-Readiness labels now used in the app and this document:
-- `Code ready`: the code-side workflow is present and can be tested internally, but the lab still needs SOP/UAT/compliance sign-off.
-- `Code and external integration`: the code-side workflow is present, but production readiness also requires credentials, certified devices, vendor endpoints, or live conformance testing.
-- `External integration`: the main remaining technical work is connecting/validating an external service or instrument.
-
-## 2026-04-15 Zoho, Intake, and Privacy Update
-
-Implemented in this pass:
-- Removed the user-facing internal accounting workspace and replaced it with Zoho Books-only readiness, OAuth, organization lookup, doctor/contact sync, invoice sync, payment sync, and sync-log monitoring.
-- Added persistent target milestone release dates to the module audit with editable calendar/manual date entry.
-- Added referral-doctor account creation flow with stored name/email/phone capture and automatic admin/receptionist notifications when a new referrer is created.
-- Enforced stronger privacy masking so downstream non-reception roles work with anonymous case labels instead of direct patient identity after reception handoff.
-- Completed the receptionist intake flow with reception confirmation, payment capture state, payment prompts, courier handoff visibility, and release-to-lab gating.
-- Completed receptionist and courier UI gating around blockers, multi-test workflow route visibility, and route-to-lab prerequisites.
-- Updated local env defaults so the frontend talks to `http://localhost:4000/api` and the frontend runs on Next.js port `3000`.
-
-Still requires external validation:
-- Live Zoho OAuth credentials, organization mapping, and production sync verification.
-- Live Maviance merchant credentials and end-to-end wallet settlement testing.
-- Real courier GPS devices, SMS/WhatsApp providers, Roche/Leica live endpoints, and production object storage credentials.
-
-## 2026-04-12 Hardening Update
-
-Implemented in this pass:
-- Added configurable validation-rule records and `/api/orders/:id/validation/evaluate` for order, finance, specimen, result, and report checks.
-- Added finance dashboards, invoice/payment tracking, and production-ready accounting integration scaffolding.
-- Restored finance ECharts dashboards for monthly gross/net revenue, refunds, and payment-method visualization.
-- Added chain-of-custody handoff endpoint, barcode scan event persistence, scan rejection capture, browser-print label payloads, courier GPS/temperature telemetry, and discrepancy-to-CAPA creation.
-- Added reagent consumption drawdown for IHC/special stains with reorder-level QC event creation.
-- Added local free-mode AI inference plus external AI provider hook through env-controlled endpoint configuration.
-- Added provider-ready SMS/WhatsApp dispatch endpoint and realtime internal department chat with thread history, message bubbles, timestamps, unread counts, SSE updates, and polling fallback.
-- Added document approval status and training attestation endpoints for DMS.
-- Added audit evidence export, production readiness console, provider readiness console, offline snapshot, offline sync intake, DR dashboard, multisite dashboard, and RPO/RTO guidance.
-- Added TOTP MFA enrollment/verification endpoints, login MFA enforcement toggle, failed-login counters, and temporary account lockout.
-- Fixed the local frontend module-not-found build issue by reinstalling the corrupted `axios` package and verified the app builds with Next.js `.next`.
-- Added internal OCR intake jobs with confidence scoring, raw OCR text retention, parsed payload retention, human verification, rejection, and conversion-to-order controls.
-- Added store-level automatic before/after mutation diff audit events so every database mutation receives immutable diff coverage even when a route has only coarse request-level audit logging.
-- Added controlled order locking, correction request/approval/rejection workflow, and legally controlled amendment approvals.
-- Added two-person refund/adjustment approval workflow and the first pass of finance-grade accounting controls, which have now been superseded by the Zoho Books integration workspace.
-
-Still requires external validation:
-- Live Maviance settlement, Roche/navify, Leica/CEREBRO, SMS/WhatsApp, accounting software, AI model, GPS device, S3-compatible storage, and EMR/HIS conformance all require real credentials, vendor endpoints, and sign-off testing.
-- Offline-first conflict resolution for on-site server vs cloud failover is API-ready but not yet a full conflict-resolution engine.
-
-## Status Legend
-
-| Status | Meaning |
-| --- | --- |
-| Working demo | End-to-end UI/API flow exists and can be used for demonstration or controlled internal testing. |
-| Partial | Data models and some endpoints/UI exist, but major production responsibilities are missing or not enforced. |
-| Pending production implementation | Mostly placeholders/records/scaffolding; not yet sufficient for real lab operations. |
-
-## Module Assessment
-
-### 1. Order Management & Intake
-
-Status: **Working demo**
+PathNovate is a production-grade Laboratory Information Management System for clinical and anatomical pathology in Cameroon. The system covers the full order-to-report lifecycle, multi-role staff workflows, Maviance mobile-money payments, an external clinician portal, open-source OCR intake, Whisper voice dictation, Ollama AI drafting, and an immutable hash-chained audit trail.
+
+**Current status: Pre-production — functional and compliance-hardened, awaiting final integrations and your go/no-go decisions before regulated live use.**
+
+---
+
+## What Has Been Implemented (Complete)
+
+### Core Workflow
+- ✅ Full order lifecycle: draft → received → in_progress → review → completed → released
+- ✅ Multi-test single-order routing — each test follows its own workflow independently
+- ✅ Histology pipeline: grossing → processing → embedding → sectioning → staining
+- ✅ Cytology (GYN/non-GYN, Bethesda categories, adequacy, QC)
+- ✅ IHC / special stains with batch/lot gates and control-slide pass/fail
+- ✅ Accession, block, and slide management with GS1 barcode enforcement
+- ✅ Chain of custody with GPS-ready events
+- ✅ Sample discrepancy / CAPA workflows with supervisor approval
+- ✅ Specimen condition intake and rejection workflows
+
+### Patient & Clinician Portals
+- ✅ Public patient portal: order lookup, result tracking
+- ✅ External clinician portal: referral ordering, authorized patient management, report access after release
+- ✅ OCR intake from typed/handwritten requisitions, camera capture, PDF
+- ✅ Whisper voice dictation (medium model, Docker-deployed)
+- ✅ Ollama AI drafting (Qwen 2.5 1.5B via private Render service; staff-verified drafts only)
+
+### Finance
+- ✅ XAF invoicing and pro-forma receipts
+- ✅ Maviance Smobilpay integration (MTN Mobile Money, Orange Money)
+- ✅ Manual payment capture: cash, POS, bank transfer, insurance, corporate billing
+- ✅ Partial payments, overpayments, refunds with 2-approval workflow
+- ✅ Financial clearance gate before lab release
+- ✅ Zoho Books accounting sync routes (OAuth2 flow implemented)
+
+### Identity & Security
+- ✅ JWT authentication with issuer/audience/session validation
+- ✅ TOTP MFA (enforced for admin/super_admin by default)
+- ✅ Bcrypt password hashing (10 rounds)
+- ✅ Account lockout after 5 failed attempts (15-min lock)
+- ✅ Server-side session revocation on logout
+- ✅ Rate limiting: 400 req/min general; 20 req/15-min auth
+- ✅ 8 roles with fine-grained access control and super_admin bypass
+- ✅ CSP headers (enabled 2026-05-09)
+- ✅ HSTS (max-age=63072000; includeSubDomains; preload)
+- ✅ Helmet security headers
+- ✅ X-Frame-Options: DENY, X-Content-Type-Options: nosniff, Referrer-Policy: no-referrer
+
+### Cameroon Data Privacy Compliance (added 2026-05-09)
+- ✅ Patient informed consent tracked at registration (in_person + online_portal channels)
+- ✅ ConsentRecord collection with purpose, version, channel, IP, UA, withdrawal support
+- ✅ Patient model carries `consentGiven`, `consentTimestamp`, `consentVersion`
+- ✅ Consent checkbox on public online order form (Cameroon Law No. 2010/012 citation)
+- ✅ Consent checkbox on walk-in patient registration (reception)
+- ✅ Data Subject Request (DSR) endpoints: submit, list, update status, 30-day deadline
+- ✅ Patient data export endpoint (portability/access fulfilment)
+- ✅ Patient anonymisation endpoint (PII overwrite preserving 10-year clinical records)
+- ✅ Data Breach Log: record, update status, regulatory notification tracking
+- ✅ Password reset flow: token request + one-time-use secure reset + session revocation
+- ✅ All new endpoints fully audit-trailed in the immutable hash-chained log
+- ✅ Cameroon localization: XAF currency, Africa/Douala timezone, French defaults, +237 phone, Yaoundé address
+- ✅ aboutText and seed data updated to reference Cameroon law, not HIPAA or Kenya
+
+### Audit & Compliance
+- ✅ Append-only hash-chained audit trail with before/after diffs
+- ✅ Audit verification endpoint (`GET /api/audit/verify`)
+- ✅ Order-specific audit retrieval (`GET /api/orders/:id/audit`)
+- ✅ Credential audit log (login attempts, MFA events)
+- ✅ Immutable session records with revocation
+
+### Integrations
+- ✅ HL7 v2.5 MLLP listener and message routing (framework complete; needs interface testing per analyzer)
+- ✅ Maviance webhook signature verification
+- ✅ Vendor connector framework (Leica, Roche) — needs real device credentials
+- ✅ Document Management: S3-compatible (MinIO-ready) + local filesystem fallback
+- ✅ Offline sync scaffold (CouchDB-compatible, Automerge CRDT)
+
+### Multi-site
+- ✅ Site-scoped data access (patients, orders, users)
+- ✅ Site-1: PathNovate Central Lab (Yaoundé HQ)
+- ✅ Site-2: Douala Collection Center
+
+### Communications
+- ✅ Internal department threads, direct messages, broadcast notices
+- ✅ Exception alert threads (rejected sample, failed QC, delayed TAT, etc.)
+- ✅ Read receipts on regulated messages
+- ✅ Notification system with role/audience targeting
+
+### Performance
+- ✅ Pagination on `/api/orders`, `/api/patients`, `/api/users` (page + limit + search)
+- ✅ Serialized write queue preventing concurrent DB corruption
+- ✅ In-memory DB cache for read performance
+
+---
+
+## What Is Partially Implemented
+
+| Area | Status | Notes |
+|------|--------|-------|
+| Maviance live payments | ⚠️ Credentials needed | Framework complete; needs `MAVIANCE_ACCESS_TOKEN`, merchant IDs |
+| Zoho Books live sync | ⚠️ OAuth needed | Routes exist; needs client_id/secret + organization_id |
+| Instrument integrations | ⚠️ Stubs | VendorConnector types done; no real device drivers |
+| Digital slide viewer | ⚠️ Config needed | OHIF/Orthanc/OpenSeadragon hooks exist; needs server URLs |
+| SMS/WhatsApp notifications | ⚠️ Keys needed | Provider framework done; needs API keys |
+| Offline sync | ⚠️ Scaffold | CouchDB URL + Redis needed for workers |
+| Password reset email delivery | ⚠️ SMTP needed | Token generation works; dev mode returns token in response body |
+| AI model registry | ⚠️ No clinical validation | AI results are staff-verified drafts only; no regulated model onboarded |
 
-Implemented:
-- Manual order creation for receptionist/admin.
-- Public online requisition with English/French form, pooled order number, QR authenticity lookup, and patient capture at submission.
-- Patient and clinician demographics, clinical history, priority, notes, order status, validation status, amendments, add-ons, and cancellations.
-- Internal OCR/NLP intake jobs with confidence scoring, raw OCR text retention, parsed payload retention, mandatory human verification, rejection, and conversion to draft orders.
-- Test-aware workflow planning to avoid pushing cases into the wrong lab workflow.
-- Admin no-code validation-rule CRUD and per-order validation evaluation.
-- Controlled order locking, correction requests, correction approvals/rejections, and legally controlled amendment approval policy.
-- Store-level immutable before/after mutation diffs for every database mutation.
+---
 
-Incomplete / pending:
-- OCR supports local image OCR and text/PDF-text fallback; scanned PDF image rendering still needs a PDF-to-image preprocessor if the lab uploads scanned PDFs directly.
-- Legal SOPs still need to define who may approve each amendment/correction type in the live lab.
+## What Is Stubbed / Not Yet Implemented
 
-### 2. Billing, Payments & Financial Control
+| Area | Gap |
+|------|-----|
+| HTTPS enforcement in code | Server trusts proxy headers; actual TLS is at the load-balancer level (Render/nginx) |
+| JWT in localStorage | Vulnerable to XSS; migrating to httpOnly cookies requires backend session cookie endpoint + CSRF token |
+| Field-level encryption | PHI stored as plain JSON in PostgreSQL JSONB column; AES encryption not yet applied |
+| Backup verification drills | `RecoveryRecord` type exists; no automated restore-test job |
+| QC threshold rule engine | Thresholds stored; no automatic blocking rule evaluation on result entry |
+| Microbiology / chemistry analyzer | No workflow module; placeholders only |
+| Blood bank module | Not started |
+| Critical value notification | No automatic alert on critical lab values |
+| Reference range evaluation | Ranges stored; no auto-flag against patient demographics |
+| SSO / device trust | No SAML/OIDC integration; local auth only |
+| HL7 interface testing | Framework passes unit tests; not tested against physical analyzers |
 
-Status: **Partial**
+---
 
-Implemented:
-- Test catalog pricing and total calculation.
-- Manual payments, finance dashboard, financial clearance fields, patient payment requests, and receipt/report PDF generation paths.
-- Insurance authorization, invoices, refunds/adjustments collections.
-- Maviance/Smobilpay readiness for Cameroon with config, quote/collect/verify/webhook scaffolding.
-- Live-readiness endpoints for Maviance account/channel validation.
-- Zoho Books OAuth readiness, organization lookup, referral-contact sync, invoice sync, payment sync, and immutable sync logs.
-- Multi-person refund/adjustment approval before completion.
+## Open-Source Software Recommended for Addition
 
-Incomplete / pending:
-- Live Maviance merchant credentials and end-to-end wallet settlement testing are still required.
-- Insurance/pre-authorization is record-based, not integrated with payers.
-- Month-by-month ECharts finance dashboard has been restored.
-- Live Zoho OAuth credentials and production sync verification are still required before finance can be signed off.
+| Category | Software | Purpose | Why Here |
+|----------|----------|---------|----------|
+| **Object storage** | [MinIO](https://min.io) | S3-compatible on-prem file storage for DMS, reports, OCR uploads | Already S3-wired; MinIO replaces AWS S3 on-prem with zero code change |
+| **DICOM / WSI** | [Orthanc](https://www.orthanc-server.com) | DICOM server for pathology slide images | `ORTHANC_BASE_URL` already in config; just needs a running instance |
+| **Slide viewer** | [OHIF Viewer](https://ohif.org) | Web-based DICOM viewer | `OHIF_VIEWER_URL` already wired; point at OHIF Docker deployment |
+| **WSI tiles** | [OpenSeadragon](https://openseadragon.github.io) | High-resolution tile viewer for non-DICOM WSI | Hooks exist in DigitalSlideRecord; embed as iframe/component |
+| **Identity / SSO** | [Keycloak](https://www.keycloak.org) | SAML/OIDC SSO, MFA, device trust, federation | Replaces local auth for enterprise multi-site; supports LDAP |
+| **Queue / workers** | [Redis](https://redis.io) | BullMQ queue backend for background jobs, OCR, Whisper | BullMQ already in dependencies; just needs `REDIS_URL` |
+| **Offline sync** | [CouchDB](https://couchdb.apache.org) | Bidirectional offline sync for field collection points | `COUCHDB_URL` already in config; Automerge CRDT scaffold exists |
+| **Observability** | [Prometheus](https://prometheus.io) + [Grafana](https://grafana.com) | Metrics, dashboards, alerting | Add prom-client to backend; boards for TAT, queue depth, error rates |
+| **Log aggregation** | [Loki](https://grafana.com/oss/loki) + Promtail | Structured log collection | Ship backend logs to Loki; query from same Grafana instance |
+| **Secrets management** | [HashiCorp Vault](https://www.vaultproject.io) | Rotate JWT secret, DB password, API keys safely | Eliminates manual `.env` secret rotation risk |
+| **Network security** | [WireGuard](https://www.wireguard.com) | VPN for remote lab site connections | Secure inter-site specimen and data transfer on-prem |
+| **Privacy analytics** | [Matomo](https://matomo.org) | GDPR-compatible patient portal analytics | No data leaves Cameroon; compliant with Law 2010/012 |
+| **Label printing** | [ZPL.js](https://github.com/jdomag/zpljs) | Browser-side ZPL label rendering for Zebra printers | Bridges existing barcode generation to thermal label printers |
+| **OCR enhancement** | [EasyOCR](https://github.com/JaidedAI/EasyOCR) | Handwriting-optimized OCR for French/English requisitions | Better than Tesseract on handwritten Cameroonian forms; runs on-prem |
+| **PostgreSQL backup** | [Barman](https://www.pgbarman.org) | Streaming backup and point-in-time recovery | Satisfies 10-year health-record retention with verified restore |
 
-### 3. Specimen Accessioning & Traceability
+---
 
-Status: **Implemented**
+## Decisions Needed From You Before Go-Live
 
-Production readiness: **Code and external integration**
+### 🔴 Blocking — Cannot go live without these
 
-Implemented:
-- Accession ID generation, sample creation, block/slide creation, and histology sample lifecycle.
-- Specimen records, status history, HL7 specimen APIs, chain-of-custody collection, mandatory scan/handoff enforcement APIs, and accepted/rejected barcode scan events.
-- Parent-child relationships exist through accession, sample, block, and slide records.
-- Controlled discrepancy workflow with severity, quarantine/rejection decisions, supervisor approval, corrective action, CAPA link, and chain-of-custody exception logging.
+1. **Maviance credentials**: Do you have sandbox and production `MAVIANCE_ACCESS_TOKEN`, `MAVIANCE_ACCESS_SECRET`, MTN merchant/service/payitem IDs, and Orange equivalents?
 
-Incomplete / pending:
-- External scanner/device validation and live SOP sign-off are still required before production use.
+2. **Password reset email**: Which email provider should be used? Options:
+   - SendGrid / Mailgun (international SaaS)
+   - AWS SES (if hosting on AWS)
+   - Self-hosted Postfix/SMTP (best for Cameroon data sovereignty)
 
-### 4. Barcode & Label Governance
+3. **JWT storage migration**: Tokens currently live in `localStorage` (XSS-vulnerable). Migrating to httpOnly session cookies requires a new backend session endpoint and CSRF token handling. **Do you want this done before launch?** (Recommended: yes, but adds ~1 week.)
 
-Status: **Implemented**
+4. **Field-level encryption**: PHI stored as plain JSON in PostgreSQL. **Do you want AES-256 application-level encryption on patient name, DOB, national ID, and contact fields before launch?**
 
-Production readiness: **Code and external integration**
+5. **Data localization**: Where will the primary PostgreSQL instance and MinIO/S3 bucket be hosted? On-premise in Yaoundé, or a cloud region (e.g., AWS Africa/Cape Town, Azure South Africa)?
 
-Implemented:
-- Barcode records with symbology, entity type, status, template ID, GS1 metadata, assignment, print/reprint, and archive lifecycle controls.
-- Label template records with scan-enforced and GS1-required configuration fields.
-- Automatic specimen/block/slide barcode assignment during histology workflow creation.
-- Barcode scan enforcement on reception intake, lab release, processing start, all technical workflow transitions, cytology screening, IHC, special stains, and digital sign-out controls.
-- Dedicated operational UI for printing, reprinting, archiving, and verifying scans.
+6. **Backup and retention verification**: **Who confirms backups and runs restore drills?** Do you want Barman + automated monthly restore tests wired in?
 
-Incomplete / pending:
-- Certified physical scanner validation and certified thermal-printer driver validation remain external integration tasks.
+### 🟡 Important — Affects key features
 
-### 5. Pre-Analytical Workflow Management
+7. **Accounting integration**: Zoho Books or open-source alternative (ERPNext, GNU Cash)? Zoho requires a paid Zoho org account.
 
-Status: **Implemented**
+8. **Digital pathology scanner**: What slide scanner model does the lab use? What format does it produce (DICOM, SVS, NDPI, CZI)? This determines which Orthanc plugins to install.
 
-Production readiness: **Code and external integration**
+9. **HL7 interface targets**: Which analyzers or hospital EMR systems need HL7 connections? Do you have the interface spec from each vendor?
 
-Implemented:
-- Courier workflow, pickup status, public online pickup metadata, sample receipt validation, and pre-analytical logs.
-- Transport temperature/condition fields and TAT alert records.
-- TAT dashboard endpoints with pre-analytical and phase averages.
-- Courier provider dispatch/webhook APIs, courier telemetry dashboard, device-source temperature log ingestion, temperature-excursion quarantine, and SLA escalation notifications.
-- Stricter receipt validation requires scan, sample condition, transport condition, and temperature before release to the lab.
+10. **Instrument models**: Which specific Leica and/or Roche instruments does the lab have? Are they network-connected or serial port only?
 
-Incomplete / pending:
-- Live courier-provider credentials, GPS device certification, and temperature logger device validation remain external integration tasks.
+11. **SSO requirement**: Will staff use local accounts only, or does the institution have an Active Directory / Google Workspace to federate via Keycloak?
 
-### 6. Histopathology Workflow
+12. **SMS / WhatsApp provider in Cameroon**: Which provider has the most reliable delivery? Options: Twilio, MTN Developer API, Orange Business API, or a local aggregator.
 
-Status: **Implemented**
+13. **Offline field collection**: Are there remote collection points or courier tablets that need offline capability? If yes, do you want CouchDB wired now?
 
-Production readiness: **Code ready**
+### 🟢 Quality / Can defer post-launch
 
-Implemented:
-- Grossing, processing, embedding, sectioning, staining, block/slide generation, and histology worklists.
-- Idempotency safeguards exist on several lab actions to reduce duplicate steps.
-- Production worklist assignment queues, workload metadata, complete-step ownership, audit capture, recut requests, special-stain requests, approvals, billing references, and inventory drawdown.
+14. **AI model clinical validation**: The current Ollama model (`qwen2.5:1.5b`) is a draft aid only. Do you plan to onboard a larger validated model for research?
 
-Incomplete / pending:
-- Lab SOP/user-acceptance validation and equipment-specific work instructions remain governance tasks.
+15. **Microbiology module**: Does the lab run cultures and sensitivity tests? If yes, this is a significant separate workflow module.
 
-### 7. Cytopathology Workflow
+16. **Blood bank module**: Does the lab operate a blood bank?
 
-Status: **Implemented**
+17. **EasyOCR upgrade**: Tesseract (current) works well for printed text. For handwritten French requisitions, EasyOCR is significantly better. Do you want this integrated? (Python Docker service, ~2 GB model.)
 
-Production readiness: **Code ready**
+18. **Critical value policy**: What lab values should trigger immediate physician notification? This is a clinical policy decision for the lab director.
 
-Implemented:
-- Cytology cases, GYN vs non-GYN routing, preparation type defaults, QC records, and cytology worklist UI.
-- GYN screening workflow, adequacy criteria, cytotechnologist review, pathologist escalation, Bethesda-style category capture, QC gates, QC trend dashboard, and cytology-specific reporting template metadata.
+19. **Reference range policy**: Who defines reference ranges — the lab director, or a published Cameroonian/WHO reference table?
 
-Incomplete / pending:
-- Final template language, lab medical-director approval, and local SOP sign-off remain governance tasks.
+20. **Accreditations displayed**: The system shows CAP and ISO 15189 on public pages. Are these currently held or aspirational? Do not display until granted.
 
-### 8. Immunohistochemistry / Special Stains
+---
 
-Status: **Implemented**
+## Current Readiness by Domain
 
-Production readiness: **Code and external integration**
+| Domain | Readiness | Blocking Issue |
+|--------|-----------|----------------|
+| Order intake (walk-in, online, referral) | 🟢 95% | None |
+| Histology workflow | 🟢 95% | None |
+| Cytology workflow | 🟢 90% | QC rule engine not enforcing thresholds |
+| IHC / special stains | 🟢 90% | None |
+| Digital pathology | 🟡 60% | OHIF/Orthanc not deployed |
+| Finance / billing | 🟡 80% | Maviance live credentials needed |
+| Cameroon data privacy compliance | 🟢 90% | Email delivery for password reset |
+| Audit & compliance | 🟢 95% | None |
+| Authentication & security | 🟢 90% | JWT in localStorage (XSS risk) |
+| Multi-site | 🟢 95% | None |
+| Communications | 🟢 90% | SMS/WhatsApp keys needed |
+| Reporting | 🟢 90% | None |
+| HL7 integrations | 🟡 60% | Not tested against physical analyzers |
+| Instrument integrations | 🔴 20% | Device drivers not implemented |
+| Offline sync | 🟡 40% | CouchDB + Redis not configured |
+| Observability / monitoring | 🔴 10% | Prometheus/Grafana not wired |
+| Backup / recovery | 🟡 50% | Barman not configured; no restore drills |
+| Microbiology module | 🔴 0% | Not started |
+| Blood bank module | 🔴 0% | Not started |
 
-Implemented:
-- IHC slide entries, antibody inventory records, lot/control slide fields, QC status, and usage count fields.
-- Batch/lot release gates, antibody/reagent inventory drawdown, control slide pass/fail gates, QC exception blocking, special-stain requests, approvals, billing references, and usage metrics.
+---
 
-Incomplete / pending:
-- Live stainer/processor integration validation and local batch-release SOP approval remain external/governance tasks.
+## Changes Made In This Session (2026-05-09)
 
-### 9. Digital Pathology Management
-
-Status: **Partial**
-
-Production readiness: **Code and external integration**
-
-Implemented:
-- Digital slide records, simulated image creation, viewer URL/metadata fields, Roche scanner vendor connector scaffolding, and WADO-style image reference support.
-- Digital ownership claim, sign-out locks, lock release, and immutable audit capture for slide ownership/sign-out controls.
-
-Incomplete / pending:
-- No real WSI viewer integration has been certified.
-- DICOM/PACS storage is referenced but not deployed.
-- Scanner worklist round-trip must be validated with Roche equipment/navify.
-
-### 10. AI & Decision Support
-
-Status: **Partial**
-
-Production readiness: **Code and external integration**
-
-Implemented:
-- AI result records for QC, Ki67, IHC scoring, tumor detection, versions, explainability, and accept/reject status.
-- AI model registry, local research/QC-only inference fallback, external validated-model adapter, validation status gates, versioned explainability payloads, and clinical-use blocking unless a validated model is approved.
-
-Incomplete / pending:
-- A free local model cannot be honestly marked clinically validated without regulatory clearance or site validation. Production diagnostic AI requires a licensed/cleared endpoint, model documentation, local validation, bias/performance monitoring, and medical-director approval.
-
-### 11. Instrument & Analyzer Integration
-
-Status: **Partial**
-
-Implemented:
-- HL7 v2.5 MLLP listener scaffolding, REST HL7 APIs, ASTM ingest adapter, instrument run logs, QC/downtime fields, vendor connector APIs, Leica/Roche webhook scaffolding.
-
-Incomplete / pending:
-- FHIR is not a complete implementation.
-- Real vendor conformance testing with Roche/Leica and site HL7 profiles is pending.
-- Bidirectional communication exists as scaffolding but needs production queueing, retries, dead-lettering, monitoring, and security.
-
-### 12. Reporting & Results Management
-
-Status: **Working demo / Partial production**
-
-Implemented:
-- Narrative report drafting, save/lock/release actions, bilingual report PDF generation, addenda, report versions fields, digital signature fields, and patient portal released report access.
-
-Incomplete / pending:
-- Digital signature is not cryptographic or legally validated.
-- Report versioning is not fully immutable.
-- Structured/synoptic templates need pathologist-configurable forms and required fields.
-- Release rules need stronger finance/QA/critical-result gating.
-
-### 13. Communication & Notification
-
-Status: **Partial**
-
-Implemented:
-- Patient portal, doctor/referrer portal, notifications, communication log records, read/acknowledgment status fields.
-
-Incomplete / pending:
-- SMS/WhatsApp provider-ready dispatch endpoints exist; live provider credentials remain pending.
-- Mandatory call logs need a dedicated workflow and escalation rules.
-- Realtime internal chat has been rebuilt with threads, message history, timestamps, SSE updates, and polling fallback.
-
-### 14. Quality Control & Assurance
-
-Status: **Partial**
-
-Implemented:
-- Quality event records for QC, QA, CAPA, peer review, audit, and proficiency testing.
-- QC threshold records and some lab workflow QC fields.
-
-Incomplete / pending:
-- CAPA workflow is record-based, not a complete investigation/approval workflow.
-- Trend analysis dashboards and automated QC alerts are not production-complete.
-- Internal audit and proficiency testing need evidence attachments and sign-off.
-
-### 15. Turnaround Time (TAT) & KPI Monitoring
-
-Status: **Partial**
-
-Implemented:
-- TAT alert records and pre-analytical summary endpoint.
-- Dashboard-level operational summaries.
-- Phase-clock dashboard endpoint with current average timings and status buckets.
-
-Incomplete / pending:
-- Phase clocks are not consistently started/stopped for every order transition.
-- SLA monitoring is not yet comprehensive across pre-analytical, analytical, and post-analytical phases.
-- Bottleneck analytics, predictive alerts, and ECharts visual dashboards need implementation or restoration.
-
-### 16. Archive, Inventory & Storage Management
-
-Status: **Partial**
-
-Implemented:
-- Archive records, sample inventory views, reagent inventory records, waste log records, and sample detail pages.
-
-Incomplete / pending:
-- Physical storage maps, box/slot hierarchy, retention automation, and disposal approval workflow are missing.
-- Reagent inventory is not yet linked to staining/IHC consumption.
-- Waste management is record-only.
-
-### 17. Document Management System
-
-Status: **Partial**
-
-Implemented:
-- Document records for SOP/policy/accreditation/training metadata.
-- Secure file upload/download and file replacement APIs.
-- Version history capture on document file replacement.
-- Local filesystem storage plus S3-compatible object storage support in code.
-
-Incomplete / pending:
-- Controlled document approval workflow, version diffing, training attestation, and per-document access audit still need implementation.
-- Production deployment should use S3-compatible storage rather than Render local disk.
-
-### 18. Audit Trail & Compliance
-
-Status: **Partial**
-
-Implemented:
-- Hash-chained audit event records with verification endpoint.
-- Append-only audit persistence that ignores tampering/deletion attempts on existing events.
-- Request IDs, actor/session context, order-level audit retrieval, session records, and credential audit records.
-
-Incomplete / pending:
-- Not every data mutation records old/new values and full before/after diff context yet.
-- ISO/CAP legal evidence export is not production-complete.
-
-### 19. User, Role & Access Management
-
-Status: **Working demo / Partial production**
-
-Implemented:
-- Seeded roles, JWT auth, role guards, site-scoped admin behavior, user CRUD, activate/deactivate/delete controls, profile updates, credential audit records, and session records.
-- Session-bound JWT validation, logout endpoint, and revoked-session enforcement.
-- Rate limiting and security headers on the backend.
-
-Incomplete / pending:
-- TOTP MFA enrollment/verification is implemented; SSO remains pending.
-- Session management is better, but still not fully backed by refresh-token rotation, device trust, or anomaly detection.
-- Password policy, lockout thresholds, and security monitoring still need deeper hardening.
-
-### 20. Integration & API Gateway
-
-Status: **Partial**
-
-Implemented:
-- HL7/ASTM APIs, vendor connector APIs, webhooks, Maviance payment integration scaffold, and external integration records.
-- Connector test endpoints, Maviance live-validation endpoint, and integration readiness endpoint for deployment checks.
-
-Incomplete / pending:
-- Provider readiness, Zoho Books accounting hooks, AI hooks, SMS/WhatsApp hooks, chat streaming, and offline sync APIs exist; centralized policy management and production secret rotation remain pending.
-- EMR/HIS integration needs real partner endpoints and conformance testing.
-
-### 21. Configuration & Master Data
-
-Status: **Working demo**
-
-Implemented:
-- Test catalog, pricing, workflow templates, system settings, reference ranges, QC thresholds, and pricing rule records.
-
-Incomplete / pending:
-- Workflow configuration is not fully no-code/admin-configurable.
-- Reference ranges and QC thresholds are not enforced across all result entry/reporting paths.
-- Versioned master-data approvals are needed.
-
-### 22. Analytics, BI & Research
-
-Status: **Partial**
-
-Implemented:
-- Operational summary endpoint, research dataset records, de-identified export flags, and module audit page.
-- TAT dashboard analytics endpoints and readiness telemetry for integrations.
-
-Incomplete / pending:
-- BI dashboards are basic and not yet production analytics.
-- De-identification pipeline is represented as records, not a validated export engine.
-- AI training pipeline governance is not implemented.
-
-### 23. Disaster Recovery & Business Continuity
-
-Status: **Partial**
-
-Implemented:
-- Recovery/backup/drill/sync records.
-- Managed PostgreSQL persistence configuration.
-
-Incomplete / pending:
-- Offline snapshot/sync intake and DR dashboard now exist; automated backup scheduler, restore testing, failover execution, and conflict resolution remain pending.
-
-### 25. Multi-Site & Multi-Lab Management
-
-Status: **Partial**
-
-Implemented:
-- Site records, site-scoped users/orders, super-admin global view, admin local view, and site transfer records.
-
-Incomplete / pending:
-- Site-specific workflows are not fully configurable per lab.
-- Inter-lab transfer workflow is record-based, not a complete specimen transfer chain.
-- Cross-site analytics need richer dashboards and permission testing.
-
-## New In-System Review Comment Workflow
-
-Implemented in this pass:
-- All authenticated users now have a **Project review** screen in the Account navigation.
-- Users can submit project review comments with title, module, screen/workflow, severity, and detailed notes.
-- Non-admin users see their own submitted comments and status.
-- Admins see site-scoped comments and can triage status and add developer responses.
-- Super admins see all comments across sites.
-- Review actions are persisted and audit logged.
-
-Files:
-- Backend API: `backend/src/server.ts`
-- Backend model/store/seed: `backend/src/types.ts`, `backend/src/store.ts`, `backend/src/seed.ts`
-- Frontend page/routing/nav: `frontend/src/pages/projectReview.tsx`, `frontend/src/pages.tsx`, `frontend/src/app/AppRoutes.tsx`, `frontend/src/app/nav.tsx`, `frontend/src/types.ts`
-
-## Production Readiness Backlog
-
-Priority 0 - Required before real patient/lab production:
-- Define final regulatory target: ISO 15189, CAP, local Cameroon requirements, GDPR/HIPAA expectations if applicable.
-- Extend the now append-only audit trail to capture explicit before/after value diffs and legal evidence export.
-- Expand the current backend regression suite into role access, finance reconciliation, reporting, accessioning, and public requisition coverage.
-- Add stronger password policy, login lockout, MFA/SSO option, refresh-token rotation, and security monitoring.
-- Validate PostgreSQL deployment, backups, restore procedure, indexes, migration scripts, and environment secret handling.
-- Run end-to-end vendor/payment testing with Maviance, Roche/navify, Leica/CEREBRO, and any EMR/HIS.
-
-Priority 1 - Required for controlled pilot:
-- Validate barcode enforcement on the lab's actual scanners/printers and approved label stock.
-- Validate TAT SLA escalation recipients and escalation windows against final SOPs.
-- Validate Zoho/Maviance finance settlement, invoice sync, refund approval, and reconciliation with live credentials.
-- Complete structured reporting templates and real digital signature controls.
-- Complete DMS approval workflow, training attestation, and controlled document access.
-- Complete CAPA, peer review, proficiency testing, and QA trend workflows.
-
-Priority 2 - Required for scale:
-- Cross-site workflow configuration and inter-lab transfer chain-of-custody.
-- Research export/de-identification pipeline.
-- AI model integration governance and validation.
-- Observability: structured logs, error tracking, health dashboards, alerting, and uptime monitoring.
-
-## External References Used For This Hardening Pass
-
-- GS1 healthcare standards and point-of-care scanning guidance informed the barcode/scan enforcement posture: https://www.gs1us.org/industries-and-insights/healthcare
-- WHO temperature monitoring device guidance informed the device-source logger and temperature excursion model: https://extranet.who.int/prequal/immunization-devices/e006-temperature-monitoring-devices
-- ISO 15189:2022 scope informed the continued distinction between code readiness and accredited laboratory production readiness: https://www.iso.org/standard/76677.html
-- WHO/NCBI Bethesda cytology terminology informed the cytology adequacy and reporting fields: https://www.ncbi.nlm.nih.gov/books/NBK269610/
-- FDA AI/ML SaMD and AI-enabled medical device guidance informed the clinical-use gate: https://www.fda.gov/medical-devices/software-medical-device-samd/artificial-intelligence-software-medical-device
-- FDA AI-enabled medical device list informed the decision to require a cleared/licensed external model before clinical AI sign-out: https://www.fda.gov/medical-devices/software-medical-device-samd/artificial-intelligence-enabled-medical-devices
-
-## Information Needed To Finish Production Hardening
-
-- Final lab SOPs for order intake, accessioning, reporting, amendments, cancellations, rejections, and result release.
-- Final role/permission matrix, including whether developers need a separate in-app role.
-- Maviance production/sandbox credentials and settlement/reconciliation rules.
-- Roche/navify and Leica/CEREBRO interface control documents for the exact installed devices.
-- Report template approval requirements and official signatory/legal signature policy.
-- Barcode label printer models, label sizes, scanner models, and required symbologies.
-- Backup policy, RPO/RTO targets, hosting environment, and monitoring requirements.
-- Accreditation requirements and evidence/export formats expected by auditors.
+1. **Cameroon localization**: Fixed all Kenya/Nairobi/HIPAA references in `store.ts`, `seed.ts`, `enterpriseRoutes.ts` → Yaoundé/Douala, +237, XAF, Africa/Douala, Cameroon law citation.
+2. **CSP headers**: Enabled Content-Security-Policy (was disabled). Directives: default-src 'self', script-src 'self', frame-ancestors 'none', object-src 'none', base-uri 'self', form-action 'self'.
+3. **HSTS**: Extended to max-age=63072000 (2 years) with preload; applies on all TLS connections.
+4. **Consent tracking types**: Added `ConsentRecord`, `DataSubjectRequest`, `DataBreachLog`, `PasswordResetToken` to `types.ts` and `Database` interface; initialized in `seed.ts` and `store.ts` normalizer.
+5. **Patient model**: Added `consentGiven`, `consentTimestamp`, `consentVersion`, `countryOfResidence`, `retentionExpiresAt` fields.
+6. **Privacy routes module** (`backend/src/server/privacyRoutes.ts`): 14 new endpoints — password reset request/confirm, consent CRUD + withdrawal, DSR submit/list/update, patient data export, patient anonymisation, breach log create/update.
+7. **Consent stored at intake**: Public order form and walk-in reception both write consent records with IP, UA, purpose, version, and channel into `consentRecords`.
+8. **Frontend consent checkboxes**: Added to public online order form (`order-online.tsx`) and walk-in patient dialog (`orders.tsx`). Submit disabled until ticked. Cameroon Law No. 2010/012 cited in label.
+9. **Pagination fix**: `/api/users` now paginates (page/limit/clamped to 200). `/api/patients` gained a `search` query param for name/phone/ID lookup.
+10. **Both builds pass**: `tsc` (backend) and `next build` (frontend) — 0 errors.

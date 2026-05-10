@@ -195,6 +195,9 @@ export interface User {
   role: UserRole;
   preferredLanguage: "english" | "french";
   preferredLocale: "en" | "fr";
+  /** Which tenant this user belongs to. null only for platform super_admin. */
+  organizationId?: string | null;
+  /** Which branch/site within the org the user is assigned to. */
   siteId?: string | null;
   active: boolean;
   passwordHash: string;
@@ -236,8 +239,111 @@ export interface Patient {
   nationalId?: string;
   anonymized?: boolean;
   anonymousLabel?: string | null;
+  /** Explicit informed consent for data collection — required by Cameroon Law No. 2010/012 */
+  consentGiven?: boolean;
+  consentTimestamp?: string | null;
+  consentVersion?: string | null;
+  /** ISO-3166-1 alpha-2 country of residence, used for cross-border transfer checks */
+  countryOfResidence?: string | null;
+  retentionExpiresAt?: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+// ─── Cameroon Data Privacy Compliance Types ───────────────────────────────────
+
+export type ConsentPurpose =
+  | "diagnostic_testing"
+  | "treatment_coordination"
+  | "research_anonymized"
+  | "quality_assurance"
+  | "billing";
+
+export interface ConsentRecord {
+  _id: string;
+  patientId: string;
+  orderId?: string | null;
+  purposes: ConsentPurpose[];
+  consentText: string;
+  consentVersion: string;
+  givenBy: "patient" | "guardian" | "clinician_proxy";
+  givenByName?: string | null;
+  channel: "in_person" | "online_portal" | "clinician_portal" | "phone_verbal";
+  ipAddress?: string | null;
+  userAgent?: string | null;
+  withdrawn?: boolean;
+  withdrawnAt?: string | null;
+  withdrawnReason?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type DataSubjectRequestType =
+  | "access"       // Article 65 – right to access personal data
+  | "portability"  // Export of personal data in machine-readable form
+  | "erasure"      // Right to deletion (subject to 10-year health record minimum)
+  | "rectification"// Correct inaccurate data
+  | "restriction"; // Restrict processing
+
+export type DataSubjectRequestStatus =
+  | "pending"
+  | "in_review"
+  | "fulfilled"
+  | "partially_fulfilled"
+  | "rejected";
+
+export interface DataSubjectRequest {
+  _id: string;
+  patientId: string;
+  requestType: DataSubjectRequestType;
+  status: DataSubjectRequestStatus;
+  requestDetails: string;
+  requestedBy: "patient" | "guardian" | "legal_representative";
+  requestedByName: string;
+  requestedByContact: string;
+  assignedTo?: string | null;
+  reviewNotes?: string | null;
+  rejectionReason?: string | null;
+  fulfilledAt?: string | null;
+  exportUrl?: string | null;
+  legalBasisForRetention?: string | null;
+  dueBy: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type BreachSeverity = "low" | "medium" | "high" | "critical";
+export type BreachStatus = "detected" | "contained" | "notified" | "closed";
+
+export interface DataBreachLog {
+  _id: string;
+  title: string;
+  description: string;
+  severity: BreachSeverity;
+  status: BreachStatus;
+  affectedRecordTypes: string[];
+  estimatedAffectedCount?: number | null;
+  discoveredAt: string;
+  discoveredBy: string;
+  containedAt?: string | null;
+  /** Cameroon Law No. 2010/012 requires notification to relevant authority */
+  regulatoryNotifiedAt?: string | null;
+  regulatoryReference?: string | null;
+  patientsNotifiedAt?: string | null;
+  rootCause?: string | null;
+  remediationActions?: string | null;
+  reportedBy: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PasswordResetToken {
+  _id: string;
+  userId: string;
+  tokenHash: string;
+  expiresAt: string;
+  usedAt?: string | null;
+  createdAt: string;
 }
 
 export interface TestType {
@@ -858,7 +964,8 @@ export interface ZohoBooksSyncLog {
     | "refund";
   entityId?: string | null;
   orderId?: string | null;
-  provider: "zoho_books";
+  /** 'erpnext' added for open-source accounting integration */
+  provider: "zoho_books" | "erpnext";
   operation:
     | "authorize_url"
     | "token_exchange"
@@ -1779,10 +1886,44 @@ export interface RecoveryRecord {
   updatedAt: string;
 }
 
+// ─── SaaS Multi-Tenancy ──────────────────────────────────────────────────────
+
+export type OrgPlan = "trial" | "starter" | "standard" | "enterprise";
+export type OrgStatus = "active" | "suspended" | "trial" | "cancelled";
+
+/**
+ * Organization = one tenant/lab that subscribes to PathNovate.
+ * Each org has its own isolated data partition in the database.
+ * An org can have many branches (Sites) in different physical locations.
+ */
+export interface Organization {
+  id: string;
+  slug: string;          // URL-safe identifier, e.g. "pathnovate-yaounde"
+  name: string;          // Display name: "PathNovate Laboratories"
+  plan: OrgPlan;
+  status: OrgStatus;
+  trialEndsAt?: string | null;
+  ownerEmail: string;
+  contactPhone?: string | null;
+  address?: string | null;
+  country: string;       // ISO-3166-1 alpha-2
+  timezone: string;
+  currency: "XAF" | "USD" | "EUR";
+  logoUrl?: string | null;
+  maxBranches?: number | null;
+  maxUsers?: number | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface Site {
   _id: string;
   code: string;
   name: string;
+  /** organizationId scopes this branch to its tenant. */
+  organizationId?: string | null;
+  address?: string | null;
+  phone?: string | null;
   siteType: "hub" | "spoke" | "collection" | "lab";
   active: boolean;
   createdAt: string;
@@ -1908,4 +2049,8 @@ export interface Database {
   siteTransfers: SiteTransfer[];
   moduleAuditTargets: ModuleAuditTarget[];
   settings: Settings;
+  consentRecords: ConsentRecord[];
+  dataSubjectRequests: DataSubjectRequest[];
+  dataBreachLogs: DataBreachLog[];
+  passwordResetTokens: PasswordResetToken[];
 }

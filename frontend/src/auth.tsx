@@ -13,8 +13,9 @@ import type { SafeUser } from './types'
 interface AuthContextValue {
   user: SafeUser | null
   token: string | null
+  organizationId: string | null
   loading: boolean
-  signIn: (email: string, password: string) => Promise<void>
+  signIn: (email: string, password: string, organizationSlug?: string) => Promise<void>
   signOut: () => void
   refreshUser: () => Promise<void>
   setUser: (user: SafeUser | null) => void
@@ -57,9 +58,15 @@ function readStoredUser() {
   }
 }
 
+function readStoredOrgId() {
+  if (typeof window === 'undefined') return null
+  return window.localStorage.getItem(storageKeys.token + '_org') ?? null
+}
+
 export function AuthProvider({ children }: PropsWithChildren) {
   const [token, setToken] = useState<string | null>(() => getStoredToken())
   const [user, setUserState] = useState<SafeUser | null>(() => readStoredUser())
+  const [organizationId, setOrganizationId] = useState<string | null>(() => readStoredOrgId())
   const [loading, setLoading] = useState<boolean>(!!getStoredToken() || testAccess.enabled)
   const [testAccessAttempted, setTestAccessAttempted] = useState(false)
 
@@ -140,18 +147,25 @@ export function AuthProvider({ children }: PropsWithChildren) {
     }
   }, [testAccessAttempted, token])
 
-  const signIn = async (email: string, password: string) => {
-    const response = await api.post<{ token: string; user: SafeUser }>('/auth/login', {
+  const signIn = async (email: string, password: string, organizationSlug?: string) => {
+    const response = await api.post<{ token: string; user: SafeUser; organizationId?: string }>('/auth/login', {
       email,
       password,
+      ...(organizationSlug ? { organizationSlug } : {}),
     })
     const normalizedUser = normalizeSafeUser(response.data.user)
     if (!normalizedUser) {
       throw new Error('The server returned an invalid user session')
     }
+    const orgId = response.data.organizationId ?? normalizedUser.organizationId ?? null
     setStoredToken(response.data.token)
     setToken(response.data.token)
     setUser(normalizedUser)
+    setOrganizationId(orgId)
+    if (typeof window !== 'undefined') {
+      if (orgId) window.localStorage.setItem(storageKeys.token + '_org', orgId)
+      else window.localStorage.removeItem(storageKeys.token + '_org')
+    }
     setLoading(false)
   }
 
@@ -160,19 +174,24 @@ export function AuthProvider({ children }: PropsWithChildren) {
     setStoredToken(null)
     setToken(null)
     setUser(null)
+    setOrganizationId(null)
+    if (typeof window !== 'undefined') {
+      window.localStorage.removeItem(storageKeys.token + '_org')
+    }
   }
 
   const value = useMemo<AuthContextValue>(
     () => ({
       user,
       token,
+      organizationId,
       loading,
       signIn,
       signOut,
       refreshUser,
       setUser,
     }),
-    [loading, token, user],
+    [loading, token, user, organizationId],
   )
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
