@@ -121,6 +121,8 @@ import { ensureInvoiceForOrder, registerZohoBooksRoutes, syncPaymentToZoho } fro
 import { registerModuleHardeningRoutes } from "./server/moduleHardeningRoutes.js";
 import { registerSpeechAiRoutes } from "./server/speechAiRoutes.js";
 import { privacyRouter } from "./server/privacyRoutes.js";
+import { orgRouter } from "./server/orgRoutes.js";
+import { accountingRouter } from "./server/accountingExports.js";
 import { loadDb, updateDb } from "./store.js";
 import type {
   Accession,
@@ -244,6 +246,21 @@ app.get("/api/health/storage", async (_req, res) => {
 
 function sameTestTypeSelection(left: string[], right: string[]) {
   return left.slice().sort().join("|") === right.slice().sort().join("|");
+}
+
+/** Returns the org/tenant ID for the current request. Falls back to primary org. */
+function getReqOrgId(req: AuthRequest): string {
+  return req.organizationId || req.user?.organizationId || POSTGRES_STATE_ID;
+}
+
+/** Loads the org-scoped database for the current request's tenant. */
+async function loadOrgDb(req: AuthRequest): Promise<Database> {
+  return loadDb(getReqOrgId(req));
+}
+
+/** Runs a mutation against the org-scoped database for the current request's tenant. */
+async function updateOrgDb<T>(req: AuthRequest, updater: (db: Database) => T | Promise<T>): Promise<T> {
+  return updateDb(getReqOrgId(req), updater);
 }
 
 function getScopedDb(req: AuthRequest, db: Database) {
@@ -888,13 +905,26 @@ app.post("/api/auth/login", authLimiter, async (req, res) => {
     return res.status(400).json({ message: "Invalid login payload" });
   }
 
-  const db = await loadDb();
+  // SaaS: caller can pass organizationSlug to target a specific tenant's data partition.
+  // If omitted, fall back to the primary org (single-tenant / legacy mode).
+  const orgSlug = typeof req.body.organizationSlug === "string" ? req.body.organizationSlug.trim() : null;
+  let resolvedOrgId: string = POSTGRES_STATE_ID;
+  if (orgSlug) {
+    const { getOrganizationBySlug } = await import("./store.js");
+    const org = await getOrganizationBySlug(orgSlug);
+    if (!org || org.status === "suspended" || org.status === "cancelled") {
+      return res.status(401).json({ message: "Invalid email or password" });
+    }
+    resolvedOrgId = org.id;
+  }
+
+  const db = await loadDb(resolvedOrgId);
   const user = db.users.find(
     (entry) => entry.email.toLowerCase() === parsed.data.email.toLowerCase(),
   );
 
   if (!user || !user.active) {
-    await updateDb((mutableDb) => {
+    await updateDb(resolvedOrgId, (mutableDb) => {
       mutableDb.credentialAudits.unshift({
         _id: createId(),
         userId: user?._id ?? "unknown",
@@ -907,7 +937,7 @@ app.post("/api/auth/login", authLimiter, async (req, res) => {
   }
 
   if (user.lockedUntil && new Date(user.lockedUntil).getTime() > Date.now()) {
-    await updateDb((mutableDb) => {
+    await updateDb(resolvedOrgId, (mutableDb) => {
       mutableDb.credentialAudits.unshift({
         _id: createId(),
         userId: user._id,
@@ -921,7 +951,7 @@ app.post("/api/auth/login", authLimiter, async (req, res) => {
 
   const valid = await verifyPassword(parsed.data.password, user.passwordHash);
   if (!valid) {
-    await updateDb((mutableDb) => {
+    await updateDb(resolvedOrgId, (mutableDb) => {
       const mutableUser = mutableDb.users.find((entry) => entry._id === user._id);
       if (mutableUser) {
         mutableUser.failedLoginCount = (mutableUser.failedLoginCount ?? 0) + 1;
@@ -943,7 +973,7 @@ app.post("/api/auth/login", authLimiter, async (req, res) => {
 
   const mfaRequiredForRole = MFA_ENFORCED && MFA_ENFORCED_ROLES.includes(user.role);
   if ((user.mfaEnabled || mfaRequiredForRole) && !verifyTotpToken(user.mfaSecret, parsed.data.mfaToken)) {
-    await updateDb((mutableDb) => {
+    await updateDb(resolvedOrgId, (mutableDb) => {
       mutableDb.credentialAudits.unshift({
         _id: createId(),
         userId: user._id,
@@ -967,13 +997,21 @@ app.post("/api/auth/login", authLimiter, async (req, res) => {
     });
   }
 
+  // Ensure user carries the resolved orgId (handles legacy users without orgId)
+  if (!user.organizationId) {
+    user.organizationId = resolvedOrgId !== POSTGRES_STATE_ID ? resolvedOrgId : null;
+  }
+
   const sessionId = createId();
   const sessionCreatedAt = now();
-  await updateDb((db) => {
+  await updateDb(resolvedOrgId, (db) => {
     const mutableUser = db.users.find((entry) => entry._id === user._id);
     if (mutableUser) {
       mutableUser.failedLoginCount = 0;
       mutableUser.lockedUntil = null;
+      if (!mutableUser.organizationId && resolvedOrgId !== POSTGRES_STATE_ID) {
+        mutableUser.organizationId = resolvedOrgId;
+      }
       mutableUser.updatedAt = sessionCreatedAt;
     }
     db.sessionRecords.unshift({
@@ -998,13 +1036,14 @@ app.post("/api/auth/login", authLimiter, async (req, res) => {
       module: "Security",
       action: "login",
       targetId: user._id,
-      summary: `${user.email} signed in`,
+      summary: `${user.email} signed in (org: ${resolvedOrgId})`,
     });
   });
 
   res.json({
     token: signToken(user, sessionId),
     user: sanitizeUser(user),
+    organizationId: resolvedOrgId,
   });
 });
 
@@ -5650,6 +5689,8 @@ registerHl7IntegrationRoutes(app);
 registerMaviancePaymentRoutes(app);
 registerSpeechAiRoutes(app);
 app.use("/api", privacyRouter);
+app.use("/api", orgRouter);
+app.use("/api", accountingRouter);
 
 function isDatabaseUnavailableError(error: Error) {
   const code = "code" in error ? String((error as Error & { code?: unknown }).code ?? "") : "";

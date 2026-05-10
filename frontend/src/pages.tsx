@@ -37,6 +37,7 @@ export {
   ResultsQualityPage,
   AnalyticalOperationsPage,
 } from './views/enterprise'
+export { MyOrganizationPage, OrganizationManagementPage } from './views/organization'
 export {
   CytologyCasesPage,
   DigitalPathologyPage,

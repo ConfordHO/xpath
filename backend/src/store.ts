@@ -94,6 +94,13 @@ type PostgresSslMode = "require" | "disable";
 let pool: Pool | null = null;
 let activePostgresSslMode: PostgresSslMode | null = null;
 let activePostgresConnectionUrl: string | null = null;
+
+// Per-org caches — keyed by orgId (= PostgreSQL app_state row id)
+const orgDbCache = new Map<string, Database>();
+const orgInitPromises = new Map<string, Promise<void>>();
+const orgUpdateQueues = new Map<string, Promise<void>>();
+
+// Legacy single-org globals kept for backward-compat internal callers
 let cachedDb: Database | null = null;
 let initializationPromise: Promise<void> | null = null;
 let updateQueue: Promise<void> = Promise.resolve();
@@ -1299,7 +1306,7 @@ async function ensureStateTable() {
   `);
 }
 
-async function getStateRecord(): Promise<DatabaseDocument | null> {
+async function getStateRecord(orgId: string = POSTGRES_STATE_ID): Promise<DatabaseDocument | null> {
   await ensureStateTable();
   const result = await queryPostgres<{
     id: string;
@@ -1307,7 +1314,7 @@ async function getStateRecord(): Promise<DatabaseDocument | null> {
     updated_at: Date | string;
   }>(
     `SELECT id, state, updated_at FROM ${stateTableIdentifier} WHERE id = $1 LIMIT 1`,
-    [POSTGRES_STATE_ID],
+    [orgId],
   );
   const row = result.rows[0];
   if (!row) {
@@ -1321,6 +1328,134 @@ async function getStateRecord(): Promise<DatabaseDocument | null> {
         ? row.updated_at.toISOString()
         : new Date(row.updated_at).toISOString(),
   };
+}
+
+// ─── Organizations master table ───────────────────────────────────────────────
+
+const orgsTableIdentifier = quotedIdentifier("organizations");
+
+export interface OrgRecord {
+  id: string;
+  slug: string;
+  name: string;
+  plan: string;
+  status: string;
+  trialEndsAt: string | null;
+  ownerEmail: string;
+  contactPhone: string | null;
+  address: string | null;
+  country: string;
+  timezone: string;
+  currency: string;
+  maxBranches: number | null;
+  maxUsers: number | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+async function ensureOrgsTable() {
+  await ensureStateTable();
+  await queryPostgres(`
+    CREATE TABLE IF NOT EXISTS ${orgsTableIdentifier} (
+      id TEXT PRIMARY KEY,
+      slug TEXT UNIQUE NOT NULL,
+      name TEXT NOT NULL,
+      plan TEXT NOT NULL DEFAULT 'standard',
+      status TEXT NOT NULL DEFAULT 'active',
+      trial_ends_at TIMESTAMPTZ,
+      owner_email TEXT NOT NULL,
+      contact_phone TEXT,
+      address TEXT,
+      country TEXT NOT NULL DEFAULT 'CM',
+      timezone TEXT NOT NULL DEFAULT 'Africa/Douala',
+      currency TEXT NOT NULL DEFAULT 'XAF',
+      max_branches INTEGER,
+      max_users INTEGER,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+}
+
+function rowToOrg(row: Record<string, unknown>): OrgRecord {
+  return {
+    id: String(row.id),
+    slug: String(row.slug),
+    name: String(row.name),
+    plan: String(row.plan),
+    status: String(row.status),
+    trialEndsAt: row.trial_ends_at ? new Date(String(row.trial_ends_at)).toISOString() : null,
+    ownerEmail: String(row.owner_email),
+    contactPhone: row.contact_phone ? String(row.contact_phone) : null,
+    address: row.address ? String(row.address) : null,
+    country: String(row.country),
+    timezone: String(row.timezone),
+    currency: String(row.currency),
+    maxBranches: row.max_branches != null ? Number(row.max_branches) : null,
+    maxUsers: row.max_users != null ? Number(row.max_users) : null,
+    createdAt: new Date(String(row.created_at)).toISOString(),
+    updatedAt: new Date(String(row.updated_at)).toISOString(),
+  };
+}
+
+export async function loadOrganizations(): Promise<OrgRecord[]> {
+  await ensureOrgsTable();
+  const result = await queryPostgres(`SELECT * FROM ${orgsTableIdentifier} ORDER BY created_at DESC`);
+  return result.rows.map(rowToOrg);
+}
+
+export async function getOrganizationById(id: string): Promise<OrgRecord | null> {
+  await ensureOrgsTable();
+  const result = await queryPostgres(`SELECT * FROM ${orgsTableIdentifier} WHERE id = $1 LIMIT 1`, [id]);
+  return result.rows[0] ? rowToOrg(result.rows[0]) : null;
+}
+
+export async function getOrganizationBySlug(slug: string): Promise<OrgRecord | null> {
+  await ensureOrgsTable();
+  const result = await queryPostgres(`SELECT * FROM ${orgsTableIdentifier} WHERE slug = $1 LIMIT 1`, [slug]);
+  return result.rows[0] ? rowToOrg(result.rows[0]) : null;
+}
+
+export async function createOrganizationRecord(org: OrgRecord): Promise<void> {
+  await ensureOrgsTable();
+  await queryPostgres(
+    `INSERT INTO ${orgsTableIdentifier}
+     (id, slug, name, plan, status, trial_ends_at, owner_email, contact_phone, address,
+      country, timezone, currency, max_branches, max_users, created_at, updated_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
+     ON CONFLICT (id) DO NOTHING`,
+    [org.id, org.slug, org.name, org.plan, org.status, org.trialEndsAt,
+     org.ownerEmail, org.contactPhone, org.address, org.country, org.timezone,
+     org.currency, org.maxBranches, org.maxUsers, org.createdAt, org.updatedAt],
+  );
+}
+
+export async function updateOrganizationRecord(id: string, updates: Partial<Omit<OrgRecord, "id" | "createdAt">>): Promise<void> {
+  await ensureOrgsTable();
+  const fields: string[] = [];
+  const values: unknown[] = [];
+  let idx = 1;
+  const colMap: Record<string, string> = {
+    slug: "slug", name: "name", plan: "plan", status: "status",
+    trialEndsAt: "trial_ends_at", ownerEmail: "owner_email",
+    contactPhone: "contact_phone", address: "address", country: "country",
+    timezone: "timezone", currency: "currency",
+    maxBranches: "max_branches", maxUsers: "max_users",
+  };
+  for (const [key, col] of Object.entries(colMap)) {
+    if (key in updates) {
+      fields.push(`${col} = $${idx}`);
+      values.push(updates[key as keyof typeof updates]);
+      idx++;
+    }
+  }
+  if (fields.length === 0) return;
+  fields.push(`updated_at = NOW()`);
+  values.push(id);
+  await queryPostgres(
+    `UPDATE ${orgsTableIdentifier} SET ${fields.join(", ")} WHERE id = $${idx}`,
+    values,
+  );
 }
 
 async function readLegacyMongoDb(): Promise<Partial<Database> | null> {
@@ -1367,8 +1502,8 @@ export async function clearLegacyMongoState() {
   }
 }
 
-async function persistDb(db: Database) {
-  const existing = await getStateRecord();
+async function persistDb(db: Database, orgId: string = POSTGRES_STATE_ID) {
+  const existing = await getStateRecord(orgId);
   const normalized = normalizeDatabase({
     ...db,
     auditEvents: mergeAuditTrail(existing?.state?.auditEvents ?? [], db.auditEvents),
@@ -1381,57 +1516,74 @@ async function persistDb(db: Database) {
       ON CONFLICT (id)
       DO UPDATE SET state = EXCLUDED.state, updated_at = EXCLUDED.updated_at
     `,
-    [POSTGRES_STATE_ID, JSON.stringify(normalized)],
+    [orgId, JSON.stringify(normalized)],
   );
-  cachedDb = cloneDb(normalized);
-  return cachedDb;
+  const cloned = cloneDb(normalized);
+  orgDbCache.set(orgId, cloned);
+  // Keep legacy single-org cache in sync for primary org
+  if (orgId === POSTGRES_STATE_ID) cachedDb = cloned;
+  return cloned;
 }
 
-async function ensureInitialized() {
-  if (!initializationPromise) {
-    initializationPromise = (async () => {
-      const existing = await getStateRecord();
-
+async function ensureInitializedForOrg(orgId: string) {
+  let promise = orgInitPromises.get(orgId);
+  if (!promise) {
+    promise = (async () => {
+      const existing = await getStateRecord(orgId);
       if (existing?.state) {
         const normalized = normalizeDatabase(existing.state);
-        cachedDb = cloneDb(normalized);
+        const cloned = cloneDb(normalized);
+        orgDbCache.set(orgId, cloned);
+        if (orgId === POSTGRES_STATE_ID) cachedDb = cloned;
         if (JSON.stringify(existing.state) !== JSON.stringify(normalized)) {
-          await persistDb(normalized);
+          await persistDb(normalized, orgId);
         }
         return;
       }
-
-      const legacy = (await readLegacyMongoDb()) ?? (await readLegacyDb());
+      // Only seed the primary org; new orgs start with fresh seed
+      const legacy = orgId === POSTGRES_STATE_ID
+        ? (await readLegacyMongoDb()) ?? (await readLegacyDb())
+        : null;
       const initial = normalizeDatabase(legacy ?? createSeedDatabase());
-      await persistDb(initial);
+      await persistDb(initial, orgId);
     })().catch((error) => {
-      initializationPromise = null;
+      orgInitPromises.delete(orgId);
       throw error;
     });
+    orgInitPromises.set(orgId, promise);
+    // Also keep primary-org promise in legacy var
+    if (orgId === POSTGRES_STATE_ID) initializationPromise = promise;
   }
-
-  await initializationPromise;
+  await promise;
 }
 
-export async function loadDb(): Promise<Database> {
-  await ensureInitialized();
+/** @deprecated Use ensureInitializedForOrg(POSTGRES_STATE_ID) */
+async function ensureInitialized() {
+  return ensureInitializedForOrg(POSTGRES_STATE_ID);
+}
 
-  if (cachedDb) {
-    return cloneDb(cachedDb);
+export async function loadDb(orgId: string = POSTGRES_STATE_ID): Promise<Database> {
+  await ensureInitializedForOrg(orgId);
+
+  const cached = orgDbCache.get(orgId) ?? (orgId === POSTGRES_STATE_ID ? cachedDb : null);
+  if (cached) {
+    return cloneDb(cached);
   }
 
-  const existing = await getStateRecord();
+  const existing = await getStateRecord(orgId);
   const normalized = normalizeDatabase(existing?.state ?? createSeedDatabase());
-  cachedDb = cloneDb(normalized);
+  const cloned = cloneDb(normalized);
+  orgDbCache.set(orgId, cloned);
+  if (orgId === POSTGRES_STATE_ID) cachedDb = cloned;
   if (!existing?.state || JSON.stringify(existing.state) !== JSON.stringify(normalized)) {
-    await persistDb(normalized);
+    await persistDb(normalized, orgId);
   }
   return cloneDb(normalized);
 }
 
-export async function saveDb(db: Database) {
-  await ensureInitialized();
-  await persistDb(db);
+export async function saveDb(db: Database, orgId: string = POSTGRES_STATE_ID) {
+  await ensureInitializedForOrg(orgId);
+  await persistDb(db, orgId);
 }
 
 export async function resetDb() {
@@ -1449,6 +1601,9 @@ export async function closeStoreConnections() {
   cachedDb = null;
   initializationPromise = null;
   updateQueue = Promise.resolve();
+  orgDbCache.clear();
+  orgInitPromises.clear();
+  orgUpdateQueues.clear();
   const activePool = pool;
   pool = null;
   activePostgresSslMode = null;
@@ -1575,21 +1730,33 @@ function appendAutomaticMutationAudit(before: Database, after: Database) {
   });
 }
 
-export async function updateDb<T>(updater: (db: Database) => T | Promise<T>) {
+export async function updateDb<T>(
+  orgIdOrUpdater: string | ((db: Database) => T | Promise<T>),
+  updater?: (db: Database) => T | Promise<T>,
+): Promise<T> {
+  // Overload: updateDb(fn) — uses primary org
+  // Overload: updateDb(orgId, fn) — uses specified org
+  const orgId = typeof orgIdOrUpdater === "string" ? orgIdOrUpdater : POSTGRES_STATE_ID;
+  const fn = typeof orgIdOrUpdater === "function" ? orgIdOrUpdater : updater!;
+
   let result!: T;
 
-  const run = updateQueue.then(async () => {
-    const db = await loadDb();
+  // Per-org serialized update queue
+  const currentQueue = orgUpdateQueues.get(orgId) ?? Promise.resolve();
+  // Also keep legacy global queue in sync for primary org
+  const legacyQ = orgId === POSTGRES_STATE_ID ? updateQueue : currentQueue;
+
+  const run = legacyQ.then(async () => {
+    const db = await loadDb(orgId);
     const before = cloneDb(db);
-    result = await updater(db);
+    result = await fn(db);
     appendAutomaticMutationAudit(before, db);
-    await saveDb(db);
+    await saveDb(db, orgId);
   });
 
-  updateQueue = run.then(
-    () => undefined,
-    () => undefined,
-  );
+  const settled = run.then(() => undefined, () => undefined);
+  orgUpdateQueues.set(orgId, settled);
+  if (orgId === POSTGRES_STATE_ID) updateQueue = settled;
 
   await run;
   return result;

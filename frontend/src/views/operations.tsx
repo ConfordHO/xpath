@@ -35,7 +35,7 @@ import ReactECharts from 'echarts-for-react'
 
 import { Link as RouterLink, useParams } from 'react-router-dom'
 
-import { api } from '../api'
+import { api, apiBaseUrl } from '../api'
 
 import {
   CourierChip,
@@ -718,283 +718,161 @@ export function FinancePage() {
 }
 
 export function AccountingPage() {
-  const configState = useLoadable<ZohoBooksConfig | null>(null, [], async () => {
-    const response = await api.get<ZohoBooksConfig>('/accounting/zoho/config')
-    return response.data
+  const summaryState = useLoadable<Record<string, unknown> | null>(null, [], async () => {
+    const response = await api.get('/accounting/summary')
+    return response.data as Record<string, unknown>
   })
-  const logsState = useLoadable<ZohoBooksSyncLog[]>([], [], async () => {
-    const response = await api.get<ZohoBooksSyncLog[]>('/accounting/zoho/sync-logs')
-    return response.data
+  const erpState = useLoadable<{ enabled: boolean; baseUrl: string | null; company: string | null } | null>(null, [], async () => {
+    const response = await api.get('/accounting/erpnext/config')
+    return response.data as { enabled: boolean; baseUrl: string | null; company: string | null }
   })
-  const doctorsState = useLoadable<Doctor[]>([], [], async () => {
-    const response = await api.get<Doctor[]>('/doctors')
-    return response.data
-  })
-  const ordersState = useLoadable<{ data: HydratedOrder[] }>({ data: [] }, [], async () => {
-    const response = await api.get('/orders', { params: { limit: 100 } })
-    return response.data
-  })
-  const financeSummaryState = useLoadable<FinanceSummary | null>(null, [], async () => {
-    const response = await api.get<FinanceSummary>('/finance/summary')
-    return response.data
+  const logsState = useLoadable<{ data: ZohoBooksSyncLog[]; total: number }>({ data: [], total: 0 }, [], async () => {
+    const response = await api.get('/accounting/sync-logs', { params: { limit: 50 } })
+    return response.data as { data: ZohoBooksSyncLog[]; total: number }
   })
   const [feedback, setFeedback] = useState<{ kind: 'success' | 'error'; message: string } | null>(null)
-  const [grantToken, setGrantToken] = useState('')
-  const [organizations, setOrganizations] = useState<ZohoBooksOrganization[]>([])
-  const [organizationError, setOrganizationError] = useState<string | null>(null)
-  const [syncSelection, setSyncSelection] = useState({
-    doctorId: '',
-    orderId: '',
-    paymentId: '',
-  })
+  const [fromDate, setFromDate] = useState(new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10))
+  const [toDate, setToDate] = useState(new Date().toISOString().slice(0, 10))
+  const [syncOrderId, setSyncOrderId] = useState('')
+  const [syncPaymentId, setSyncPaymentId] = useState('')
 
   const refresh = () => {
-    configState.refresh()
+    summaryState.refresh()
     logsState.refresh()
-    doctorsState.refresh()
-    ordersState.refresh()
-    financeSummaryState.refresh()
+    erpState.refresh()
   }
 
-  const openAuthorizeUrl = async () => {
-    setFeedback(null)
-    try {
-      const response = await api.get<{ authorizeUrl: string }>('/accounting/zoho/authorize-url')
-      window.open(response.data.authorizeUrl, '_blank', 'noopener,noreferrer')
-      setFeedback({ kind: 'success', message: 'Opened the Zoho Books consent screen in a new tab.' })
-    } catch (authorizeError) {
-      setFeedback({ kind: 'error', message: errorMessage(authorizeError) })
-    }
+  const downloadCsv = () => {
+    const params = new URLSearchParams({ from: fromDate, to: toDate }).toString()
+    window.open(`${apiBaseUrl.endsWith('/api') ? apiBaseUrl.slice(0, -4) : apiBaseUrl}/api/accounting/export/csv?${params}`, '_blank')
   }
 
-  const exchangeGrantToken = async () => {
-    if (!grantToken.trim()) return
+  const downloadJson = () => {
+    const params = new URLSearchParams({ from: fromDate, to: toDate }).toString()
+    window.open(`${apiBaseUrl.endsWith('/api') ? apiBaseUrl.slice(0, -4) : apiBaseUrl}/api/accounting/export/json?${params}`, '_blank')
+  }
+
+  const syncInvoice = async () => {
+    if (!syncOrderId.trim()) return
     try {
-      const response = await api.post<{ message: string; refreshToken: string | null }>('/accounting/zoho/exchange-token', {
-        grantToken: grantToken.trim(),
-      })
-      setGrantToken('')
+      // Resolve order to invoiceId via accounting invoices endpoint
+      const invRes = await api.get(`/accounting/invoices`, { params: { limit: 200 } })
+      const invoices = (invRes.data as { data: Array<{ _id: string; orderId: string }> }).data
+      const invoice = invoices.find((i) => i.orderId === syncOrderId.trim())
+      if (!invoice) { setFeedback({ kind: 'error', message: 'No invoice found for that order ID' }); return }
+      await api.post('/accounting/erpnext/sync/invoice', { invoiceId: invoice._id })
+      setFeedback({ kind: 'success', message: 'Invoice synced to ERPNext' })
       refresh()
-      setFeedback({
-        kind: 'success',
-        message: response.data.refreshToken
-          ? 'Grant token exchanged. Copy the returned refresh token into backend/.env as ZOHO_BOOKS_REFRESH_TOKEN and restart the Node backend.'
-          : response.data.message,
-      })
-    } catch (exchangeError) {
-      setFeedback({ kind: 'error', message: errorMessage(exchangeError) })
+    } catch (e: unknown) {
+      setFeedback({ kind: 'error', message: (e as { response?: { data?: { message?: string } } }).response?.data?.message ?? 'Sync failed' })
     }
   }
 
-  const loadOrganizations = async () => {
-    setOrganizationError(null)
+  const syncPayment = async () => {
+    if (!syncPaymentId.trim()) return
     try {
-      const response = await api.get<ZohoBooksOrganization[]>('/accounting/zoho/organizations')
-      setOrganizations(response.data)
-      setFeedback({ kind: 'success', message: 'Zoho organizations loaded.' })
-    } catch (organizationLoadError) {
-      setOrganizationError(errorMessage(organizationLoadError))
-    }
-  }
-
-  const runDoctorSync = async () => {
-    if (!syncSelection.doctorId) return
-    try {
-      await api.post(`/accounting/zoho/sync/doctor/${syncSelection.doctorId}`)
-      setFeedback({ kind: 'success', message: 'Referral doctor synced to Zoho Books contacts.' })
-      logsState.refresh()
-    } catch (syncError) {
-      setFeedback({ kind: 'error', message: errorMessage(syncError) })
-    }
-  }
-
-  const runOrderSync = async () => {
-    if (!syncSelection.orderId) return
-    try {
-      await api.post('/accounting/zoho/sync/order', { orderId: syncSelection.orderId })
-      setFeedback({ kind: 'success', message: 'Order invoice synced to Zoho Books.' })
+      await api.post('/accounting/erpnext/sync/payment', { paymentId: syncPaymentId.trim() })
+      setFeedback({ kind: 'success', message: 'Payment synced to ERPNext' })
       refresh()
-    } catch (syncError) {
-      setFeedback({ kind: 'error', message: errorMessage(syncError) })
+    } catch (e: unknown) {
+      setFeedback({ kind: 'error', message: (e as { response?: { data?: { message?: string } } }).response?.data?.message ?? 'Sync failed' })
     }
   }
 
-  const runPaymentSync = async () => {
-    if (!syncSelection.paymentId) return
-    try {
-      await api.post('/accounting/zoho/sync/payment', { paymentId: syncSelection.paymentId })
-      setFeedback({ kind: 'success', message: 'Payment synced to Zoho Books.' })
-      refresh()
-    } catch (syncError) {
-      setFeedback({ kind: 'error', message: errorMessage(syncError) })
-    }
-  }
-
-  if (
-    configState.loading
-    || logsState.loading
-    || doctorsState.loading
-    || ordersState.loading
-    || financeSummaryState.loading
-  ) {
-    return <LoadingPanel label="Loading Zoho Books…" />
-  }
-
-  const syncedInvoices = ordersState.data.data.filter((order) => order.financialClearance === 'cleared').length
-  const successfulInvoiceLogs = logsState.data.filter((entry) => entry.operation === 'sync_invoice' && entry.status === 'success').length
-  const successfulPaymentLogs = logsState.data.filter((entry) => entry.operation === 'sync_payment' && entry.status === 'success').length
-  const failedLogs = logsState.data.filter((entry) => entry.status === 'failed').length
-  const paymentOptions = financeSummaryState.data?.transactions.filter((entry) => entry.status === 'completed') ?? []
+  const summary = summaryState.data
+  const erp = erpState.data
 
   return (
     <Stack spacing={3}>
       <PageHeader
         eyebrow="Accounting"
-        title="Zoho Books integration workspace"
-        description="The LIMS no longer runs a separate internal ledger. Orders, invoices, payments, and referral contacts are prepared here for Zoho Books via OAuth, organization mapping, and sync logs."
+        title="Open-Source Accounting"
+        description="Internal double-entry GL with CSV / JSON-LD export and optional ERPNext sync. No external SaaS dependency required."
         action={<Button onClick={refresh}>Refresh</Button>}
       />
-      {feedback ? <Alert severity={feedback.kind}>{feedback.message}</Alert> : null}
-      {configState.error ? <Alert severity="error">{configState.error}</Alert> : null}
-      {logsState.error ? <Alert severity="error">{logsState.error}</Alert> : null}
-      {doctorsState.error ? <Alert severity="error">{doctorsState.error}</Alert> : null}
-      {ordersState.error ? <Alert severity="error">{ordersState.error}</Alert> : null}
-      {financeSummaryState.error ? <Alert severity="error">{financeSummaryState.error}</Alert> : null}
 
-      <Box sx={{ display: 'grid', gap: 2, gridTemplateColumns: { xs: '1fr', md: 'repeat(3, 1fr)' } }}>
-        <MetricCard label="OAuth ready" value={configState.data?.clientConfigured && configState.data?.redirectConfigured ? 'Yes' : 'No'} helper={configState.data?.organizationConfigured ? 'Organization set' : 'Set organization'} />
-        <MetricCard label="Invoice syncs" value={String(successfulInvoiceLogs)} helper={`${syncedInvoices} financially cleared orders`} />
-        <MetricCard label="Payment syncs" value={String(successfulPaymentLogs)} helper={`${failedLogs} failed sync attempts`} />
-      </Box>
+      {feedback ? <Alert severity={feedback.kind} onClose={() => setFeedback(null)}>{feedback.message}</Alert> : null}
+      {summaryState.error ? <Alert severity="error">{summaryState.error}</Alert> : null}
 
-      <SectionCard title="OAuth and organization setup" description="Zoho Books uses the server-side OAuth flow. Generate consent, exchange the one-time grant token, then place the refresh token into backend/.env for long-lived syncs.">
+      {summaryState.loading ? <LoadingPanel label="Loading accounting summary…" /> : summary ? (
+        <Box sx={{ display: 'grid', gap: 2, gridTemplateColumns: { xs: '1fr', md: 'repeat(4, 1fr)' } }}>
+          <MetricCard label="Net revenue" value={String((summary.revenue as Record<string, unknown>)?.net ?? 0)} helper={(summary.period as Record<string, unknown>)?.from ? `from ${(summary.period as Record<string, unknown>)?.from}` : 'all time'} />
+          <MetricCard label="GL entries" value={String((summary.gl as Record<string, unknown>)?.entryCount ?? 0)} helper="journal entries" />
+          <MetricCard label="Invoices (paid)" value={String(summary.paidInvoices ?? 0)} helper={`${summary.unpaidInvoices ?? 0} unpaid`} />
+          <MetricCard label="Currency" value={String((summary as Record<string, unknown>).currency ?? 'XAF')} helper="functional currency" />
+        </Box>
+      ) : null}
+
+      <SectionCard title="Export Journal Entries" description="Download the GL as a CSV (for Excel / Sage / QuickBooks import) or JSON-LD (machine-readable standard).">
         <Stack spacing={2}>
-          <Box sx={{ display: 'grid', gap: 2, gridTemplateColumns: { xs: '1fr', md: 'repeat(4, 1fr)' } }}>
-            <MetricCard label="Client" value={configState.data?.clientConfigured ? 'Configured' : 'Missing'} />
-            <MetricCard label="Redirect URI" value={configState.data?.redirectConfigured ? 'Configured' : 'Missing'} />
-            <MetricCard label="Refresh token" value={configState.data?.refreshTokenConfigured ? 'Configured' : 'Missing'} />
-            <MetricCard label="Organization" value={configState.data?.organizationConfigured ? (configState.data.organizationId ?? 'Configured') : 'Missing'} />
+          <Box sx={{ display: 'grid', gap: 2, gridTemplateColumns: { xs: '1fr', md: 'repeat(2, 1fr)' } }}>
+            <TextField label="From date" type="date" InputLabelProps={{ shrink: true }} value={fromDate} onChange={(e) => setFromDate(e.target.value)} />
+            <TextField label="To date" type="date" InputLabelProps={{ shrink: true }} value={toDate} onChange={(e) => setToDate(e.target.value)} />
           </Box>
-          <Box sx={{ display: 'grid', gap: 2, gridTemplateColumns: { xs: '1fr', md: '1fr 1fr' } }}>
-            <Button variant="contained" onClick={openAuthorizeUrl}>Open Zoho consent screen</Button>
-            <Button onClick={loadOrganizations}>Load organizations</Button>
-          </Box>
-          {organizationError ? <Alert severity="error">{organizationError}</Alert> : null}
-          {organizations.length ? (
-            <Stack spacing={1}>
-              {organizations.map((organization) => (
-                <Paper key={organization.organization_id} variant="outlined" sx={{ p: 2 }}>
-                  <Typography fontWeight={700}>{organization.name}</Typography>
-                  <Typography color="text.secondary">
-                    {organization.organization_id}
-                    {organization.country ? ` · ${organization.country}` : ''}
-                    {organization.currency_code ? ` · ${organization.currency_code}` : ''}
-                  </Typography>
-                </Paper>
-              ))}
-            </Stack>
-          ) : null}
-          <TextField
-            label="Grant token from Zoho consent redirect"
-            value={grantToken}
-            onChange={(event) => setGrantToken(event.target.value)}
-            helperText="Exchange once, then save the returned refresh token into backend/.env as ZOHO_BOOKS_REFRESH_TOKEN."
-          />
-          <Button variant="outlined" disabled={!grantToken.trim()} onClick={exchangeGrantToken}>
-            Exchange grant token
-          </Button>
+          <Stack direction="row" spacing={2}>
+            <Button variant="contained" onClick={downloadCsv}>Download CSV</Button>
+            <Button variant="outlined" onClick={downloadJson}>Download JSON-LD</Button>
+          </Stack>
         </Stack>
       </SectionCard>
 
-      <SectionCard title="Manual sync actions" description="Use these controls while onboarding Zoho Books or reconciling edge cases. Orders sync invoices, payments sync customer payments, and referral doctors sync as Zoho contacts.">
-        <Stack spacing={2}>
-          <FormControl fullWidth>
-            <InputLabel>Referral doctor</InputLabel>
-            <Select
-              label="Referral doctor"
-              value={syncSelection.doctorId}
-              onChange={(event) => setSyncSelection((prev) => ({ ...prev, doctorId: String(event.target.value) }))}
-            >
-              <MenuItem value="">Select doctor</MenuItem>
-              {doctorsState.data.map((doctor) => (
-                <MenuItem key={doctor._id} value={doctor._id}>
-                  {doctor.name} · {doctor.email}
-                </MenuItem>
-              ))}
-            </Select>
-          </FormControl>
-          <Button disabled={!syncSelection.doctorId} onClick={runDoctorSync}>Sync doctor contact</Button>
-
-          <FormControl fullWidth>
-            <InputLabel>Order invoice</InputLabel>
-            <Select
-              label="Order invoice"
-              value={syncSelection.orderId}
-              onChange={(event) => setSyncSelection((prev) => ({ ...prev, orderId: String(event.target.value) }))}
-            >
-              <MenuItem value="">Select order</MenuItem>
-              {ordersState.data.data.map((order) => (
-                <MenuItem key={order._id} value={order._id}>
-                  {order.orderNumber} · {order.patient.firstName} {order.patient.lastName}
-                </MenuItem>
-              ))}
-            </Select>
-          </FormControl>
-          <Button disabled={!syncSelection.orderId} onClick={runOrderSync}>Sync invoice to Zoho</Button>
-
-          <FormControl fullWidth>
-            <InputLabel>Completed payment</InputLabel>
-            <Select
-              label="Completed payment"
-              value={syncSelection.paymentId}
-              onChange={(event) => setSyncSelection((prev) => ({ ...prev, paymentId: String(event.target.value) }))}
-            >
-              <MenuItem value="">Select payment</MenuItem>
-              {paymentOptions.map((payment) => (
-                <MenuItem key={payment._id} value={payment._id}>
-                  {payment.order.orderNumber} · {formatMoney(payment.amount)} · {paymentMethodLabel(payment.method)}
-                </MenuItem>
-              ))}
-            </Select>
-          </FormControl>
-          <Button disabled={!syncSelection.paymentId} onClick={runPaymentSync}>Sync payment to Zoho</Button>
-        </Stack>
+      <SectionCard title="ERPNext Integration" description={erp?.enabled ? `Connected to ${erp.baseUrl ?? 'ERPNext'} · Company: ${erp.company ?? '—'}` : 'ERPNext is not configured. Set ERPNEXT_BASE_URL, ERPNEXT_API_KEY, ERPNEXT_API_SECRET, ERPNEXT_COMPANY in backend/.env to enable.'}>
+        {erp?.enabled ? (
+          <Stack spacing={2}>
+            <Box sx={{ display: 'grid', gap: 2, gridTemplateColumns: { xs: '1fr', md: '1fr 1fr' } }}>
+              <Stack spacing={1}>
+                <TextField label="Order ID to sync invoice" value={syncOrderId} onChange={(e) => setSyncOrderId(e.target.value)} placeholder="Order _id" />
+                <Button variant="outlined" disabled={!syncOrderId.trim()} onClick={syncInvoice}>Sync invoice to ERPNext</Button>
+              </Stack>
+              <Stack spacing={1}>
+                <TextField label="Payment ID to sync" value={syncPaymentId} onChange={(e) => setSyncPaymentId(e.target.value)} placeholder="Payment _id" />
+                <Button variant="outlined" disabled={!syncPaymentId.trim()} onClick={syncPayment}>Sync payment to ERPNext</Button>
+              </Stack>
+            </Box>
+          </Stack>
+        ) : (
+          <Alert severity="info">Set up ERPNext environment variables to enable sync.</Alert>
+        )}
       </SectionCard>
 
-      <SectionCard title="Zoho sync log" description="Every OAuth, contact, invoice, and payment action is tracked here for support and production validation.">
-        <TableContainer sx={{ maxHeight: 520 }}>
-          <Table stickyHeader>
-            <TableHead>
-              <TableRow>
-                <TableCell>When</TableCell>
-                <TableCell>Operation</TableCell>
-                <TableCell>Entity</TableCell>
-                <TableCell>Status</TableCell>
-                <TableCell>Endpoint</TableCell>
-              </TableRow>
-            </TableHead>
-            <TableBody>
-              {logsState.data.map((entry) => (
-                <TableRow key={entry._id}>
-                  <TableCell>{formatDateTime(entry.createdAt)}</TableCell>
-                  <TableCell>{entry.operation}</TableCell>
-                  <TableCell>{entry.entityType}{entry.orderId ? ` · ${entry.orderId}` : ''}</TableCell>
-                  <TableCell>
-                    <Chip size="small" label={entry.status} color={entry.status === 'success' ? 'success' : entry.status === 'failed' ? 'error' : 'warning'} />
-                  </TableCell>
-                  <TableCell>{entry.endpoint}</TableCell>
+      <SectionCard title="Sync logs">
+        {logsState.loading ? <LoadingPanel label="Loading logs…" /> : logsState.data.data.length === 0 ? (
+          <Typography color="text.secondary">No sync logs yet.</Typography>
+        ) : (
+          <TableContainer>
+            <Table size="small">
+              <TableHead>
+                <TableRow>
+                  <TableCell>Date</TableCell>
+                  <TableCell>Provider</TableCell>
+                  <TableCell>Operation</TableCell>
+                  <TableCell>Entity</TableCell>
+                  <TableCell>Status</TableCell>
+                  <TableCell>External ID</TableCell>
                 </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </TableContainer>
-        {!logsState.data.length ? (
-          <EmptyState title="No Zoho sync activity yet" body="Generate an authorization URL or sync a doctor, order, or payment to populate this log." />
-        ) : null}
+              </TableHead>
+              <TableBody>
+                {logsState.data.data.map((log) => (
+                  <TableRow key={log._id}>
+                    <TableCell>{log.createdAt.slice(0, 16).replace('T', ' ')}</TableCell>
+                    <TableCell>{log.provider}</TableCell>
+                    <TableCell>{log.operation}</TableCell>
+                    <TableCell>{log.entityType} {log.entityId ? `· ${log.entityId.slice(-6)}` : ''}</TableCell>
+                    <TableCell>
+                      <Chip size="small" label={log.status} color={log.status === 'success' ? 'success' : log.status === 'failed' ? 'error' : 'default'} />
+                    </TableCell>
+                    <TableCell>{log.externalId ?? '—'}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </TableContainer>
+        )}
       </SectionCard>
     </Stack>
   )
 }
+
 
 export function CourierPage() {
   const actionLock = useActionLock()

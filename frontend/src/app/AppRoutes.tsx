@@ -44,6 +44,8 @@ import {
   WorkflowHistoryPage,
   WorkflowSelectPage,
   WorkflowTemplatesPage,
+  MyOrganizationPage,
+  OrganizationManagementPage,
 } from '../pages'
 import { AppIndex } from './AppIndex'
 import { ProtectedLayout } from './ProtectedLayout'
@@ -123,6 +125,11 @@ export function AppRoutes() {
           <Route path="/admin/test-types" element={<TestTypesPage />} />
           <Route path="/admin/workflow-templates" element={<WorkflowTemplatesPage />} />
           <Route path="/admin/settings" element={<SystemSettingsPage />} />
+          <Route path="/admin/organization" element={<MyOrganizationPage />} />
+        </Route>
+
+        <Route element={<RoleGuard roles={['super_admin']} />}>
+          <Route path="/platform/organizations" element={<OrganizationManagementPage />} />
         </Route>
 
         <Route element={<RoleGuard roles={['super_admin', 'admin', 'doctor']} />}>

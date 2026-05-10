@@ -11,6 +11,9 @@ const defaultUserPreference = {
   preferredLocale: "fr" as const,
 };
 
+/** The primary organization ID — matches the PostgreSQL app_state row for the default tenant. */
+export const DEFAULT_ORG_ID = "primary";
+
 const removedLegacySeedEmails = new Set([
   "edmond@gmail.com",
   "kiy@xpath.lims",
@@ -281,6 +284,7 @@ export function createSeedDatabase(): Database {
       },
     ] as Array<Omit<Database["users"][number], "preferredLanguage" | "preferredLocale">>).map((user) => ({
       ...defaultUserPreference,
+      organizationId: user.role === "super_admin" ? null : DEFAULT_ORG_ID,
       ...user,
     })),
     doctors: [
@@ -1956,7 +1960,10 @@ export function createSeedDatabase(): Database {
       {
         _id: "site-1",
         code: "HQ",
-        name: "PathNovate Central Lab",
+        name: "PathNovate Central Lab — Yaoundé",
+        organizationId: DEFAULT_ORG_ID,
+        address: "Rue 6460 Mbankolo (Petit Paris), Yaoundé, Cameroun",
+        phone: "+237-691193779",
         siteType: "hub",
         active: true,
         createdAt: "2026-03-31T07:46:00.000Z",
@@ -1965,7 +1972,10 @@ export function createSeedDatabase(): Database {
       {
         _id: "site-2",
         code: "DLA-COL",
-        name: "Douala Collection Center",
+        name: "PathNovate Collection Center — Douala",
+        organizationId: DEFAULT_ORG_ID,
+        address: "Akwa, Douala, Cameroun",
+        phone: "+237-677804723",
         siteType: "collection",
         active: true,
         createdAt: "2026-03-31T07:46:30.000Z",

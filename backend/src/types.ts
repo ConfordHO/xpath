@@ -195,6 +195,9 @@ export interface User {
   role: UserRole;
   preferredLanguage: "english" | "french";
   preferredLocale: "en" | "fr";
+  /** Which tenant this user belongs to. null only for platform super_admin. */
+  organizationId?: string | null;
+  /** Which branch/site within the org the user is assigned to. */
   siteId?: string | null;
   active: boolean;
   passwordHash: string;
@@ -961,7 +964,8 @@ export interface ZohoBooksSyncLog {
     | "refund";
   entityId?: string | null;
   orderId?: string | null;
-  provider: "zoho_books";
+  /** 'erpnext' added for open-source accounting integration */
+  provider: "zoho_books" | "erpnext";
   operation:
     | "authorize_url"
     | "token_exchange"
@@ -1882,10 +1886,44 @@ export interface RecoveryRecord {
   updatedAt: string;
 }
 
+// ─── SaaS Multi-Tenancy ──────────────────────────────────────────────────────
+
+export type OrgPlan = "trial" | "starter" | "standard" | "enterprise";
+export type OrgStatus = "active" | "suspended" | "trial" | "cancelled";
+
+/**
+ * Organization = one tenant/lab that subscribes to PathNovate.
+ * Each org has its own isolated data partition in the database.
+ * An org can have many branches (Sites) in different physical locations.
+ */
+export interface Organization {
+  id: string;
+  slug: string;          // URL-safe identifier, e.g. "pathnovate-yaounde"
+  name: string;          // Display name: "PathNovate Laboratories"
+  plan: OrgPlan;
+  status: OrgStatus;
+  trialEndsAt?: string | null;
+  ownerEmail: string;
+  contactPhone?: string | null;
+  address?: string | null;
+  country: string;       // ISO-3166-1 alpha-2
+  timezone: string;
+  currency: "XAF" | "USD" | "EUR";
+  logoUrl?: string | null;
+  maxBranches?: number | null;
+  maxUsers?: number | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface Site {
   _id: string;
   code: string;
   name: string;
+  /** organizationId scopes this branch to its tenant. */
+  organizationId?: string | null;
+  address?: string | null;
+  phone?: string | null;
   siteType: "hub" | "spoke" | "collection" | "lab";
   active: boolean;
   createdAt: string;
