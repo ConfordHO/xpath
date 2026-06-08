@@ -442,6 +442,31 @@ describe("production hardening", () => {
       .set("Authorization", `Bearer ${authToken}`)
       .send({});
     assert.equal(reportLock.status, 200);
+    assert.equal(reportLock.body.trafficLightStatus, "yellow");
+    assert.equal(reportLock.body.reviewStatus, "pending_second_review");
+    assert.notEqual(reportLock.body.secondReviewerId, pathologist._id);
+
+    const prematureRelease = await request
+      .post(`/api/reports/${orderCreate.body._id}/email`)
+      .set("Authorization", `Bearer ${authToken}`)
+      .send({});
+    assert.equal(prematureRelease.status, 400);
+
+    const secondReview = await request
+      .post(`/api/reports/${orderCreate.body._id}/review/approve`)
+      .set("Authorization", `Bearer ${authToken}`)
+      .send({ comment: "Second pathologist QC accepted." });
+    assert.equal(secondReview.status, 200);
+    assert.equal(secondReview.body.trafficLightStatus, "yellow");
+    assert.equal(secondReview.body.reviewStatus, "review_validated");
+
+    const finalApproval = await request
+      .post(`/api/reports/${orderCreate.body._id}/finalize`)
+      .set("Authorization", `Bearer ${authToken}`)
+      .send({ comment: "Final release approved by reporting pathologist." });
+    assert.equal(finalApproval.status, 200);
+    assert.equal(finalApproval.body.trafficLightStatus, "green");
+    assert.equal(finalApproval.body.releaseRuleStatus, "ready");
 
     const reportRelease = await request
       .post(`/api/reports/${orderCreate.body._id}/email`)
@@ -666,6 +691,27 @@ describe("production hardening", () => {
       .set("Authorization", `Bearer ${authToken}`)
       .send({});
     assert.equal(reportLock.status, 200);
+    assert.equal(reportLock.body.trafficLightStatus, "yellow");
+
+    const prematureRelease = await request
+      .post(`/api/reports/${referralOrderId}/email`)
+      .set("Authorization", `Bearer ${authToken}`)
+      .send({});
+    assert.equal(prematureRelease.status, 400);
+
+    const secondReview = await request
+      .post(`/api/reports/${referralOrderId}/review/approve`)
+      .set("Authorization", `Bearer ${authToken}`)
+      .send({ comment: "External referral QC accepted." });
+    assert.equal(secondReview.status, 200);
+    assert.equal(secondReview.body.reviewStatus, "review_validated");
+
+    const finalApproval = await request
+      .post(`/api/reports/${referralOrderId}/finalize`)
+      .set("Authorization", `Bearer ${authToken}`)
+      .send({ comment: "External referral ready for release." });
+    assert.equal(finalApproval.status, 200);
+    assert.equal(finalApproval.body.trafficLightStatus, "green");
 
     const reportRelease = await request
       .post(`/api/reports/${referralOrderId}/email`)

@@ -41,6 +41,7 @@ import {
   LoadingPanel,
   PageHeader,
   PriorityChip,
+  ReportTrafficLightChip,
   SectionCard,
   StatusChip,
   VoiceAssistField,
@@ -54,10 +55,19 @@ import type {
   OrderWorkflowItemPlan,
   Patient,
   Payment,
+  Report,
   TestType,
 } from '../types'
 
-import { downloadPathologyReportPdf, formatDate, formatDateTime, formatMoney, paymentMethodLabel } from '../utils'
+import {
+  downloadPathologyReportPdf,
+  formatDate,
+  formatDateTime,
+  formatMoney,
+  paymentMethodLabel,
+  reportIsReadyForRelease,
+  reportReviewStatusLabel,
+} from '../utils'
 
 export function OrdersPage() {
   const { user } = useAuth()
@@ -395,6 +405,8 @@ export function OrderDetailPage() {
     comment: '',
   })
   const [addendum, setAddendum] = useState('')
+  const [reviewComment, setReviewComment] = useState('')
+  const [finalizeComment, setFinalizeComment] = useState('')
   const [feedback, setFeedback] = useState<{ kind: 'success' | 'error'; message: string } | null>(null)
 
   const canEditOrder = user ? ['super_admin', 'admin', 'receptionist'].includes(user.role) : false
@@ -415,6 +427,8 @@ export function OrderDetailPage() {
         grossDescription: detailState.data.report?.grossDescription ?? '',
         comment: detailState.data.report?.comment ?? '',
       })
+      setReviewComment('')
+      setFinalizeComment('')
     }
   }, [detailState.data])
 
@@ -449,6 +463,21 @@ export function OrderDetailPage() {
           : user?.role === 'pathologist'
             ? '/pathologist/workflow'
             : '/orders'
+  const report = detail.report
+  const reportLockedForEditing =
+    report?.status === 'complete' &&
+    !['corrections_requested', 'draft_in_progress'].includes(report.reviewStatus ?? '')
+  const canSecondReview = Boolean(
+    user &&
+      report?.reviewStatus === 'pending_second_review' &&
+      (['super_admin', 'admin'].includes(user.role) || report.secondReviewerId === user._id),
+  )
+  const canFinalizeReport = Boolean(
+    user &&
+      report?.reviewStatus === 'review_validated' &&
+      (['super_admin', 'admin'].includes(user.role) || report.reportingPathologistId === user._id),
+  )
+  const readyForRelease = reportIsReadyForRelease(report)
 
   const saveReportDraft = async () => {
     await actionLock.runLocked('save-report', async () => {
@@ -463,7 +492,7 @@ export function OrderDetailPage() {
   }
 
   const completeReport = async () => {
-    if (!window.confirm('Complete sign-out for this case?')) {
+    if (!window.confirm('Complete this report and send it for second-pathologist review?')) {
       return
     }
     await actionLock.runLocked('complete-report', async () => {
@@ -471,7 +500,7 @@ export function OrderDetailPage() {
         await api.post(`/reports/${orderId}/save`, reportForm)
         await api.post(`/reports/${orderId}/lock`)
         await api.post(`/reports/${orderId}/sign`)
-        setFeedback({ kind: 'success', message: 'Report completed and digitally signed.' })
+        setFeedback({ kind: 'success', message: 'Report completed and assigned for second review.' })
         detailState.refresh()
       } catch (completeError) {
         setFeedback({ kind: 'error', message: errorMessage(completeError) })
@@ -490,6 +519,46 @@ export function OrderDetailPage() {
         detailState.refresh()
       } catch (releaseError) {
         setFeedback({ kind: 'error', message: errorMessage(releaseError) })
+      }
+    })
+  }
+
+  const returnReportForCorrections = async () => {
+    if (!reviewComment.trim()) {
+      setFeedback({ kind: 'error', message: 'Enter reviewer comments before returning the report.' })
+      return
+    }
+    await actionLock.runLocked('return-report', async () => {
+      try {
+        await api.post(`/reports/${orderId}/review/return`, { comments: reviewComment })
+        setFeedback({ kind: 'success', message: 'Report returned to the reporting pathologist for corrections.' })
+        detailState.refresh()
+      } catch (reviewError) {
+        setFeedback({ kind: 'error', message: errorMessage(reviewError) })
+      }
+    })
+  }
+
+  const approveSecondReview = async () => {
+    await actionLock.runLocked('approve-review', async () => {
+      try {
+        await api.post(`/reports/${orderId}/review/approve`, { comment: reviewComment })
+        setFeedback({ kind: 'success', message: 'Second review validated. The reporting pathologist can finalize the report.' })
+        detailState.refresh()
+      } catch (reviewError) {
+        setFeedback({ kind: 'error', message: errorMessage(reviewError) })
+      }
+    })
+  }
+
+  const finalizeReportForRelease = async () => {
+    await actionLock.runLocked('finalize-report', async () => {
+      try {
+        await api.post(`/reports/${orderId}/finalize`, { comment: finalizeComment })
+        setFeedback({ kind: 'success', message: 'Report is green and ready for release.' })
+        detailState.refresh()
+      } catch (finalizeError) {
+        setFeedback({ kind: 'error', message: errorMessage(finalizeError) })
       }
     })
   }
@@ -640,6 +709,12 @@ export function OrderDetailPage() {
       <SectionCard title={canManageReport ? 'Report workspace' : 'Report summary'}>
         {canManageReport ? (
           <Stack spacing={2}>
+            <Stack direction={{ xs: 'column', md: 'row' }} spacing={1.5} alignItems={{ xs: 'flex-start', md: 'center' }}>
+              <ReportTrafficLightChip status={report?.trafficLightStatus} />
+              <Typography color="text.secondary">
+                {reportReviewStatusLabel(report?.reviewStatus)} · Reviewer {report?.secondReviewerName ?? 'Not assigned'}
+              </Typography>
+            </Stack>
             <VoiceAssistField
               label="Diagnosis"
               minRows={3}
@@ -648,6 +723,7 @@ export function OrderDetailPage() {
               context="pathology_report"
               targetField="diagnosis"
               orderId={orderId}
+              disabled={reportLockedForEditing}
             />
             <VoiceAssistField
               label="Microscopic description"
@@ -657,6 +733,7 @@ export function OrderDetailPage() {
               context="pathology_report"
               targetField="microscopic_description"
               orderId={orderId}
+              disabled={reportLockedForEditing}
             />
             <VoiceAssistField
               label="Gross description"
@@ -666,6 +743,7 @@ export function OrderDetailPage() {
               context="pathology_report"
               targetField="gross_description"
               orderId={orderId}
+              disabled={reportLockedForEditing}
             />
             <VoiceAssistField
               label="Comment / summary"
@@ -675,22 +753,68 @@ export function OrderDetailPage() {
               context="pathology_report"
               targetField="comment_summary"
               orderId={orderId}
+              disabled={reportLockedForEditing}
             />
             <Stack direction={{ xs: 'column', md: 'row' }} spacing={2}>
-              <Button variant="contained" disabled={actionLock.isPending('save-report')} onClick={saveReportDraft}>
+              <Button variant="contained" disabled={reportLockedForEditing || actionLock.isPending('save-report')} onClick={saveReportDraft}>
                 Save draft
               </Button>
-              <Button disabled={actionLock.isPending('complete-report')} onClick={completeReport}>
-                Complete sign-out
+              <Button disabled={reportLockedForEditing || actionLock.isPending('complete-report')} onClick={completeReport}>
+                Complete for second review
               </Button>
-              <Button disabled={detail.report?.status !== 'complete' || actionLock.isPending('release-report')} onClick={releaseReport}>
+              <Button disabled={!readyForRelease || actionLock.isPending('release-report')} onClick={releaseReport}>
                 Release result
               </Button>
             </Stack>
             <Typography color="text.secondary">
-              Report status: {detail.report?.status ?? 'draft'} · Signed by {detail.report?.signedBy ?? 'Not yet signed'}
+              Report status: {report?.status ?? 'draft'} · Signed by {report?.signedBy ?? 'Not yet signed'}
             </Typography>
-            {detail.report?.status === 'complete' ? (
+            {report?.reviewStatus === 'pending_second_review' ? (
+              <Stack spacing={1.5} sx={{ pt: 1 }}>
+                <TextField
+                  label="Second-review comments"
+                  multiline
+                  minRows={3}
+                  value={reviewComment}
+                  onChange={(event) => setReviewComment(event.target.value)}
+                />
+                <Stack direction={{ xs: 'column', md: 'row' }} spacing={2}>
+                  <Button disabled={!canSecondReview || actionLock.isPending('return-report')} onClick={returnReportForCorrections}>
+                    Return with corrections
+                  </Button>
+                  <Button variant="contained" disabled={!canSecondReview || actionLock.isPending('approve-review')} onClick={approveSecondReview}>
+                    Validate second review
+                  </Button>
+                </Stack>
+              </Stack>
+            ) : null}
+            {report?.reviewStatus === 'review_validated' ? (
+              <Stack spacing={1.5} sx={{ pt: 1 }}>
+                <TextField
+                  label="Finalization note"
+                  multiline
+                  minRows={2}
+                  value={finalizeComment}
+                  onChange={(event) => setFinalizeComment(event.target.value)}
+                />
+                <Button variant="contained" disabled={!canFinalizeReport || actionLock.isPending('finalize-report')} onClick={finalizeReportForRelease}>
+                  Finalize as green
+                </Button>
+              </Stack>
+            ) : null}
+            {report?.reviewComments?.length ? (
+              <Stack spacing={1} sx={{ pt: 1 }}>
+                <Typography fontWeight={700}>Second-review history</Typography>
+                {(report.reviewComments as NonNullable<Report['reviewComments']>).map((entry) => (
+                  <Paper key={entry._id} sx={{ p: 1.5 }}>
+                    <Typography fontWeight={700}>{entry.reviewerName} · {entry.decision.replace(/_/g, ' ')}</Typography>
+                    {entry.comment ? <Typography color="text.secondary">{entry.comment}</Typography> : null}
+                    <Typography variant="body2" color="text.secondary">{formatDateTime(entry.createdAt)}</Typography>
+                  </Paper>
+                ))}
+              </Stack>
+            ) : null}
+            {report?.status === 'complete' ? (
               <Stack spacing={1.5} sx={{ pt: 1 }}>
                 <VoiceAssistField
                   label="Addendum"
@@ -707,6 +831,10 @@ export function OrderDetailPage() {
           </Stack>
         ) : (
           <Stack spacing={1.25}>
+            <Stack direction={{ xs: 'column', md: 'row' }} spacing={1.5} alignItems={{ xs: 'flex-start', md: 'center' }}>
+              <ReportTrafficLightChip status={report?.trafficLightStatus} />
+              <Typography color="text.secondary">{reportReviewStatusLabel(report?.reviewStatus)}</Typography>
+            </Stack>
             {detail.report?.diagnosis ? (
               <Typography data-no-translate="true" fontWeight={700}>{detail.report.diagnosis}</Typography>
             ) : (

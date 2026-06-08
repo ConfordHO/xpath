@@ -261,7 +261,7 @@ const copy = {
   en: {
     chooseLanguage: 'Choose your requisition language',
     chooseLanguageBody:
-      'We will reserve a unique PathNovate order number first, then render the requisition form in your selected language.',
+      'We will reserve a unique OLYVIA order number first, then render the requisition form in your selected language.',
     english: 'English',
     french: 'Francais',
     formTitle: 'PATHOLOGY REQUISITION FORM',
@@ -289,17 +289,17 @@ const copy = {
     submit: 'Submit requisition',
     submitting: 'Submitting requisition...',
     success:
-      'The requisition was submitted successfully. Keep this PathNovate order number for patient portal tracking and authenticity checks.',
-    authenticityTitle: 'PathNovate order authenticity',
+      'The requisition was submitted successfully. Keep this OLYVIA order number for patient portal tracking and authenticity checks.',
+    authenticityTitle: 'OLYVIA order authenticity',
     authenticityGood: 'Verified order',
     authenticityReserved: 'Reserved requisition number',
     authenticityBad: 'Number not found',
-    authenticityLookup: 'This page confirms whether a QR or order number was issued by PathNovate.',
+    authenticityLookup: 'This page confirms whether a QR or order number was issued by OLYVIA.',
   },
   fr: {
     chooseLanguage: 'Choisissez la langue de votre formulaire',
     chooseLanguageBody:
-      "Nous allons d'abord reserver un numero de commande PathNovate unique, puis afficher le formulaire de demande dans la langue choisie.",
+      "Nous allons d'abord reserver un numero de commande OLYVIA unique, puis afficher le formulaire de demande dans la langue choisie.",
     english: 'English',
     french: 'Francais',
     formTitle: "FORMULAIRE DE DEMANDE D'EXAMEN ANATOMOPATHOLOGIQUE",
@@ -328,13 +328,13 @@ const copy = {
     submit: 'Envoyer la demande',
     submitting: 'Envoi de la demande...',
     success:
-      'Le formulaire a ete envoye avec succes. Conservez ce numero PathNovate pour le suivi dans le portail patient et pour les controles d’authenticite.',
-    authenticityTitle: "Authenticite du numero PathNovate",
+      'Le formulaire a ete envoye avec succes. Conservez ce numero OLYVIA pour le suivi dans le portail patient et pour les controles d’authenticite.',
+    authenticityTitle: "Authenticite du numero OLYVIA",
     authenticityGood: 'Commande verifiee',
     authenticityReserved: 'Numero reserve',
     authenticityBad: 'Numero introuvable',
     authenticityLookup:
-      'Cette page confirme si un QR code ou un numero de commande a bien ete emis par PathNovate.',
+      'Cette page confirme si un QR code ou un numero de commande a bien ete emis par OLYVIA.',
   },
 } as const
 
@@ -469,7 +469,7 @@ const testLabelByLanguage: Record<
   'test-bt-b-001': { en: 'Tumor Marker Panel', fr: 'Panel de marqueurs tumoraux' },
   'test-co-t-01': { en: 'Expert Revision (International)', fr: 'Revision experte internationale' },
   'test-co-t-02': { en: 'Expert Revision (Local)', fr: 'Revision experte locale' },
-  'test-co-n-03': { en: 'PathNovate Therapeutic Strategy', fr: 'Strategie therapeutique PathNovate' },
+  'test-co-n-03': { en: 'OLYVIA Therapeutic Strategy', fr: 'Strategie therapeutique OLYVIA' },
   'test-pk-t-001': { en: 'Comprehensive Diagnostic Package - Tumor', fr: 'Forfait diagnostic complet - tumeur' },
   'test-pk-bm-002': { en: 'Comprehensive Diagnostic Package - Bone Marrow', fr: 'Forfait diagnostic complet - moelle osseuse' },
   'test-mo-b-001': { en: 'BRCA1/2 Germline Mutation Test', fr: 'Test mutation germinale BRCA1/2' },
@@ -1290,7 +1290,7 @@ export function OrderOnlinePage() {
                     }}
                   >
                     <Typography sx={{ fontSize: 10.5, textTransform: 'uppercase', color: '#6a3d53' }}>
-                      PathNovate Order Number
+                      OLYVIA Order Number
                     </Typography>
                     <Typography sx={{ fontSize: 20, fontWeight: 800, color: '#23314d' }}>
                       {session.orderNumber}
@@ -2215,7 +2215,7 @@ export function OrderAuthenticityPage() {
                 <strong>Status:</strong> {authenticityState.data?.status ?? 'not_found'}
               </Typography>
               <Typography>
-                <strong>Issued by:</strong> {authenticityState.data?.labName ?? 'PathNovate'}
+                <strong>Issued by:</strong> {authenticityState.data?.labName ?? 'OLYVIA'}
               </Typography>
               <Typography>
                 <strong>Created at:</strong> {authenticityState.data?.createdAt ? formatDateTime(authenticityState.data.createdAt) : '—'}

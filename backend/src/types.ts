@@ -581,6 +581,14 @@ export interface Report {
   orderId: string;
   accessionId?: string | null;
   status: "draft" | "complete";
+  trafficLightStatus?: "red" | "yellow" | "green";
+  reviewStatus?:
+    | "draft_in_progress"
+    | "pending_second_review"
+    | "corrections_requested"
+    | "review_validated"
+    | "ready_for_release"
+    | "released";
   diagnosis: string;
   microscopicDescription: string;
   grossDescription: string;
@@ -588,10 +596,28 @@ export interface Report {
   emailedAt?: string | null;
   lockedAt?: string | null;
   authorId?: string | null;
+  reportingPathologistId?: string | null;
+  reportingPathologistName?: string | null;
+  secondReviewerId?: string | null;
+  secondReviewerName?: string | null;
+  reviewRequestedAt?: string | null;
+  reviewReturnedAt?: string | null;
+  reviewValidatedAt?: string | null;
+  finalizedAt?: string | null;
+  finalizedBy?: string | null;
+  finalizationComment?: string | null;
   templateId?: string | null;
   signedBy?: string | null;
   signedAt?: string | null;
   releaseRuleStatus?: "pending" | "ready" | "released";
+  reviewComments?: Array<{
+    _id: string;
+    reviewerId: string;
+    reviewerName: string;
+    decision: "corrections_requested" | "approved";
+    comment: string;
+    createdAt: string;
+  }>;
   versions?: Array<{
     version: number;
     diagnosis: string;
@@ -1892,14 +1918,14 @@ export type OrgPlan = "trial" | "starter" | "standard" | "enterprise";
 export type OrgStatus = "active" | "suspended" | "trial" | "cancelled";
 
 /**
- * Organization = one tenant/lab that subscribes to PathNovate.
+ * Organization = one tenant/lab that subscribes to OLYVIA.
  * Each org has its own isolated data partition in the database.
  * An org can have many branches (Sites) in different physical locations.
  */
 export interface Organization {
   id: string;
   slug: string;          // URL-safe identifier, e.g. "pathnovate-yaounde"
-  name: string;          // Display name: "PathNovate Laboratories"
+  name: string;          // Display name: "OLYVIA Laboratories"
   plan: OrgPlan;
   status: OrgStatus;
   trialEndsAt?: string | null;

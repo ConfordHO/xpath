@@ -179,7 +179,7 @@ export const ZOHO_BOOKS_ORGANIZATION_ID =
   process.env.ZOHO_BOOKS_ORGANIZATION_ID?.trim() || "";
 export const ZOHO_BOOKS_WEBHOOK_SECRET =
   process.env.ZOHO_BOOKS_WEBHOOK_SECRET?.trim() || "";
-export const MFA_TOTP_ISSUER = process.env.MFA_TOTP_ISSUER?.trim() || "PathNovate";
+export const MFA_TOTP_ISSUER = process.env.MFA_TOTP_ISSUER?.trim() || "OLYVIA";
 export const MFA_ENFORCED =
   process.env.MFA_ENFORCED?.trim().toLowerCase() === "true";
 export const MFA_ENFORCED_ROLES = (process.env.MFA_ENFORCED_ROLES ??

@@ -1195,7 +1195,10 @@ export function registerEnterpriseRoutes(app: express.Express) {
       }
       existingReport.signedBy = req.user?.name ?? req.user?.email ?? "Unknown";
       existingReport.signedAt = now();
-      existingReport.releaseRuleStatus = "ready";
+      existingReport.releaseRuleStatus =
+        existingReport.reviewStatus === "ready_for_release"
+          ? "ready"
+          : existingReport.releaseRuleStatus ?? "pending";
       existingReport.updatedAt = now();
       logAudit(
         db,

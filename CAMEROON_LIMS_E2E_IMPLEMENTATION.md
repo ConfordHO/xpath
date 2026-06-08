@@ -1,12 +1,12 @@
-# X.PATH Cameroon LIMS End-to-End Implementation Specification
+# OLYVIA Cameroon LIMS End-to-End Implementation Specification
 
 Updated: 2026-05-03
 
-This document revamps the attached LIMS implementation specification for the current X.PATH product direction: Cameroon launch, Maviance/manual payments, on-premise-first deployment, cloud backup/sync, modular monolith architecture, TypeScript backend, open-source OCR, immutable audit logging, and explicit end-to-end workflows for patients, walk-ins, reception, external clinicians, laboratory departments, finance, reporting, archives, and administration.
+This document revamps the attached LIMS implementation specification for the current OLYVIA product direction: Cameroon launch, Maviance/manual payments, on-premise-first deployment, cloud backup/sync, modular monolith architecture, TypeScript backend, open-source OCR, immutable audit logging, and explicit end-to-end workflows for patients, walk-ins, reception, external clinicians, laboratory departments, finance, reporting, archives, and administration.
 
 ## 1. Product Position
 
-X.PATH is a Laboratory Information Management System for clinical and pathology laboratory operations in Cameroon. The system must support:
+OLYVIA is a Laboratory Information Management System for clinical and pathology laboratory operations in Cameroon. The system must support:
 
 - Online self-ordering by an individual patient.
 - Online ordering by an external referring clinician through a dedicated clinician portal.

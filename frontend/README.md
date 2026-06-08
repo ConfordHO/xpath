@@ -1,4 +1,4 @@
-# X.PATH Frontend
+# OLYVIA Frontend
 
 This frontend is a Next.js app. It intentionally does not use Vite.
 

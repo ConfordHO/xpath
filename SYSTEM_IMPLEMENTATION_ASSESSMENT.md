@@ -1,4 +1,4 @@
-# PathNovate LIMS — System Implementation Assessment
+# OLYVIA LIMS — System Implementation Assessment
 
 Updated: 2026-05-09
 
@@ -6,7 +6,7 @@ Updated: 2026-05-09
 
 ## Executive Summary
 
-PathNovate is a production-grade Laboratory Information Management System for clinical and anatomical pathology in Cameroon. The system covers the full order-to-report lifecycle, multi-role staff workflows, Maviance mobile-money payments, an external clinician portal, open-source OCR intake, Whisper voice dictation, Ollama AI drafting, and an immutable hash-chained audit trail.
+OLYVIA is a production-grade Laboratory Information Management System for clinical and anatomical pathology in Cameroon. The system covers the full order-to-report lifecycle, multi-role staff workflows, Maviance mobile-money payments, an external clinician portal, open-source OCR intake, Whisper voice dictation, Ollama AI drafting, and an immutable hash-chained audit trail.
 
 **Current status: Pre-production — functional and compliance-hardened, awaiting final integrations and your go/no-go decisions before regulated live use.**
 
@@ -84,7 +84,7 @@ PathNovate is a production-grade Laboratory Information Management System for cl
 
 ### Multi-site
 - ✅ Site-scoped data access (patients, orders, users)
-- ✅ Site-1: PathNovate Central Lab (Yaoundé HQ)
+- ✅ Site-1: OLYVIA Central Lab (Yaoundé HQ)
 - ✅ Site-2: Douala Collection Center
 
 ### Communications

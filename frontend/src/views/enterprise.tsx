@@ -34,6 +34,7 @@ import { useState, type ReactNode } from 'react'
 import { api } from '../api'
 import {
   PageHeader,
+  ReportTrafficLightChip,
   SectionCard,
   StatusChip,
 } from '../components'
@@ -87,7 +88,7 @@ import type {
   ValidationRule,
   WasteLog,
 } from '../types'
-import { formatDateTime, formatMoney } from '../utils'
+import { formatDateTime, formatMoney, reportReviewStatusLabel } from '../utils'
 import { errorMessage, PageError, TablePlaceholder, useLoadable } from './shared'
 import { VendorIntegrationConsole } from './vendorIntegrations'
 
@@ -186,7 +187,7 @@ function printBarcodeLabel(row: BarcodeRecord) {
   popup.document.write(`
     <html>
       <head>
-        <title>PathNovate Label ${row.code}</title>
+        <title>OLYVIA Label ${row.code}</title>
         <style>
           body { font-family: Arial, sans-serif; padding: 24px; }
           .label { border: 2px solid #111; border-radius: 12px; padding: 18px; width: 320px; }
@@ -198,7 +199,7 @@ function printBarcodeLabel(row: BarcodeRecord) {
       </head>
       <body>
         <div class="label">
-          <div class="brand">PathNovate</div>
+          <div class="brand">OLYVIA</div>
           <div class="code">${row.code}</div>
           <div class="meta">${row.entityType.toUpperCase()} · ${row.entityId ?? 'UNASSIGNED'}</div>
           <div class="meta">Status: ${row.status}</div>
@@ -2147,6 +2148,7 @@ export function ResultsQualityPage() {
               <TableRow>
                 <TableCell>Order</TableCell>
                 <TableCell>Report status</TableCell>
+                <TableCell>QC</TableCell>
                 <TableCell>Signed</TableCell>
                 <TableCell>Release rule</TableCell>
                 <TableCell>Actions</TableCell>
@@ -2157,6 +2159,14 @@ export function ResultsQualityPage() {
                 <TableRow key={entry.order._id}>
                   <TableCell>{entry.order.orderNumber}</TableCell>
                   <TableCell>{entry.report.status}</TableCell>
+                  <TableCell>
+                    <Stack spacing={0.75}>
+                      <ReportTrafficLightChip status={entry.report.trafficLightStatus} />
+                      <Typography variant="body2" color="text.secondary">
+                        {reportReviewStatusLabel(entry.report.reviewStatus)}
+                      </Typography>
+                    </Stack>
+                  </TableCell>
                   <TableCell>{entry.report.signedBy ?? 'Not signed'}</TableCell>
                   <TableCell>{entry.report.releaseRuleStatus ?? 'pending'}</TableCell>
                   <TableCell>

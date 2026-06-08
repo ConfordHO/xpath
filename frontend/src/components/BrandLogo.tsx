@@ -10,7 +10,7 @@ interface BrandLogoProps {
   width?: number | string
 }
 
-export function BrandLogo({ alt = 'PathNovate', sx, width = 220 }: BrandLogoProps) {
+export function BrandLogo({ alt = 'OLYVIA by X.PATH Labs', sx, width = 220 }: BrandLogoProps) {
   const logoSrc = typeof logoLarge === 'string' ? logoLarge : (logoLarge as StaticImageData).src
 
   return (

@@ -601,7 +601,7 @@ export function createSeedDatabase(): Database {
       {
         _id: "test-co-n-03",
         code: "CO-N-03",
-        name: "PathNovate Therapeutic Strategy",
+        name: "OLYVIA Therapeutic Strategy",
         description: "Clinical advisory",
         category: "Consultation",
         sampleType: "N/A",
@@ -721,7 +721,7 @@ export function createSeedDatabase(): Database {
         receivingFacility: "YourLab",
         protocol: "HL7_MLLP",
         rawMessage:
-          "MSH|^~\\&|navify Lab Operations|Roche Diagnostics|XPathLIMS|PathNovate|20260330083500||ADT^A28^ADT_A05|MSG20260330083500001|P|2.5|||AL|ER\rEVN||20260330083500\rPID|1||P-2026-04512||Mbarga^Eric||19990415|M|||Yaoundé Centre^^^CM||^^^^^^^^^^^+237677123456\r",
+          "MSH|^~\\&|navify Lab Operations|Roche Diagnostics|XPathLIMS|OLYVIA|20260330083500||ADT^A28^ADT_A05|MSG20260330083500001|P|2.5|||AL|ER\rEVN||20260330083500\rPID|1||P-2026-04512||Mbarga^Eric||19990415|M|||Yaoundé Centre^^^CM||^^^^^^^^^^^+237677123456\r",
         parsedOk: true,
         errorDetail: null,
         ackCode: "CA",
@@ -1407,7 +1407,7 @@ export function createSeedDatabase(): Database {
     aiModelRegistry: [
       {
         _id: "ai-model-local-qc",
-        name: "PathNovate Local Slide QC Adapter",
+        name: "OLYVIA Local Slide QC Adapter",
         provider: "local",
         version: "1.0.0",
         analysisTypes: ["qc", "ki67", "ihc_scoring", "tumor_detection"],
@@ -1960,7 +1960,7 @@ export function createSeedDatabase(): Database {
       {
         _id: "site-1",
         code: "HQ",
-        name: "PathNovate Central Lab — Yaoundé",
+        name: "OLYVIA Central Lab — Yaoundé",
         organizationId: DEFAULT_ORG_ID,
         address: "Rue 6460 Mbankolo (Petit Paris), Yaoundé, Cameroun",
         phone: "+237-691193779",
@@ -1972,7 +1972,7 @@ export function createSeedDatabase(): Database {
       {
         _id: "site-2",
         code: "DLA-COL",
-        name: "PathNovate Collection Center — Douala",
+        name: "OLYVIA Collection Center — Douala",
         organizationId: DEFAULT_ORG_ID,
         address: "Akwa, Douala, Cameroun",
         phone: "+237-677804723",
@@ -2003,10 +2003,10 @@ export function createSeedDatabase(): Database {
       _id: "69b745b13507f37259f8186d",
       language: "english",
       locale: "fr",
-      labName: "PathNovate",
+      labName: "OLYVIA",
       tagline: "Center for Molecular Pathology and Genomics",
       aboutText:
-        "PathNovate is a center for molecular pathology and genomics in Yaounde, Cameroon. We provide pathology consultation, histology, cytology, immunohistochemistry, molecular testing, and coordinated result delivery for clinicians, hospitals, and patients.",
+        "OLYVIA is a center for molecular pathology and genomics in Yaounde, Cameroon. We provide pathology consultation, histology, cytology, immunohistochemistry, molecular testing, and coordinated result delivery for clinicians, hospitals, and patients.",
       contactEmail: "info@xpath-labs.com",
       contactPhone: "+237-691193779 / +237-677804723",
       address: "Rue 6460 Mbankolo (Petit Paris), BP: 35444, Yaounde - Cameroon",

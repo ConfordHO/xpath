@@ -312,6 +312,59 @@ function getAccessibleOrderOrThrow(
   return order;
 }
 
+function actorDisplayName(user: User) {
+  return trimText(user.name) || user.email;
+}
+
+function reportIsReleaseReady(report: Report) {
+  return report.releaseRuleStatus === "ready" && report.reviewStatus === "ready_for_release";
+}
+
+function assignSecondReviewer(
+  db: Database,
+  order: Order,
+  reportingPathologistId?: string | null,
+) {
+  const siteId = normalizeSiteId(order.siteId);
+  const candidates = db.users.filter((user) => {
+    if (!user.active || user.role !== "pathologist") {
+      return false;
+    }
+    if (reportingPathologistId && user._id === reportingPathologistId) {
+      return false;
+    }
+    return normalizeSiteId(user.siteId) === siteId;
+  });
+  if (!candidates.length) {
+    return null;
+  }
+  return candidates[Math.floor(Math.random() * candidates.length)];
+}
+
+function assertCanSecondReview(report: Report, user: User) {
+  if (isSuperAdmin(user) || user.role === "admin") {
+    return;
+  }
+  if (user.role !== "pathologist") {
+    throw new Error("Only a pathologist can complete second review");
+  }
+  if (report.reportingPathologistId && user._id === report.reportingPathologistId) {
+    throw new Error("The reporting pathologist cannot perform the second review");
+  }
+  if (report.secondReviewerId && user._id !== report.secondReviewerId) {
+    throw new Error("This case is assigned to another pathologist for second review");
+  }
+}
+
+function assertCanFinalizeReport(report: Report, user: User) {
+  if (isSuperAdmin(user) || user.role === "admin") {
+    return;
+  }
+  if (!report.reportingPathologistId || user._id !== report.reportingPathologistId) {
+    throw new Error("Only the reporting pathologist can finalize this report for release");
+  }
+}
+
 function notificationReadForUser(
   notification: Database["notifications"][number],
   userId: string,
@@ -1482,7 +1535,7 @@ app.get("/api/public/order-authenticity/:orderNumber", async (req, res) => {
       createdAt: order.createdAt,
       updatedAt: order.updatedAt,
       labName: db.settings.labName,
-      message: "This order number is authentic and exists in PathNovate.",
+      message: "This order number is authentic and exists in OLYVIA.",
     });
   }
 
@@ -1502,7 +1555,7 @@ app.get("/api/public/order-authenticity/:orderNumber", async (req, res) => {
       createdAt: reservation.createdAt,
       expiresAt: reservation.expiresAt,
       labName: db.settings.labName,
-        message: "This requisition number was issued by PathNovate and is currently reserved for intake.",
+        message: "This requisition number was issued by OLYVIA and is currently reserved for intake.",
     });
   }
 
@@ -1510,7 +1563,7 @@ app.get("/api/public/order-authenticity/:orderNumber", async (req, res) => {
     valid: false,
     status: "not_found",
     orderNumber,
-    message: "We could not verify this order number in the PathNovate pool.",
+    message: "We could not verify this order number in the OLYVIA pool.",
   });
 });
 
@@ -3525,8 +3578,8 @@ app.post(
           findPatient(db, order.patientId).phone,
         message:
           order.financialClearance === "cleared"
-            ? `PathNovate has received your sample ${order.orderNumber} and payment is confirmed.`
-            : `PathNovate has received your sample ${order.orderNumber}. Payment is still pending.`,
+            ? `OLYVIA has received your sample ${order.orderNumber} and payment is confirmed.`
+            : `OLYVIA has received your sample ${order.orderNumber}. Payment is still pending.`,
         status: "queued",
         mandatory: false,
         createdAt: timestamp,
@@ -3867,7 +3920,7 @@ app.post(
           order.requesterNotificationPhone ||
           order.requesterNotificationEmail ||
           findPatient(db, order.patientId).phone,
-        message: `Your sample for ${order.orderNumber} has arrived at the PathNovate reception desk and is awaiting intake confirmation.`,
+        message: `Your sample for ${order.orderNumber} has arrived at the OLYVIA reception desk and is awaiting intake confirmation.`,
         status: "queued",
         mandatory: false,
         createdAt: timestamp,
@@ -5032,6 +5085,18 @@ app.post("/api/slide-images/simulate", requireRoles("admin", "technician"), asyn
   res.json(updated);
 });
 
+const reportSecondReviewReturnSchema = z.object({
+  comments: z.string().trim().min(1),
+});
+
+const reportSecondReviewApprovalSchema = z.object({
+  comment: z.string().trim().optional(),
+});
+
+const reportFinalizationSchema = z.object({
+  comment: z.string().trim().optional(),
+});
+
 app.get("/api/reports", requireRoles("admin", "pathologist"), async (req: AuthRequest, res) => {
   const db = getScopedDb(req, await loadDb());
   const data = db.orders
@@ -5080,6 +5145,16 @@ app.post("/api/reports/:orderId/save", requireRoles("admin", "pathologist"), asy
       target = buildReport(db, order);
       db.reports.push(target);
     }
+    if (target.releaseRuleStatus === "released") {
+      throw new Error("Released reports cannot be edited directly. Add an addendum instead.");
+    }
+    if (
+      target.status === "complete" &&
+      target.reviewStatus !== "corrections_requested" &&
+      target.reviewStatus !== "draft_in_progress"
+    ) {
+      throw new Error("Completed reports cannot be edited unless second review has returned corrections");
+    }
     const hasChanges =
       !sameTrimmedText(target.diagnosis, parsed.data.diagnosis) ||
       !sameTrimmedText(target.microscopicDescription, parsed.data.microscopicDescription) ||
@@ -5092,6 +5167,10 @@ app.post("/api/reports/:orderId/save", requireRoles("admin", "pathologist"), asy
     target.comment = parsed.data.comment;
     target.templateId = parsed.data.templateId ?? target.templateId ?? null;
     target.authorId = currentUser._id;
+    target.trafficLightStatus = "red";
+    target.reviewStatus =
+      target.reviewStatus === "corrections_requested" ? "corrections_requested" : "draft_in_progress";
+    target.releaseRuleStatus = "pending";
     target.versions ??= [];
     if (hasChanges || !target.versions.length) {
       target.versions.unshift({
@@ -5128,6 +5207,7 @@ app.post("/api/reports/:orderId/save", requireRoles("admin", "pathologist"), asy
 });
 
 app.post("/api/reports/:orderId/lock", requireRoles("admin", "pathologist"), async (req: AuthRequest, res) => {
+  const currentUser = ensureUser(req);
   const report = await updateDb((db) => {
     const order = getAccessibleOrderOrThrow(db, req, req.params.orderId);
     if (!orderWorkflowTerminalForCompletion(db, order)) {
@@ -5141,25 +5221,50 @@ app.post("/api/reports/:orderId/lock", requireRoles("admin", "pathologist"), asy
       target = buildReport(db, order);
       db.reports.push(target);
     }
-    if (target.status === "complete" && target.lockedAt) {
-      markOrderItemsCompleted(db, order, target.lockedAt);
-      if (order.status === "released") {
-        order.completedAt = order.completedAt ?? target.lockedAt;
-      }
+    if (reportIsReleaseReady(target) || target.releaseRuleStatus === "released") {
       return target;
     }
+    if (target.status === "complete" && target.lockedAt && target.reviewStatus === "pending_second_review") {
+      markOrderItemsCompleted(db, order, target.lockedAt);
+      return target;
+    }
+    const timestamp = now();
+    const reportingPathologist =
+      findUser(db, target.reportingPathologistId) ??
+      findUser(db, order.assignedPathologistId) ??
+      (currentUser.role === "pathologist" ? currentUser : null);
+    const reviewer = assignSecondReviewer(db, order, reportingPathologist?._id ?? null);
     target.status = "complete";
-    target.lockedAt = now();
-    target.releaseRuleStatus = "ready";
-    target.updatedAt = now();
+    target.lockedAt = timestamp;
+    target.reportingPathologistId = reportingPathologist?._id ?? target.reportingPathologistId ?? null;
+    target.reportingPathologistName =
+      reportingPathologist ? actorDisplayName(reportingPathologist) : target.reportingPathologistName ?? null;
+    target.secondReviewerId = reviewer?._id ?? null;
+    target.secondReviewerName = reviewer ? actorDisplayName(reviewer) : null;
+    target.reviewRequestedAt = timestamp;
+    target.reviewReturnedAt = null;
+    target.reviewValidatedAt = null;
+    target.finalizedAt = null;
+    target.finalizedBy = null;
+    target.finalizationComment = null;
+    target.reviewStatus = "pending_second_review";
+    target.trafficLightStatus = "yellow";
+    target.releaseRuleStatus = "pending";
+    target.updatedAt = timestamp;
     markOrderItemsCompleted(db, order, target.lockedAt);
-    order.updatedAt = now();
+    order.status = "review";
+    order.updatedAt = timestamp;
     appendRequestAudit(db, req, {
       module: "Reporting",
       action: "lock_report",
       targetId: target._id,
       orderId: order._id,
-      summary: `Report locked for ${order.orderNumber}`,
+      summary: `Report completed for ${order.orderNumber} and queued for second review`,
+      metadata: {
+        reportingPathologistId: target.reportingPathologistId,
+        secondReviewerId: target.secondReviewerId,
+        trafficLightStatus: target.trafficLightStatus,
+      },
     });
     return target;
   }).catch((error: Error) => {
@@ -5174,6 +5279,206 @@ app.post("/api/reports/:orderId/lock", requireRoles("admin", "pathologist"), asy
   res.json(report);
 });
 
+app.post(
+  "/api/reports/:orderId/review/return",
+  requireRoles("admin", "pathologist"),
+  async (req: AuthRequest, res) => {
+    const parsed = reportSecondReviewReturnSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ message: "Review comments are required" });
+    }
+
+    const currentUser = ensureUser(req);
+    const report = await updateDb((db) => {
+      const order = getAccessibleOrderOrThrow(db, req, req.params.orderId);
+      const target = getReportByOrder(db, order._id);
+      if (!target) {
+        throw new Error("Report not found");
+      }
+      if (target.status !== "complete" || target.reviewStatus !== "pending_second_review") {
+        throw new Error("Only reports pending second review can be returned for corrections");
+      }
+      assertCanSecondReview(target, currentUser);
+
+      const timestamp = now();
+      target.reviewComments ??= [];
+      target.reviewComments.unshift({
+        _id: createId(),
+        reviewerId: currentUser._id,
+        reviewerName: actorDisplayName(currentUser),
+        decision: "corrections_requested",
+        comment: parsed.data.comments,
+        createdAt: timestamp,
+      });
+      target.status = "draft";
+      target.lockedAt = null;
+      target.signedAt = null;
+      target.signedBy = null;
+      target.releaseRuleStatus = "pending";
+      target.reviewStatus = "corrections_requested";
+      target.trafficLightStatus = "red";
+      target.reviewReturnedAt = timestamp;
+      target.reviewValidatedAt = null;
+      target.finalizedAt = null;
+      target.finalizedBy = null;
+      target.finalizationComment = null;
+      target.updatedAt = timestamp;
+      order.status = "review";
+      order.updatedAt = timestamp;
+      appendRequestAudit(db, req, {
+        module: "Reporting",
+        action: "return_report_for_corrections",
+        targetId: target._id,
+        orderId: order._id,
+        summary: `Report returned for corrections on ${order.orderNumber}`,
+        metadata: {
+          reviewerId: currentUser._id,
+          trafficLightStatus: target.trafficLightStatus,
+        },
+      });
+      return target;
+    }).catch((error: Error) => {
+      res.status(classifyWorkflowError(error)).json({ message: error.message });
+      return null;
+    });
+
+    if (!report) {
+      return;
+    }
+
+    res.json(report);
+  },
+);
+
+app.post(
+  "/api/reports/:orderId/review/approve",
+  requireRoles("admin", "pathologist"),
+  async (req: AuthRequest, res) => {
+    const parsed = reportSecondReviewApprovalSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ message: "Invalid review approval payload" });
+    }
+
+    const currentUser = ensureUser(req);
+    const report = await updateDb((db) => {
+      const order = getAccessibleOrderOrThrow(db, req, req.params.orderId);
+      const target = getReportByOrder(db, order._id);
+      if (!target) {
+        throw new Error("Report not found");
+      }
+      if (target.reviewStatus === "review_validated") {
+        return target;
+      }
+      if (target.status !== "complete" || target.reviewStatus !== "pending_second_review") {
+        throw new Error("Only reports pending second review can be approved");
+      }
+      assertCanSecondReview(target, currentUser);
+
+      const timestamp = now();
+      target.reviewComments ??= [];
+      target.reviewComments.unshift({
+        _id: createId(),
+        reviewerId: currentUser._id,
+        reviewerName: actorDisplayName(currentUser),
+        decision: "approved",
+        comment: parsed.data.comment ?? "",
+        createdAt: timestamp,
+      });
+      target.reviewStatus = "review_validated";
+      target.trafficLightStatus = "yellow";
+      target.releaseRuleStatus = "pending";
+      target.reviewValidatedAt = timestamp;
+      target.updatedAt = timestamp;
+      order.status = "review";
+      order.updatedAt = timestamp;
+      appendRequestAudit(db, req, {
+        module: "Reporting",
+        action: "approve_second_review",
+        targetId: target._id,
+        orderId: order._id,
+        summary: `Second pathologist review approved for ${order.orderNumber}`,
+        metadata: {
+          reviewerId: currentUser._id,
+          trafficLightStatus: target.trafficLightStatus,
+        },
+      });
+      return target;
+    }).catch((error: Error) => {
+      res.status(classifyWorkflowError(error)).json({ message: error.message });
+      return null;
+    });
+
+    if (!report) {
+      return;
+    }
+
+    res.json(report);
+  },
+);
+
+app.post(
+  "/api/reports/:orderId/finalize",
+  requireRoles("admin", "pathologist"),
+  async (req: AuthRequest, res) => {
+    const parsed = reportFinalizationSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ message: "Invalid finalization payload" });
+    }
+
+    const currentUser = ensureUser(req);
+    const report = await updateDb((db) => {
+      const order = getAccessibleOrderOrThrow(db, req, req.params.orderId);
+      const target = getReportByOrder(db, order._id);
+      if (!target) {
+        throw new Error("Report not found");
+      }
+      if (reportIsReleaseReady(target)) {
+        return target;
+      }
+      if (target.status !== "complete" || target.reviewStatus !== "review_validated") {
+        throw new Error("Second pathologist review must be validated before final release readiness");
+      }
+      assertCanFinalizeReport(target, currentUser);
+
+      const timestamp = now();
+      target.reviewStatus = "ready_for_release";
+      target.trafficLightStatus = "green";
+      target.releaseRuleStatus = "ready";
+      target.finalizedAt = timestamp;
+      target.finalizedBy = currentUser._id;
+      target.finalizationComment = parsed.data.comment ?? null;
+      target.signedBy = target.signedBy ?? actorDisplayName(currentUser);
+      target.signedAt = target.signedAt ?? timestamp;
+      target.updatedAt = timestamp;
+      markOrderItemsCompleted(db, order, timestamp);
+      order.status = "completed";
+      order.completedAt = order.completedAt ?? timestamp;
+      order.updatedAt = timestamp;
+      appendRequestAudit(db, req, {
+        module: "Reporting",
+        action: "finalize_report_for_release",
+        targetId: target._id,
+        orderId: order._id,
+        summary: `Report finalized and ready for release for ${order.orderNumber}`,
+        metadata: {
+          finalizedBy: currentUser._id,
+          trafficLightStatus: target.trafficLightStatus,
+        },
+      });
+      return target;
+    }).catch((error: Error) => {
+      res.status(classifyWorkflowError(error)).json({ message: error.message });
+      return null;
+    });
+
+    if (!report) {
+      return;
+    }
+
+    res.json(report);
+  },
+);
+
 app.post("/api/reports/:orderId/email", requireRoles("admin", "pathologist"), async (req: AuthRequest, res) => {
   const report = await updateDb((db) => {
     const order = getAccessibleOrderOrThrow(db, req, req.params.orderId);
@@ -5185,16 +5490,8 @@ app.post("/api/reports/:orderId/email", requireRoles("admin", "pathologist"), as
     if (target.releaseRuleStatus === "released" && target.emailedAt && order.status === "released") {
       return target;
     }
-    if (target.status !== "complete") {
-      if (!orderWorkflowTerminalForCompletion(db, order)) {
-        const workflowPlan = getOrderWorkflowPlan(db, order);
-        throw new Error(
-          `Every order item must reach report sign-out readiness, release, cancellation, or formal resolution before final completion. Next unresolved item: ${workflowPlan.nextStageLabel ?? "workflow item"}`,
-        );
-      }
-      target.status = "complete";
-      target.lockedAt = target.lockedAt ?? now();
-      markOrderItemsCompleted(db, order, target.lockedAt);
+    if (target.status !== "complete" || !reportIsReleaseReady(target)) {
+      throw new Error("Report must pass second-pathologist review and final pathologist approval before release");
     }
     if (!orderWorkflowTerminalForRelease(db, order)) {
       const workflowPlan = getOrderWorkflowPlan(db, order);
@@ -5205,6 +5502,8 @@ app.post("/api/reports/:orderId/email", requireRoles("admin", "pathologist"), as
     const releaseTimestamp = now();
     target.emailedAt = releaseTimestamp;
     target.releaseRuleStatus = "released";
+    target.reviewStatus = "released";
+    target.trafficLightStatus = "green";
     target.updatedAt = now();
     markOrderItemsReleased(db, order, releaseTimestamp);
     order.status = "released";
@@ -5717,7 +6016,7 @@ export { app };
 
 export function startServer() {
   return app.listen(PORT, () => {
-    console.log(`PathNovate backend listening on http://0.0.0.0:${PORT}`);
+    console.log(`OLYVIA backend listening on http://0.0.0.0:${PORT}`);
     startHl7MllpListener();
   });
 }

@@ -2,7 +2,7 @@
 
 Updated: 2026-05-07
 
-This records the open-source components currently integrated into PathNovate and the controls required for live use. AI drafting is allowed by production policy as staff-verified draft support only: every generated report, order note, and QC note remains a draft until licensed staff verification, sign-off, or formal release.
+This records the open-source components currently integrated into OLYVIA and the controls required for live use. AI drafting is allowed by production policy as staff-verified draft support only: every generated report, order note, and QC note remains a draft until licensed staff verification, sign-off, or formal release.
 
 ## Verification Completed
 

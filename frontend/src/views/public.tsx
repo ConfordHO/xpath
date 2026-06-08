@@ -918,9 +918,9 @@ export function LoginPage() {
         <Stack spacing={2.5}>
           <BrandLogo sx={{ width: 220 }} />
           <Typography variant="h4" sx={{ lineHeight: 1 }}>
-            PathNovate
+            OLYVIA
           </Typography>
-          <Typography color="text.secondary">PathNovate Laboratory Information Management System</Typography>
+          <Typography color="text.secondary">OLYVIA Laboratory Information Management System</Typography>
           {error ? <Alert severity="error">{error}</Alert> : null}
           <TextField label="Email" value={email} onChange={(event) => setEmail(event.target.value)} fullWidth />
           <TextField label="Password" type="password" value={password} onChange={(event) => setPassword(event.target.value)} fullWidth />
@@ -1243,7 +1243,7 @@ export function PatientPortalPage() {
 
         {results ? (
           <Box>
-            <PageHeader title="Your orders" description="All your tests with PathNovate. Click an order for details, timeline, results, and payment." />
+            <PageHeader title="Your orders" description="All your tests with OLYVIA. Click an order for details, timeline, results, and payment." />
             <Stack spacing={2}>
               {results.map((order) => (
                 <Paper

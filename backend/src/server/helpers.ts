@@ -617,6 +617,26 @@ export function buildTimeline(db: Database, order: Order) {
   if (report?.lockedAt) {
     timeline.push({ label: "Report completed", at: report.lockedAt });
   }
+  if (report?.reviewRequestedAt) {
+    timeline.push({
+      label: "Second pathologist review requested",
+      at: report.reviewRequestedAt,
+      value: report.secondReviewerName ?? undefined,
+    });
+  }
+  if (report?.reviewReturnedAt) {
+    timeline.push({ label: "Report returned for corrections", at: report.reviewReturnedAt });
+  }
+  if (report?.reviewValidatedAt) {
+    timeline.push({
+      label: "Second pathologist review validated",
+      at: report.reviewValidatedAt,
+      value: report.secondReviewerName ?? undefined,
+    });
+  }
+  if (report?.finalizedAt) {
+    timeline.push({ label: "Report finalized for release", at: report.finalizedAt });
+  }
   if (order.releasedAt) {
     timeline.push({ label: "Result released", at: order.releasedAt });
   }
@@ -760,11 +780,25 @@ export function buildReport(db: Database, order: Order) {
     orderId: order._id,
     accessionId: accession?._id ?? null,
     status: "draft" as const,
+    trafficLightStatus: "red" as const,
+    reviewStatus: "draft_in_progress" as const,
     diagnosis: "",
     microscopicDescription: "",
     grossDescription: accession?.grossDescription ?? "",
     comment: "",
     authorId: null,
+    reportingPathologistId: order.assignedPathologistId ?? null,
+    reportingPathologistName: findUser(db, order.assignedPathologistId)?.name ?? null,
+    secondReviewerId: null,
+    secondReviewerName: null,
+    reviewRequestedAt: null,
+    reviewReturnedAt: null,
+    reviewValidatedAt: null,
+    finalizedAt: null,
+    finalizedBy: null,
+    finalizationComment: null,
+    releaseRuleStatus: "pending" as const,
+    reviewComments: [],
     createdAt: now(),
     updatedAt: now(),
   };
@@ -833,7 +867,9 @@ export function buildDashboardSummary(db: Database) {
   const pendingPickup = db.orders.filter(
     (order) => order.courierStatus && order.courierStatus !== "received_at_lab",
   ).length;
-  const readyReports = db.reports.filter((report) => report.status === "complete").length;
+  const readyReports = db.reports.filter(
+    (report) => report.releaseRuleStatus === "ready" || report.reviewStatus === "ready_for_release",
+  ).length;
   const workflowItems = getWorkflowItemDashboard(db);
   return {
     totalOrders,

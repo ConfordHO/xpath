@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1820" height="430" viewBox="0 0 1820 430" role="img" aria-label="OLYVIA by X.PATH Labs">
+  <defs>
+    <linearGradient id="brandBlue" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0" stop-color="#075a90"/>
+      <stop offset="1" stop-color="#0b84b7"/>
+    </linearGradient>
+    <linearGradient id="brandTeal" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0" stop-color="#35b78a"/>
+      <stop offset="1" stop-color="#64c6a0"/>
+    </linearGradient>
+  </defs>
+  <rect width="1820" height="430" fill="none"/>
+  <g transform="translate(22 16)">
+    <path d="M222 8a205 205 0 1 0 0 410" fill="none" stroke="#0a628f" stroke-width="8"/>
+    <path d="M228 28a185 185 0 1 0 0 370" fill="none" stroke="#49b98e" stroke-width="8"/>
+    <path d="M56 310h188c14 0 24 10 24 24v27H32v-27c0-14 10-24 24-24z" fill="url(#brandBlue)"/>
+    <path d="M90 286h126c14 0 25 11 25 24H66c0-13 11-24 24-24z" fill="#075a90"/>
+    <path d="M118 244h62l32 52H82z" fill="#1086b4"/>
+    <path d="M98 120h80v160H98z" fill="#1095b7" transform="rotate(26 138 200)"/>
+    <path d="M112 72h74v42h-74z" fill="#37b78f" transform="rotate(26 149 93)"/>
+    <path d="M79 214h110" stroke="#075a90" stroke-width="18" stroke-linecap="round"/>
+    <circle cx="150" cy="162" r="34" fill="#1095b7" stroke="#073b5d" stroke-width="5"/>
+    <path d="M196 124c58 47 58 119 0 166" fill="none" stroke="#35b78a" stroke-width="16" stroke-linecap="round"/>
+    <path d="M246 124c-58 47-58 119 0 166" fill="none" stroke="#075a90" stroke-width="16" stroke-linecap="round"/>
+    <path d="M200 150h42M190 182h62M188 214h66M198 246h46" stroke="#0d6f96" stroke-width="8" stroke-linecap="round"/>
+  </g>
+  <text x="438" y="252" fill="url(#brandBlue)" font-family="Arial Black, Arial, sans-serif" font-size="186" font-weight="900">OLYVIA</text>
+  <text x="748" y="337" fill="#075a90" font-family="Arial, sans-serif" font-size="53" font-weight="800">By X.PATH Labs</text>
+</svg>

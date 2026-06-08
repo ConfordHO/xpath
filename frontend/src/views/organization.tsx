@@ -1,5 +1,4 @@
 import AddRoundedIcon from '@mui/icons-material/AddRounded'
-import BusinessRoundedIcon from '@mui/icons-material/BusinessRounded'
 import {
   Alert,
   Box,
@@ -88,7 +87,7 @@ export function OrganizationManagementPage() {
     <Stack spacing={3}>
       <PageHeader
         title="Organizations"
-        description="Manage lab tenants on the PathNovate platform"
+        description="Manage lab tenants on the OLYVIA platform"
         action={
           <Button startIcon={<AddRoundedIcon />} variant="contained" onClick={() => setOpen(true)}>
             New Organization

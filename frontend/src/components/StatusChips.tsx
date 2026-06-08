@@ -1,8 +1,8 @@
 import { Chip } from '@mui/material'
 import { alpha, useTheme, type Theme } from '@mui/material/styles'
 
-import type { CourierStatus, OrderStatus } from '../types'
-import { courierStatusLabel, statusLabel } from '../utils'
+import type { CourierStatus, OrderStatus, Report } from '../types'
+import { courierStatusLabel, reportTrafficLightLabel, statusLabel } from '../utils'
 
 function chipSx(theme: Theme, tone: string) {
   switch (tone) {
@@ -58,6 +58,12 @@ export function PriorityChip({ priority }: { priority: 'normal' | 'urgent' }) {
       sx={chipSx(theme, priority === 'urgent' ? 'warning' : 'default')}
     />
   )
+}
+
+export function ReportTrafficLightChip({ status }: { status?: Report['trafficLightStatus'] }) {
+  const theme = useTheme()
+  const tone = status === 'green' ? 'success' : status === 'yellow' ? 'warning' : 'error'
+  return <Chip label={reportTrafficLightLabel(status)} size="small" sx={chipSx(theme, tone)} />
 }
 
 export function CourierChip({ status }: { status: CourierStatus }) {

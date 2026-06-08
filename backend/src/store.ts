@@ -73,7 +73,7 @@ const canonicalConnectorSecretEnvMap: Record<string, string> = {
 };
 
 const legacySettingDefaults = {
-  labName: "PathNovate LIMS",
+  labName: "OLYVIA LIMS",
   tagline: "Résultats fiables. Tarification claire. Délais rapides.",
   aboutText:
     "Nous sommes un laboratoire de pathologie et de diagnostic moléculaire engagé dans le diagnostic précis, la tarification transparente et le rendu des résultats dans les délais. Notre équipe de pathologistes et de personnel de laboratoire travaille avec les médecins référents et les patients pour fournir des résultats fiables conformément aux exigences de la loi camerounaise n° 2010/012 du 21 décembre 2010 relative à la cybersécurité et à la cybercriminalité ainsi qu'aux réglementations sanitaires applicables.",
@@ -85,7 +85,14 @@ const legacySettingDefaults = {
   currency: "XAF",
   locale: "fr",
 } as const;
-const legacyLabNames = new Set(["X-PATH LIMS", "X.PATH LIMS", "X.PATH LABS", "XPATH LIMS"]);
+const legacyLabNames = new Set([
+  "X-PATH LIMS",
+  "X.PATH LIMS",
+  "X.PATH LABS",
+  "XPATH LIMS",
+  "PathNovate",
+  "PathNovate LIMS",
+]);
 
 type LegacyRecord = Record<string, unknown>;
 
@@ -628,7 +635,7 @@ function normalizeDatabase(raw: Partial<Database>): Database {
     aboutText:
       !rawSettings?.aboutText || rawSettings.aboutText === legacySettingDefaults.aboutText
         ? seed.settings.aboutText
-        : rawSettings.aboutText.replace(/X\.PATH Labs|X-PATH Labs|XPath Labs/g, "PathNovate"),
+        : rawSettings.aboutText.replace(/X\.PATH Labs|X-PATH Labs|XPath Labs|PathNovate/g, "OLYVIA"),
     contactEmail:
       !rawSettings?.contactEmail || rawSettings.contactEmail === legacySettingDefaults.contactEmail
         ? seed.settings.contactEmail
@@ -1021,12 +1028,44 @@ function normalizeDatabase(raw: Partial<Database>): Database {
       ownershipAuditId: item.ownershipAuditId ?? null,
     })),
     specialStainRequests: raw.specialStainRequests ?? seed.specialStainRequests,
-    reports: (raw.reports ?? seed.reports).map((report) => ({
-      releaseRuleStatus: "pending",
-      versions: [],
-      addenda: [],
-      ...report,
-    })),
+    reports: (raw.reports ?? seed.reports).map((report) => {
+      const releaseRuleStatus = report.releaseRuleStatus ?? "pending";
+      const reviewStatus =
+        report.reviewStatus ??
+        (releaseRuleStatus === "released"
+          ? "released"
+          : releaseRuleStatus === "ready"
+            ? "ready_for_release"
+            : report.status === "complete"
+              ? "pending_second_review"
+              : "draft_in_progress");
+      const trafficLightStatus =
+        report.trafficLightStatus ??
+        (reviewStatus === "ready_for_release" || reviewStatus === "released"
+          ? "green"
+          : reviewStatus === "pending_second_review" || reviewStatus === "review_validated"
+            ? "yellow"
+            : "red");
+      return {
+        ...report,
+        releaseRuleStatus,
+        trafficLightStatus,
+        reviewStatus,
+        versions: report.versions ?? [],
+        addenda: report.addenda ?? [],
+        reviewComments: report.reviewComments ?? [],
+        reportingPathologistId: report.reportingPathologistId ?? null,
+        reportingPathologistName: report.reportingPathologistName ?? null,
+        secondReviewerId: report.secondReviewerId ?? null,
+        secondReviewerName: report.secondReviewerName ?? null,
+        reviewRequestedAt: report.reviewRequestedAt ?? null,
+        reviewReturnedAt: report.reviewReturnedAt ?? null,
+        reviewValidatedAt: report.reviewValidatedAt ?? null,
+        finalizedAt: report.finalizedAt ?? null,
+        finalizedBy: report.finalizedBy ?? null,
+        finalizationComment: report.finalizationComment ?? null,
+      };
+    }),
     reportTemplates: raw.reportTemplates ?? seed.reportTemplates,
     cytologyCases: (raw.cytologyCases ?? seed.cytologyCases).map((entry) => ({
       ...entry,

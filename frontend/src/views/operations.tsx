@@ -43,6 +43,7 @@ import {
   LoadingPanel,
   MetricCard,
   PageHeader,
+  ReportTrafficLightChip,
   SectionCard,
 } from '../components'
 
@@ -57,13 +58,19 @@ import type {
   NotificationEntry,
   Report,
   Sample,
-  Doctor,
-  ZohoBooksConfig,
-  ZohoBooksOrganization,
   ZohoBooksSyncLog,
 } from '../types'
 
-import { downloadPathologyReportPdf, downloadPdfDocument, formatDate, formatDateTime, formatMoney, paymentMethodLabel } from '../utils'
+import {
+  downloadPathologyReportPdf,
+  downloadPdfDocument,
+  formatDate,
+  formatDateTime,
+  formatMoney,
+  paymentMethodLabel,
+  reportIsReadyForRelease,
+  reportReviewStatusLabel,
+} from '../utils'
 
 const manualPaymentMethods = [
   { value: 'cash', label: 'Cash' },
@@ -731,8 +738,8 @@ export function AccountingPage() {
     return response.data as { data: ZohoBooksSyncLog[]; total: number }
   })
   const [feedback, setFeedback] = useState<{ kind: 'success' | 'error'; message: string } | null>(null)
-  const [fromDate, setFromDate] = useState(new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10))
-  const [toDate, setToDate] = useState(new Date().toISOString().slice(0, 10))
+  const [fromDate, setFromDate] = useState(() => new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10))
+  const [toDate, setToDate] = useState(() => new Date().toISOString().slice(0, 10))
   const [syncOrderId, setSyncOrderId] = useState('')
   const [syncPaymentId, setSyncPaymentId] = useState('')
 
@@ -1209,6 +1216,7 @@ export function ReportsPage() {
                 <TableCell>Order #</TableCell>
                 <TableCell>Patient</TableCell>
                 <TableCell>Status</TableCell>
+                <TableCell>QC</TableCell>
                 <TableCell>Date</TableCell>
                 <TableCell>Report PDF</TableCell>
                 <TableCell>Email to client</TableCell>
@@ -1220,6 +1228,14 @@ export function ReportsPage() {
                   <TableCell>{item.order.orderNumber}</TableCell>
                   <TableCell>{item.order.patient.firstName} {item.order.patient.lastName}</TableCell>
                   <TableCell>{item.order.status}</TableCell>
+                  <TableCell>
+                    <Stack spacing={0.75}>
+                      <ReportTrafficLightChip status={item.report.trafficLightStatus} />
+                      <Typography variant="body2" color="text.secondary">
+                        {reportReviewStatusLabel(item.report.reviewStatus)}
+                      </Typography>
+                    </Stack>
+                  </TableCell>
                   <TableCell>{formatDate(item.order.createdAt)}</TableCell>
                   <TableCell>
                     <Button
@@ -1237,7 +1253,7 @@ export function ReportsPage() {
                   <TableCell>
                     <Button
                       startIcon={<EmailRoundedIcon />}
-                      disabled={actionLock.isPending(`email-${item.order._id}`)}
+                      disabled={!reportIsReadyForRelease(item.report) || actionLock.isPending(`email-${item.order._id}`)}
                       onClick={async () => {
                         await actionLock.runLocked(`email-${item.order._id}`, async () => {
                           await api.post(`/reports/${item.order._id}/email`)

@@ -41,9 +41,9 @@ MAVIANCE_ORANGE_PAYITEM_ID=
 
 ## Runtime flow
 
-1. XPath asks Smobilpay for a cash-in pay item when a fixed pay item is not configured.
-2. XPath requests a quote from `/quotestd`.
-3. XPath starts the wallet collection through `/collectstd`.
+1. OLYVIA asks Smobilpay for a cash-in pay item when a fixed pay item is not configured.
+2. OLYVIA requests a quote from `/quotestd`.
+3. OLYVIA starts the wallet collection through `/collectstd`.
 4. The response is persisted locally as both:
    - a normal `payment`
    - a richer `mavianceTransaction`

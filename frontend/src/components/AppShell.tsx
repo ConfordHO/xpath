@@ -56,7 +56,7 @@ export function AppShell({ groups, children }: AppShellProps) {
       >
         <BrandLogo sx={{ width: 210 }} />
         <Typography variant="h6" sx={{ mt: 1, lineHeight: 1 }}>
-          PathNovate
+          OLYVIA
         </Typography>
       </Paper>
       <Paper sx={{ p: 2, mb: 2, bgcolor: 'primary.main', color: 'primary.contrastText' }}>
@@ -152,7 +152,7 @@ export function AppShell({ groups, children }: AppShellProps) {
             >
               <BrandLogo sx={{ width: 136 }} />
               <Typography variant="subtitle1" sx={{ ml: 1, fontWeight: 700 }}>
-                PathNovate
+                OLYVIA
               </Typography>
             </Stack>
           </Toolbar>

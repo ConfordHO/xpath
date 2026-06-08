@@ -399,6 +399,14 @@ export interface Report {
   orderId: string
   accessionId?: string | null
   status: 'draft' | 'complete'
+  trafficLightStatus?: 'red' | 'yellow' | 'green'
+  reviewStatus?:
+    | 'draft_in_progress'
+    | 'pending_second_review'
+    | 'corrections_requested'
+    | 'review_validated'
+    | 'ready_for_release'
+    | 'released'
   diagnosis: string
   microscopicDescription: string
   grossDescription: string
@@ -406,10 +414,28 @@ export interface Report {
   emailedAt?: string | null
   lockedAt?: string | null
   authorId?: string | null
+  reportingPathologistId?: string | null
+  reportingPathologistName?: string | null
+  secondReviewerId?: string | null
+  secondReviewerName?: string | null
+  reviewRequestedAt?: string | null
+  reviewReturnedAt?: string | null
+  reviewValidatedAt?: string | null
+  finalizedAt?: string | null
+  finalizedBy?: string | null
+  finalizationComment?: string | null
   templateId?: string | null
   signedBy?: string | null
   signedAt?: string | null
   releaseRuleStatus?: 'pending' | 'ready' | 'released'
+  reviewComments?: Array<{
+    _id: string
+    reviewerId: string
+    reviewerName: string
+    decision: 'corrections_requested' | 'approved'
+    comment: string
+    createdAt: string
+  }>
   versions?: Array<{
     version: number
     diagnosis: string

@@ -10,8 +10,8 @@ import '@fontsource/cormorant-garamond/700.css'
 import '../src/index.css'
 
 export const metadata: Metadata = {
-  title: 'PathNovate',
-  description: 'PathNovate pathology and molecular diagnostics platform',
+  title: 'OLYVIA',
+  description: 'OLYVIA pathology and molecular diagnostics platform by X.PATH Labs',
 }
 
 export default function RootLayout({ children }: { children: ReactNode }) {
