@@ -24,6 +24,7 @@ OLYVIA is a production-grade Laboratory Information Management System for clinic
 - ✅ Chain of custody with GPS-ready events
 - ✅ Sample discrepancy / CAPA workflows with supervisor approval
 - ✅ Specimen condition intake and rejection workflows
+- ✅ Pathology report QC gate: red draft, yellow second-pathologist review, green ready-for-release state before result delivery
 
 ### Patient & Clinician Portals
 - ✅ Public patient portal: order lookup, result tracking

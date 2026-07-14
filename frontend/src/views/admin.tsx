@@ -50,7 +50,7 @@ import {
   SectionCard,
 } from '../components'
 
-import { errorMessage, useLoadable } from './shared'
+import { errorMessage, unwrapList, useLoadable } from './shared'
 
 import type {
   Doctor,
@@ -68,8 +68,8 @@ export function UsersPage() {
   const { user } = useAuth()
   const { locale } = useLanguage()
   const usersState = useLoadable<SafeUser[]>([], [], async () => {
-    const response = await api.get<SafeUser[]>('/users')
-    return response.data
+    const response = await api.get<SafeUser[] | { data: SafeUser[] }>('/users')
+    return unwrapList(response.data)
   })
   const sitesState = useLoadable<Site[]>([], [], async () => {
     const response = await api.get<Site[]>('/sites')
@@ -341,8 +341,8 @@ export function DoctorsPage() {
     return response.data
   })
   const usersState = useLoadable<SafeUser[]>([], [], async () => {
-    const response = await api.get<SafeUser[]>('/users')
-    return response.data
+    const response = await api.get<SafeUser[] | { data: SafeUser[] }>('/users')
+    return unwrapList(response.data)
   })
   const [dialogOpen, setDialogOpen] = useState(false)
   const [editing, setEditing] = useState<Doctor | null>(null)

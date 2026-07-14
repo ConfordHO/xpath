@@ -382,7 +382,7 @@ Required audit coverage:
 - Specimen create/label/scan/move/reject/accept/archive.
 - Department handoff and receipt.
 - Every workflow step start/complete/override.
-- Result draft/edit/sign/release/amend.
+- Result/report draft, first-pathologist completion, second-pathologist assignment, correction return, QC approval, finalization, release, and amendment.
 - Report print/download/send.
 - Configuration change.
 - Role/permission change.

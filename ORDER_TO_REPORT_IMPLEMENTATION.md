@@ -161,9 +161,11 @@ After lab release:
 The pathologist then:
 
 - reviews the anonymized case
-- completes the report
-- signs out the report in-system
-- releases the result
+- drafts the pathology report while the report remains red / in progress
+- completes the report, which turns the case yellow and automatically assigns another active pathologist for second review
+- receives corrections if the second pathologist returns the case, then edits and completes the report again
+- finalizes the report only after second-pathologist validation, which turns the case green and makes it ready for release
+- releases the result only after the green QC state is reached
 
 ### 8. Final release
 
@@ -172,6 +174,7 @@ When the result is released:
 - the requester-facing flow can access the identified patient result again
 - communications and report delivery logs are updated
 - the order timeline shows the end-to-end path from intake to release
+- release is blocked unless the report has passed second-pathologist review, has been finalized by the reporting pathologist, and is green / ready for release
 
 ## Walk-in reception to final report
 

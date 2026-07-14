@@ -42,6 +42,8 @@ pnpm-debug.log*
 .vscode/
 
 # Local test and inspection artifacts
+__pycache__/
+*.pyc
 playwright-report/
 test-results/
 tmp-*.png

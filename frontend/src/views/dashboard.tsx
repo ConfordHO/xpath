@@ -18,7 +18,7 @@ import { api } from '../api'
 import { useAuth } from '../auth'
 import { CourierChip, LoadingPanel, MetricCard, PageHeader, SectionCard, StatusChip } from '../components'
 import { roleLabels } from '../app/access'
-import { PageError, useLoadable } from './shared'
+import { PageError, unwrapList, useLoadable } from './shared'
 
 import type {
   Accession,
@@ -244,8 +244,8 @@ export function DashboardPage() {
     if (!user || !['super_admin', 'admin'].includes(user.role)) {
       return []
     }
-    const response = await api.get<SafeUser[]>('/users')
-    return response.data
+    const response = await api.get<SafeUser[] | { data: SafeUser[] }>('/users')
+    return unwrapList(response.data)
   })
   const sitesState = useLoadable<Site[]>([], [user?._id], async () => {
     if (user?.role !== 'super_admin') {

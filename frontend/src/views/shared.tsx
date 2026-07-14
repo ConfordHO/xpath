@@ -12,6 +12,12 @@ export function errorMessage(error: unknown) {
   return 'Something went wrong'
 }
 
+export type ListResponse<T> = T[] | { data: T[] }
+
+export function unwrapList<T>(response: ListResponse<T>): T[] {
+  return Array.isArray(response) ? response : response.data
+}
+
 export function useLoadable<T>(initial: T, dependencies: DependencyList, loader: () => Promise<T>) {
   const [data, setData] = useState<T>(initial)
   const [loading, setLoading] = useState(true)

@@ -464,18 +464,26 @@ export function OrderDetailPage() {
             ? '/pathologist/workflow'
             : '/orders'
   const report = detail.report
+  const isReportingPathologist = Boolean(
+    user &&
+      user.role === 'pathologist' &&
+      (!report?.reportingPathologistId || report.reportingPathologistId === user._id),
+  )
   const reportLockedForEditing =
-    report?.status === 'complete' &&
-    !['corrections_requested', 'draft_in_progress'].includes(report.reviewStatus ?? '')
+    !isReportingPathologist ||
+    (report?.status === 'complete' &&
+      !['corrections_requested', 'draft_in_progress'].includes(report.reviewStatus ?? ''))
   const canSecondReview = Boolean(
     user &&
       report?.reviewStatus === 'pending_second_review' &&
-      (['super_admin', 'admin'].includes(user.role) || report.secondReviewerId === user._id),
+      user.role === 'pathologist' &&
+      report.secondReviewerId === user._id,
   )
   const canFinalizeReport = Boolean(
     user &&
       report?.reviewStatus === 'review_validated' &&
-      (['super_admin', 'admin'].includes(user.role) || report.reportingPathologistId === user._id),
+      user.role === 'pathologist' &&
+      report.reportingPathologistId === user._id,
   )
   const readyForRelease = reportIsReadyForRelease(report)
 
@@ -499,7 +507,6 @@ export function OrderDetailPage() {
       try {
         await api.post(`/reports/${orderId}/save`, reportForm)
         await api.post(`/reports/${orderId}/lock`)
-        await api.post(`/reports/${orderId}/sign`)
         setFeedback({ kind: 'success', message: 'Report completed and assigned for second review.' })
         detailState.refresh()
       } catch (completeError) {

@@ -168,22 +168,29 @@ In the verified run:
 
 ### 7. Reporting and Release
 
-Pathologist actions are split into separate stages:
+Pathology reporting now uses a traffic-light quality-control gate before release:
 
 1. Save report draft
-2. Lock report
-3. Email/release report
+2. Complete report for second-pathologist review
+3. Second pathologist validates the report or returns it for corrections
+4. Reporting pathologist finalizes the reviewed report for release
+5. Email/release report
 
 These stages matter:
 
-- `save` updates clinical content and versions
-- `lock` marks the report complete and sets order `completed`
-- `email` releases the result and sets order `released`
+- `save` keeps the report red while clinical content is still being drafted
+- `lock` marks the report complete, turns the case yellow, and randomly assigns another active pathologist at the same site for QC review
+- `review/return` sends a yellow report back to red with reviewer comments when corrections are required
+- `review/approve` keeps the report yellow but records that the second pathologist has validated the QC review
+- `finalize` can only be completed by the reporting pathologist after second review; it turns the report green and makes it eligible for release
+- `email` releases the result only when the report is green and every workflow item is terminal
 
 This mirrors the real-world difference between:
 
 - report authored
-- report finalized
+- report completed by the first pathologist
+- report independently reviewed
+- report finalized and approved for release
 - report actually released
 
 ### 8. Patient Portal Result Return

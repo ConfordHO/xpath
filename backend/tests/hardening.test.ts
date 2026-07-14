@@ -191,7 +191,7 @@ describe("production hardening", () => {
       .get("/api/users")
       .set("Authorization", `Bearer ${authToken}`);
     assert.equal(users.status, 200);
-    const technician = users.body.find((entry: { role: string }) => entry.role === "technician");
+    const technician = users.body.data.find((entry: { role: string }) => entry.role === "technician");
     assert.ok(technician);
 
     const releaseToLab = await request
@@ -303,8 +303,8 @@ describe("production hardening", () => {
       .get("/api/users")
       .set("Authorization", `Bearer ${authToken}`);
     assert.equal(users.status, 200);
-    const technician = users.body.find((entry: { role: string }) => entry.role === "technician");
-    const pathologist = users.body.find((entry: { role: string }) => entry.role === "pathologist");
+    const technician = users.body.data.find((entry: { role: string }) => entry.role === "technician");
+    const pathologist = users.body.data.find((entry: { role: string }) => entry.role === "pathologist");
     assert.ok(technician);
     assert.ok(pathologist);
 
@@ -425,10 +425,11 @@ describe("production hardening", () => {
       .set("Authorization", `Bearer ${authToken}`)
       .send({ pathologistId: pathologist._id, scannedCode: accessionLookup.body.accessionId });
     assert.equal(readyForReview.status, 200);
+    const reportingPathologistToken = await loginUser(pathologist.email);
 
     const reportSave = await request
       .post(`/api/reports/${orderCreate.body._id}/save`)
-      .set("Authorization", `Bearer ${authToken}`)
+      .set("Authorization", `Bearer ${reportingPathologistToken}`)
       .send({
         diagnosis: "Benign tissue with proliferative index recorded",
         microscopicDescription: "H&E and Ki-67 reviewed.",
@@ -439,9 +440,9 @@ describe("production hardening", () => {
 
     const reportLock = await request
       .post(`/api/reports/${orderCreate.body._id}/lock`)
-      .set("Authorization", `Bearer ${authToken}`)
+      .set("Authorization", `Bearer ${reportingPathologistToken}`)
       .send({});
-    assert.equal(reportLock.status, 200);
+    assert.equal(reportLock.status, 200, JSON.stringify(reportLock.body));
     assert.equal(reportLock.body.trafficLightStatus, "yellow");
     assert.equal(reportLock.body.reviewStatus, "pending_second_review");
     assert.notEqual(reportLock.body.secondReviewerId, pathologist._id);
@@ -452,9 +453,61 @@ describe("production hardening", () => {
       .send({});
     assert.equal(prematureRelease.status, 400);
 
+    const blockedSelfReview = await request
+      .post(`/api/reports/${orderCreate.body._id}/review/approve`)
+      .set("Authorization", `Bearer ${reportingPathologistToken}`)
+      .send({ comment: "The reporting pathologist must not approve their own report." });
+    assert.equal(blockedSelfReview.status, 400);
+    assert.match(blockedSelfReview.body.message, /reporting pathologist/i);
+
+    const usersForReviewer = await request
+      .get("/api/users?limit=200")
+      .set("Authorization", `Bearer ${authToken}`);
+    assert.equal(usersForReviewer.status, 200);
+    const secondReviewer = usersForReviewer.body.data.find(
+      (entry: { _id: string }) => entry._id === reportLock.body.secondReviewerId,
+    );
+    assert.ok(secondReviewer);
+    const secondReviewerToken = await loginUser(secondReviewer.email);
+    const returnedForCorrections = await request
+      .post(`/api/reports/${orderCreate.body._id}/review/return`)
+      .set("Authorization", `Bearer ${secondReviewerToken}`)
+      .send({ comments: "Please clarify the Ki-67 interpretation before release." });
+    assert.equal(returnedForCorrections.status, 200);
+    assert.equal(returnedForCorrections.body.trafficLightStatus, "red");
+    assert.equal(returnedForCorrections.body.reviewStatus, "corrections_requested");
+
+    const correctedReport = await request
+      .post(`/api/reports/${orderCreate.body._id}/save`)
+      .set("Authorization", `Bearer ${reportingPathologistToken}`)
+      .send({
+        diagnosis: "Benign tissue with clarified proliferative index",
+        microscopicDescription: "H&E and Ki-67 reviewed; Ki-67 is low.",
+        grossDescription: "One tissue block.",
+        comment: "Multi-test order completed after QC correction.",
+      });
+    assert.equal(correctedReport.status, 200);
+    assert.equal(correctedReport.body.trafficLightStatus, "red");
+
+    const relockedReport = await request
+      .post(`/api/reports/${orderCreate.body._id}/lock`)
+      .set("Authorization", `Bearer ${reportingPathologistToken}`)
+      .send({});
+    assert.equal(relockedReport.status, 200);
+    assert.equal(relockedReport.body.trafficLightStatus, "yellow");
+    assert.equal(relockedReport.body.reviewStatus, "pending_second_review");
+    const relockedSecondReviewer = usersForReviewer.body.data.find(
+      (entry: { _id: string }) => entry._id === relockedReport.body.secondReviewerId,
+    );
+    assert.ok(relockedSecondReviewer);
+    const relockedSecondReviewerToken =
+      relockedSecondReviewer.email === secondReviewer.email
+        ? secondReviewerToken
+        : await loginUser(relockedSecondReviewer.email);
+
     const secondReview = await request
       .post(`/api/reports/${orderCreate.body._id}/review/approve`)
-      .set("Authorization", `Bearer ${authToken}`)
+      .set("Authorization", `Bearer ${relockedSecondReviewerToken}`)
       .send({ comment: "Second pathologist QC accepted." });
     assert.equal(secondReview.status, 200);
     assert.equal(secondReview.body.trafficLightStatus, "yellow");
@@ -462,7 +515,7 @@ describe("production hardening", () => {
 
     const finalApproval = await request
       .post(`/api/reports/${orderCreate.body._id}/finalize`)
-      .set("Authorization", `Bearer ${authToken}`)
+      .set("Authorization", `Bearer ${reportingPathologistToken}`)
       .send({ comment: "Final release approved by reporting pathologist." });
     assert.equal(finalApproval.status, 200);
     assert.equal(finalApproval.body.trafficLightStatus, "green");
@@ -610,8 +663,8 @@ describe("production hardening", () => {
       .get("/api/users")
       .set("Authorization", `Bearer ${authToken}`);
     assert.equal(users.status, 200);
-    const technician = users.body.find((entry: { role: string }) => entry.role === "technician");
-    const pathologist = users.body.find((entry: { role: string }) => entry.role === "pathologist");
+    const technician = users.body.data.find((entry: { role: string }) => entry.role === "technician");
+    const pathologist = users.body.data.find((entry: { role: string }) => entry.role === "pathologist");
     assert.ok(technician);
     assert.ok(pathologist);
 
@@ -674,10 +727,11 @@ describe("production hardening", () => {
       .set("Authorization", `Bearer ${authToken}`)
       .send({ pathologistId: pathologist._id, scannedCode: accessionLookup.body.accessionId });
     assert.equal(readyForReview.status, 200);
+    const referralReportingPathologistToken = await loginUser(pathologist.email);
 
     const reportSave = await request
       .post(`/api/reports/${referralOrderId}/save`)
-      .set("Authorization", `Bearer ${authToken}`)
+      .set("Authorization", `Bearer ${referralReportingPathologistToken}`)
       .send({
         diagnosis: "Referral biopsy released diagnosis",
         microscopicDescription: "Reviewed referral sections.",
@@ -688,9 +742,9 @@ describe("production hardening", () => {
 
     const reportLock = await request
       .post(`/api/reports/${referralOrderId}/lock`)
-      .set("Authorization", `Bearer ${authToken}`)
+      .set("Authorization", `Bearer ${referralReportingPathologistToken}`)
       .send({});
-    assert.equal(reportLock.status, 200);
+    assert.equal(reportLock.status, 200, JSON.stringify(reportLock.body));
     assert.equal(reportLock.body.trafficLightStatus, "yellow");
 
     const prematureRelease = await request
@@ -699,16 +753,22 @@ describe("production hardening", () => {
       .send({});
     assert.equal(prematureRelease.status, 400);
 
+    const referralSecondReviewer = users.body.data.find(
+      (entry: { _id: string }) => entry._id === reportLock.body.secondReviewerId,
+    );
+    assert.ok(referralSecondReviewer);
+    const referralSecondReviewerToken = await loginUser(referralSecondReviewer.email);
+
     const secondReview = await request
       .post(`/api/reports/${referralOrderId}/review/approve`)
-      .set("Authorization", `Bearer ${authToken}`)
+      .set("Authorization", `Bearer ${referralSecondReviewerToken}`)
       .send({ comment: "External referral QC accepted." });
     assert.equal(secondReview.status, 200);
     assert.equal(secondReview.body.reviewStatus, "review_validated");
 
     const finalApproval = await request
       .post(`/api/reports/${referralOrderId}/finalize`)
-      .set("Authorization", `Bearer ${authToken}`)
+      .set("Authorization", `Bearer ${referralReportingPathologistToken}`)
       .send({ comment: "External referral ready for release." });
     assert.equal(finalApproval.status, 200);
     assert.equal(finalApproval.body.trafficLightStatus, "green");

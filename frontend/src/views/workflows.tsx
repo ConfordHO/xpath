@@ -36,12 +36,13 @@ import { api } from '../api'
 import {
   EmptyState,
   PageHeader,
+  ReportTrafficLightChip,
   SectionCard,
   StatusChip,
   VoiceAssistField,
 } from '../components'
 
-import { useActionLock, useLoadable } from './shared'
+import { errorMessage, useActionLock, unwrapList, useLoadable } from './shared'
 
 import type {
   Accession,
@@ -56,9 +57,7 @@ import type {
   WorkflowTemplate,
 } from '../types'
 
-import { formatDateTime } from '../utils'
-import { errorMessage } from './shared'
-
+import { formatDateTime, reportReviewStatusLabel } from '../utils'
 function isHistologyStage(stageId: OrderWorkflowStageId | null) {
   return ['accessioning', 'grossing', 'processing', 'embedding', 'sectioning', 'staining'].includes(stageId ?? '')
 }
@@ -98,8 +97,8 @@ export function ReceptionistWorkflowPage() {
     return response.data
   })
   const usersState = useLoadable<SafeUser[]>([], [], async () => {
-    const response = await api.get<SafeUser[]>('/users')
-    return response.data
+    const response = await api.get<SafeUser[] | { data: SafeUser[] }>('/users')
+    return unwrapList(response.data)
   })
 
   const technicians = usersState.data.filter((user) => user.role === 'technician')
@@ -683,8 +682,8 @@ export function TechnicianWorkflowPage() {
     return response.data
   })
   const usersState = useLoadable<SafeUser[]>([], [], async () => {
-    const response = await api.get<SafeUser[]>('/users')
-    return response.data
+    const response = await api.get<SafeUser[] | { data: SafeUser[] }>('/users')
+    return unwrapList(response.data)
   })
   const pathologists = usersState.data.filter((user) => user.role === 'pathologist')
   const [reviewDialog, setReviewDialog] = useState<{ orderId: string; pathologistId: string }>({ orderId: '', pathologistId: '' })
@@ -875,7 +874,7 @@ export function PathologistWorkflowPage() {
     <Stack spacing={3}>
       <PageHeader
         title="Pathologist workflow"
-        description="Open the case workspace to review accession context, write the report, complete sign-out, and release the final result."
+        description="Open the case workspace to draft reports, complete second-pathologist QC review, finalize green reports, and release approved results."
         action={<Button component={RouterLink} to="/reports">Open released reports</Button>}
       />
       <Box sx={{ display: 'grid', gap: 2, gridTemplateColumns: { xs: '1fr', md: 'repeat(3, 1fr)' } }}>
@@ -892,7 +891,9 @@ export function PathologistWorkflowPage() {
                   <TableCell>Order #</TableCell>
                   <TableCell>Patient</TableCell>
                   <TableCell>Status</TableCell>
+                  <TableCell>Report QC</TableCell>
                   <TableCell>Assigned pathologist</TableCell>
+                  <TableCell>Second reviewer</TableCell>
                   <TableCell>Actions</TableCell>
                 </TableRow>
               </TableHead>
@@ -902,7 +903,16 @@ export function PathologistWorkflowPage() {
                     <TableCell>{order.orderNumber}</TableCell>
                     <TableCell>{order.patient.firstName} {order.patient.lastName}</TableCell>
                     <TableCell><StatusChip status={order.status} /></TableCell>
+                    <TableCell>
+                      <Stack spacing={0.75}>
+                        <ReportTrafficLightChip status={order.reportTrafficLightStatus ?? undefined} />
+                        <Typography variant="body2" color="text.secondary">
+                          {reportReviewStatusLabel(order.reportReviewStatus ?? undefined)}
+                        </Typography>
+                      </Stack>
+                    </TableCell>
                     <TableCell>{order.assignedPathologist?.name ?? 'Unassigned'}</TableCell>
+                    <TableCell>{order.reportSecondReviewerName ?? 'Not assigned'}</TableCell>
                     <TableCell>
                       <Button component={RouterLink} to={`/orders/${order._id}`}>
                         Review & report

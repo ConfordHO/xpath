@@ -572,6 +572,10 @@ export interface HydratedOrder {
   lockedAt?: string | null
   lockedBy?: string | null
   lockReason?: string | null
+  reportTrafficLightStatus?: Report['trafficLightStatus'] | null
+  reportReviewStatus?: Report['reviewStatus'] | null
+  reportSecondReviewerId?: string | null
+  reportSecondReviewerName?: string | null
   reportSummary?: string | null
   pathologistDiagnosis?: string | null
   createdAt: string

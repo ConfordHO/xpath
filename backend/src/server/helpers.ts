@@ -750,6 +750,10 @@ export function hydrateOrder(db: Database, order: Order) {
         }
       : null,
     completedAt: order.completedAt ?? report?.lockedAt ?? null,
+    reportTrafficLightStatus: report?.trafficLightStatus ?? "red",
+    reportReviewStatus: report?.reviewStatus ?? "draft_in_progress",
+    reportSecondReviewerId: report?.secondReviewerId ?? null,
+    reportSecondReviewerName: report?.secondReviewerName ?? null,
     reportSummary: report?.comment ?? null,
     pathologistDiagnosis: report?.diagnosis ?? null,
   };

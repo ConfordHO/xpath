@@ -341,10 +341,15 @@ function assignSecondReviewer(
   return candidates[Math.floor(Math.random() * candidates.length)];
 }
 
-function assertCanSecondReview(report: Report, user: User) {
-  if (isSuperAdmin(user) || user.role === "admin") {
-    return;
+function assertSecondReviewerAssigned(reviewer: User | null): asserts reviewer is User {
+  if (!reviewer) {
+    throw new Error(
+      "At least one other active pathologist at this site must be available before the report can be completed for second review",
+    );
   }
+}
+
+function assertCanSecondReview(report: Report, user: User) {
   if (user.role !== "pathologist") {
     throw new Error("Only a pathologist can complete second review");
   }
@@ -357,11 +362,17 @@ function assertCanSecondReview(report: Report, user: User) {
 }
 
 function assertCanFinalizeReport(report: Report, user: User) {
-  if (isSuperAdmin(user) || user.role === "admin") {
-    return;
+  if (user.role !== "pathologist") {
+    throw new Error("Only the reporting pathologist can finalize this report for release");
   }
   if (!report.reportingPathologistId || user._id !== report.reportingPathologistId) {
     throw new Error("Only the reporting pathologist can finalize this report for release");
+  }
+}
+
+function assertCanDraftReport(report: Report, user: User) {
+  if (user.role !== "pathologist" || !report.reportingPathologistId || user._id !== report.reportingPathologistId) {
+    throw new Error("Only the assigned reporting pathologist can draft or correct this report");
   }
 }
 
@@ -1094,7 +1105,7 @@ app.post("/api/auth/login", authLimiter, async (req, res) => {
   });
 
   res.json({
-    token: signToken(user, sessionId),
+    token: signToken({ ...user, organizationId: resolvedOrgId }, sessionId),
     user: sanitizeUser(user),
     organizationId: resolvedOrgId,
   });
@@ -5155,6 +5166,11 @@ app.post("/api/reports/:orderId/save", requireRoles("admin", "pathologist"), asy
     ) {
       throw new Error("Completed reports cannot be edited unless second review has returned corrections");
     }
+    if (!target.reportingPathologistId && currentUser.role === "pathologist") {
+      target.reportingPathologistId = currentUser._id;
+      target.reportingPathologistName = actorDisplayName(currentUser);
+    }
+    assertCanDraftReport(target, currentUser);
     const hasChanges =
       !sameTrimmedText(target.diagnosis, parsed.data.diagnosis) ||
       !sameTrimmedText(target.microscopicDescription, parsed.data.microscopicDescription) ||
@@ -5195,7 +5211,7 @@ app.post("/api/reports/:orderId/save", requireRoles("admin", "pathologist"), asy
     });
     return target;
   }).catch((error: Error) => {
-    res.status(404).json({ message: error.message });
+    res.status(classifyWorkflowError(error)).json({ message: error.message });
     return null;
   });
 
@@ -5233,14 +5249,20 @@ app.post("/api/reports/:orderId/lock", requireRoles("admin", "pathologist"), asy
       findUser(db, target.reportingPathologistId) ??
       findUser(db, order.assignedPathologistId) ??
       (currentUser.role === "pathologist" ? currentUser : null);
+    if (!reportingPathologist) {
+      throw new Error("A reporting pathologist must be assigned before the report can be completed");
+    }
+    if (currentUser.role !== "pathologist" || currentUser._id !== reportingPathologist._id) {
+      throw new Error("Only the assigned reporting pathologist can complete this report for second review");
+    }
     const reviewer = assignSecondReviewer(db, order, reportingPathologist?._id ?? null);
+    assertSecondReviewerAssigned(reviewer);
     target.status = "complete";
     target.lockedAt = timestamp;
-    target.reportingPathologistId = reportingPathologist?._id ?? target.reportingPathologistId ?? null;
-    target.reportingPathologistName =
-      reportingPathologist ? actorDisplayName(reportingPathologist) : target.reportingPathologistName ?? null;
-    target.secondReviewerId = reviewer?._id ?? null;
-    target.secondReviewerName = reviewer ? actorDisplayName(reviewer) : null;
+    target.reportingPathologistId = reportingPathologist._id;
+    target.reportingPathologistName = actorDisplayName(reportingPathologist);
+    target.secondReviewerId = reviewer._id;
+    target.secondReviewerName = actorDisplayName(reviewer);
     target.reviewRequestedAt = timestamp;
     target.reviewReturnedAt = null;
     target.reviewValidatedAt = null;
@@ -5266,9 +5288,15 @@ app.post("/api/reports/:orderId/lock", requireRoles("admin", "pathologist"), asy
         trafficLightStatus: target.trafficLightStatus,
       },
     });
+    pushNotification(db, {
+      title: "Second pathology review assigned",
+      body: `${order.orderNumber} is yellow and awaiting your QC review.`,
+      siteId: order.siteId,
+      audienceUserIds: [reviewer._id],
+    });
     return target;
   }).catch((error: Error) => {
-    res.status(404).json({ message: error.message });
+    res.status(classifyWorkflowError(error)).json({ message: error.message });
     return null;
   });
 
@@ -5336,6 +5364,14 @@ app.post(
           trafficLightStatus: target.trafficLightStatus,
         },
       });
+      if (target.reportingPathologistId) {
+        pushNotification(db, {
+          title: "Report returned for corrections",
+          body: `${order.orderNumber} was returned by second review with comments.`,
+          siteId: order.siteId,
+          audienceUserIds: [target.reportingPathologistId],
+        });
+      }
       return target;
     }).catch((error: Error) => {
       res.status(classifyWorkflowError(error)).json({ message: error.message });
@@ -5402,6 +5438,14 @@ app.post(
           trafficLightStatus: target.trafficLightStatus,
         },
       });
+      if (target.reportingPathologistId) {
+        pushNotification(db, {
+          title: "Second pathology review validated",
+          body: `${order.orderNumber} passed QC review and is awaiting final pathologist release approval.`,
+          siteId: order.siteId,
+          audienceUserIds: [target.reportingPathologistId],
+        });
+      }
       return target;
     }).catch((error: Error) => {
       res.status(classifyWorkflowError(error)).json({ message: error.message });
@@ -5533,7 +5577,7 @@ app.post("/api/reports/:orderId/email", requireRoles("admin", "pathologist"), as
     });
     return target;
   }).catch((error: Error) => {
-    res.status(404).json({ message: error.message });
+    res.status(classifyWorkflowError(error)).json({ message: error.message });
     return null;
   });
 
