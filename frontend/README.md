@@ -23,3 +23,12 @@ npm run build
 ```
 
 The production output is generated in `.next`, which is what Vercel expects for a Next.js deployment.
+
+For a Vercel project whose Root Directory is set to `frontend`, keep the commands relative to this folder:
+
+```bash
+npm install
+npm run build
+```
+
+Using `npm install --prefix frontend` from a frontend-root Vercel project will fail because it points npm at `frontend/frontend/package.json`.

@@ -220,7 +220,9 @@ If you stay on filesystem storage:
 
 ### Vercel
 
-- `vercel.json` now explicitly sets the frontend install/build commands, `.next` output directory, and the Next.js framework preset.
+- For a repo-root Vercel project, leave Root Directory blank and use the root `vercel.json` commands: `npm install --prefix frontend`, `npm run build --prefix frontend`, output `frontend/.next`.
+- For a frontend-root Vercel project, set Root Directory to `frontend` and use `frontend/vercel.json`: `npm install`, `npm run build`, output `.next`.
+- Do not combine Root Directory `frontend` with `npm install --prefix frontend`; that makes Vercel look for `frontend/frontend/package.json`.
 - This is intended for the frontend only and should produce a `.next` build, not a `dist` build.
 - Set `NEXT_PUBLIC_API_URL` in the Vercel project to your deployed backend URL, usually the Render service URL ending in `/api`.
 
