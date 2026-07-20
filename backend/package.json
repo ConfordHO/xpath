@@ -26,6 +26,14 @@
     "@automerge/automerge": "^3.2.6",
     "@aws-sdk/client-s3": "^3.1028.0",
     "@napi-rs/canvas": "^0.1.100",
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.3",
+    "@types/jsonwebtoken": "^9.0.10",
+    "@types/multer": "^2.1.0",
+    "@types/node": "^24.12.0",
+    "@types/pdfkit": "^0.17.6",
+    "@types/pg": "^8.20.0",
+    "@types/qrcode": "^1.5.6",
     "bcryptjs": "^3.0.3",
     "bullmq": "^5.76.5",
     "bwip-js": "^4.10.1",
@@ -48,21 +56,12 @@
     "sharp": "^0.34.5",
     "simple-hl7": "^3.3.0",
     "tesseract.js": "^7.0.0",
+    "typescript": "^5.9.3",
     "zod": "^4.1.12"
   },
   "devDependencies": {
-    "@types/bcryptjs": "^3.0.0",
-    "@types/cors": "^2.8.19",
-    "@types/express": "^5.0.3",
-    "@types/jsonwebtoken": "^9.0.10",
-    "@types/multer": "^2.1.0",
-    "@types/node": "^24.12.0",
-    "@types/pdfkit": "^0.17.6",
-    "@types/pg": "^8.20.0",
-    "@types/qrcode": "^1.5.6",
     "@types/supertest": "^7.2.0",
     "supertest": "^7.2.2",
-    "tsx": "^4.20.6",
-    "typescript": "^5.9.3"
+    "tsx": "^4.20.6"
   }
 }
