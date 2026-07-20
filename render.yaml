@@ -24,7 +24,9 @@ services:
       - key: HL7_MLLP_ENABLED
         value: false
       - key: DATABASE_URL
-        sync: false
+        fromDatabase:
+          name: xpath-postgres
+          property: connectionString
       - key: DATABASE_SSL_MODE
         value: require
       - key: POSTGRES_STATE_TABLE
@@ -36,7 +38,7 @@ services:
       - key: HEALTH_DIAGNOSTICS_TOKEN
         sync: false
       - key: JWT_SECRET
-        sync: false
+        generateValue: true
       - key: CORS_ORIGIN
         value: https://olyvia.xpath-labs.com,https://x-path.vercel.app,http://localhost:5173,http://localhost:3000
       - key: OCR_TESSERACT_BINARY
@@ -59,11 +61,11 @@ services:
       - key: AI_MODEL
         value: qwen2.5:1.5b
       - key: WHISPER_ENABLED
-        value: true
+        value: false
       - key: WHISPER_COMMAND
         value: whisper
       - key: WHISPER_MODEL
-        value: medium
+        value: base
       - key: WHISPER_LANGUAGE
         value: en
       - key: WHISPER_TIMEOUT_MS
@@ -81,9 +83,9 @@ services:
       - key: COUCHDB_DATABASE
         value: xpath_offline
       - key: DMS_STORAGE_PROVIDER
-        sync: false
+        value: local
       - key: DMS_LOCAL_STORAGE_PATH
-        sync: false
+        value: /app/storage/documents
       - key: S3_BUCKET_NAME
         sync: false
       - key: S3_REGION
@@ -127,3 +129,8 @@ services:
       name: ollama-models
       mountPath: /root/.ollama
       sizeGB: 10
+databases:
+  - name: xpath-postgres
+    databaseName: olyvia_lims
+    user: olyvia
+    plan: basic-256mb

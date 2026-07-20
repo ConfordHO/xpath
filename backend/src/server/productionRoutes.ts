@@ -90,6 +90,11 @@ function actorName(req: AuthRequest) {
   return req.user?.name ?? req.user?.email ?? "system";
 }
 
+function normalizeHttpBaseUrl(value: string) {
+  const trimmed = value.replace(/\/+$/, "");
+  return /^https?:\/\//i.test(trimmed) ? trimmed : `http://${trimmed}`;
+}
+
 function audit(
   db: Database,
   req: AuthRequest,
@@ -1241,7 +1246,7 @@ export function registerProductionRoutes(app: express.Express) {
     };
 
     if (AI_PROVIDER === "ollama" && AI_API_BASE_URL) {
-      const response = await fetch(new URL("/api/generate", AI_API_BASE_URL), {
+      const response = await fetch(new URL("/api/generate", normalizeHttpBaseUrl(AI_API_BASE_URL)), {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -1265,7 +1270,7 @@ export function registerProductionRoutes(app: express.Express) {
         return res.status(502).json({ message: "Ollama provider returned an error", providerResponse });
       }
     } else if (AI_PROVIDER !== "local" && AI_API_BASE_URL) {
-      const response = await fetch(new URL("/inference", AI_API_BASE_URL), {
+      const response = await fetch(new URL("/inference", normalizeHttpBaseUrl(AI_API_BASE_URL)), {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

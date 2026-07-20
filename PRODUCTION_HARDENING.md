@@ -230,7 +230,9 @@ If you stay on filesystem storage:
 
 - `render.yaml` now deploys the backend as Docker using `backend/Dockerfile`.
 - `render.yaml` adds a private Docker `pathnovate-ollama` service and injects its internal host/port into `AI_API_BASE_URL`.
-- Sensitive values are declared with `sync: false`.
+- Render generates `JWT_SECRET` and provisions `DATABASE_URL` from the managed `xpath-postgres` database when using the Blueprint.
+- Whisper dictation is disabled by default in Render because installing and downloading Whisper models during the web-service build makes deploys large and fragile. Enable it only after building the backend image with `INSTALL_WHISPER=true`.
+- Remaining third-party credentials are declared with `sync: false`.
 - HL7 MLLP is disabled by default in the Render blueprint because the web deployment is intended for the HTTP API surface.
 - For file persistence on Render, prefer S3-compatible storage. If you intentionally use disk storage, attach a persistent disk and point `DMS_LOCAL_STORAGE_PATH` at the mounted path.
 - Whisper dictation is enabled in the Docker deployment with the `medium` model.

@@ -4,41 +4,40 @@ WORKDIR /app
 
 ENV NODE_ENV=production
 ENV PORT=10000
-ENV PYTHONUNBUFFERED=1
-ENV PIP_NO_CACHE_DIR=1
 ENV WHISPER_COMMAND=whisper
-ENV WHISPER_MODEL=medium
-ENV PATH="/opt/whisper-venv/bin:${PATH}"
+ENV WHISPER_MODEL=base
 ENV HOME=/home/node
+ARG INSTALL_WHISPER=false
 
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
-    build-essential \
     ca-certificates \
-    cargo \
-    ffmpeg \
-    python3 \
-    python3-pip \
-    python3-venv \
-    rustc \
+    tesseract-ocr \
+    tesseract-ocr-eng \
+    tesseract-ocr-fra \
   && rm -rf /var/lib/apt/lists/*
 
-RUN python3 -m venv /opt/whisper-venv \
-  && pip install --upgrade pip setuptools wheel \
-  && pip install --no-cache-dir -U openai-whisper
+RUN if [ "$INSTALL_WHISPER" = "true" ]; then \
+      apt-get update \
+      && apt-get install -y --no-install-recommends \
+        build-essential \
+        cargo \
+        ffmpeg \
+        python3 \
+        python3-pip \
+        python3-venv \
+        rustc \
+      && python3 -m venv /opt/whisper-venv \
+      && /opt/whisper-venv/bin/pip install --upgrade pip setuptools wheel \
+      && /opt/whisper-venv/bin/pip install --no-cache-dir -U openai-whisper \
+      && rm -rf /var/lib/apt/lists/*; \
+    fi
 
 RUN mkdir -p /home/node/.cache/whisper /app \
   && chown -R node:node /home/node /app
 
-USER node
-RUN python - <<'PY'
-import os
-import whisper
-
-whisper.load_model(os.environ.get("WHISPER_MODEL", "medium"))
-PY
-
 USER root
+ENV PATH="/opt/whisper-venv/bin:${PATH}"
 COPY --chown=node:node package*.json ./
 RUN npm ci --include=dev
 
