@@ -30,6 +30,7 @@ function readOrigins() {
   return Array.from(
     new Set([
       ...configuredOrigins,
+      "https://olyvia.xpath-labs.com",
       "https://xpath-two.vercel.app",
       "https://x-path.vercel.app",
     ]),

@@ -38,7 +38,7 @@ services:
       - key: JWT_SECRET
         sync: false
       - key: CORS_ORIGIN
-        value: https://x-path.vercel.app,http://localhost:5173,http://localhost:3000
+        value: https://olyvia.xpath-labs.com,https://x-path.vercel.app,http://localhost:5173,http://localhost:3000
       - key: OCR_TESSERACT_BINARY
         value: tesseract
       - key: OCR_TESSERACT_LANG
