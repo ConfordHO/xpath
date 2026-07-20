@@ -11,7 +11,7 @@ import '../src/index.css'
 
 export const metadata: Metadata = {
   title: 'OLYVIA',
-  description: 'OLYVIA pathology and molecular diagnostics platform by X.PATH Labs',
+  description: 'OLYVIA LIMS developed by X.PATH Labs',
 }
 
 export default function RootLayout({ children }: { children: ReactNode }) {

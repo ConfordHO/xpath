@@ -469,7 +469,7 @@ const testLabelByLanguage: Record<
   'test-bt-b-001': { en: 'Tumor Marker Panel', fr: 'Panel de marqueurs tumoraux' },
   'test-co-t-01': { en: 'Expert Revision (International)', fr: 'Revision experte internationale' },
   'test-co-t-02': { en: 'Expert Revision (Local)', fr: 'Revision experte locale' },
-  'test-co-n-03': { en: 'OLYVIA Therapeutic Strategy', fr: 'Strategie therapeutique OLYVIA' },
+  'test-co-n-03': { en: 'X.PATH Labs Therapeutic Strategy', fr: 'Strategie therapeutique X.PATH Labs' },
   'test-pk-t-001': { en: 'Comprehensive Diagnostic Package - Tumor', fr: 'Forfait diagnostic complet - tumeur' },
   'test-pk-bm-002': { en: 'Comprehensive Diagnostic Package - Bone Marrow', fr: 'Forfait diagnostic complet - moelle osseuse' },
   'test-mo-b-001': { en: 'BRCA1/2 Germline Mutation Test', fr: 'Test mutation germinale BRCA1/2' },
@@ -2215,7 +2215,7 @@ export function OrderAuthenticityPage() {
                 <strong>Status:</strong> {authenticityState.data?.status ?? 'not_found'}
               </Typography>
               <Typography>
-                <strong>Issued by:</strong> {authenticityState.data?.labName ?? 'OLYVIA'}
+                <strong>Issued by:</strong> {authenticityState.data?.labName ?? 'X.PATH Labs'}
               </Typography>
               <Typography>
                 <strong>Created at:</strong> {authenticityState.data?.createdAt ? formatDateTime(authenticityState.data.createdAt) : '—'}

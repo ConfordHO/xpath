@@ -772,7 +772,7 @@ export function LandingPage() {
             Who We Are
           </Typography>
           <Typography variant="h3" sx={{ mt: 1.5 }}>
-            About {settings.labName}
+            About OLYVIA and X.PATH Labs
           </Typography>
           <Typography sx={{ mt: 1.5, color: 'text.secondary', lineHeight: 1.8 }}>
             {settings.aboutText}
@@ -833,7 +833,7 @@ export function LandingPage() {
           >
             <EmailRoundedIcon sx={{ fontSize: 20 }} />
           </Box>
-          <Typography variant="h5">Contact {settings.labName}</Typography>
+          <Typography variant="h5">Contact X.PATH Labs</Typography>
           <Typography sx={{ mt: 1.25, color: 'rgba(255,255,255,0.82)' }}>
             For test inquiries, pricing, referring clinician support, or patient results, use the
             details below or the patient portal.
@@ -857,7 +857,7 @@ export function LandingPage() {
             <BrandLogo sx={{ width: { xs: 150, md: 170 } }} />
           </Box>
           <Typography sx={{ mt: 2.5, color: 'rgba(255,255,255,0.6)' }}>
-            © {settings.labName} — Pathology Lab Information Management System
+            © X.PATH Labs — Powered by OLYVIA LIMS
           </Typography>
         </Box>
       </Box>
@@ -920,7 +920,7 @@ export function LoginPage() {
           <Typography variant="h4" sx={{ lineHeight: 1 }}>
             OLYVIA
           </Typography>
-          <Typography color="text.secondary">OLYVIA Laboratory Information Management System</Typography>
+          <Typography color="text.secondary">OLYVIA LIMS by X.PATH Labs</Typography>
           {error ? <Alert severity="error">{error}</Alert> : null}
           <TextField label="Email" value={email} onChange={(event) => setEmail(event.target.value)} fullWidth />
           <TextField label="Password" type="password" value={password} onChange={(event) => setPassword(event.target.value)} fullWidth />
@@ -1243,7 +1243,7 @@ export function PatientPortalPage() {
 
         {results ? (
           <Box>
-            <PageHeader title="Your orders" description="All your tests with OLYVIA. Click an order for details, timeline, results, and payment." />
+            <PageHeader title="Your orders" description="All your tests with X.PATH Labs through OLYVIA. Click an order for details, timeline, results, and payment." />
             <Stack spacing={2}>
               {results.map((order) => (
                 <Paper

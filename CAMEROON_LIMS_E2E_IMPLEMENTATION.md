@@ -6,7 +6,7 @@ This document revamps the attached LIMS implementation specification for the cur
 
 ## 1. Product Position
 
-OLYVIA is a Laboratory Information Management System for clinical and pathology laboratory operations in Cameroon. The system must support:
+OLYVIA is a Lab Information Management System (LIMS) developed by X.PATH Labs, a center for molecular pathology and genomics in Yaounde, Cameroon. The system must support:
 
 - Online self-ordering by an individual patient.
 - Online ordering by an external referring clinician through a dedicated clinician portal.

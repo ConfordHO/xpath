@@ -1,6 +1,6 @@
 # OLYVIA LIMS Local Deployment Guide
 
-This package contains the OLYVIA Laboratory Information Management System (LIMS) source code for local/on-site deployment.
+This package contains the OLYVIA Lab Information Management System (LIMS), developed by X.PATH Labs, for local/on-site deployment.
 
 The system has two applications:
 

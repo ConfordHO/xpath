@@ -6,7 +6,7 @@ Updated: 2026-05-09
 
 ## Executive Summary
 
-OLYVIA is a production-grade Laboratory Information Management System for clinical and anatomical pathology in Cameroon. The system covers the full order-to-report lifecycle, multi-role staff workflows, Maviance mobile-money payments, an external clinician portal, open-source OCR intake, Whisper voice dictation, Ollama AI drafting, and an immutable hash-chained audit trail.
+OLYVIA is a production-grade Lab Information Management System (LIMS) developed by X.PATH Labs, a center for molecular pathology and genomics in Yaounde, Cameroon. The system covers the full order-to-report lifecycle, multi-role staff workflows, Maviance mobile-money payments, an external clinician portal, open-source OCR intake, Whisper voice dictation, Ollama AI drafting, and an immutable hash-chained audit trail.
 
 **Current status: Pre-production — functional and compliance-hardened, awaiting final integrations and your go/no-go decisions before regulated live use.**
 
@@ -85,7 +85,7 @@ OLYVIA is a production-grade Laboratory Information Management System for clinic
 
 ### Multi-site
 - ✅ Site-scoped data access (patients, orders, users)
-- ✅ Site-1: OLYVIA Central Lab (Yaoundé HQ)
+- ✅ Site-1: X.PATH Labs Central Lab (Yaounde HQ)
 - ✅ Site-2: Douala Collection Center
 
 ### Communications

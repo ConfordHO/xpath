@@ -1918,14 +1918,14 @@ export type OrgPlan = "trial" | "starter" | "standard" | "enterprise";
 export type OrgStatus = "active" | "suspended" | "trial" | "cancelled";
 
 /**
- * Organization = one tenant/lab that subscribes to OLYVIA.
+ * Organization = one tenant/lab that uses OLYVIA.
  * Each org has its own isolated data partition in the database.
  * An org can have many branches (Sites) in different physical locations.
  */
 export interface Organization {
   id: string;
   slug: string;          // URL-safe identifier, e.g. "pathnovate-yaounde"
-  name: string;          // Display name: "OLYVIA Laboratories"
+  name: string;          // Display name: "X.PATH Labs"
   plan: OrgPlan;
   status: OrgStatus;
   trialEndsAt?: string | null;

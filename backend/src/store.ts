@@ -90,8 +90,18 @@ const legacyLabNames = new Set([
   "X.PATH LIMS",
   "X.PATH LABS",
   "XPATH LIMS",
+  "OLYVIA",
+  "OLYVIA LIMS",
   "PathNovate",
   "PathNovate LIMS",
+]);
+const legacyTaglines = new Set([
+  legacySettingDefaults.tagline,
+  "Center for Molecular Pathology and Genomics",
+]);
+const legacyAboutTexts = new Set([
+  legacySettingDefaults.aboutText,
+  "OLYVIA is a center for molecular pathology and genomics in Yaounde, Cameroon. We provide pathology consultation, histology, cytology, immunohistochemistry, molecular testing, and coordinated result delivery for clinicians, hospitals, and patients.",
 ]);
 
 type LegacyRecord = Record<string, unknown>;
@@ -629,13 +639,13 @@ function normalizeDatabase(raw: Partial<Database>): Database {
         ? seed.settings.labName
         : rawSettings.labName,
     tagline:
-      !rawSettings?.tagline || rawSettings.tagline === legacySettingDefaults.tagline
+      !rawSettings?.tagline || legacyTaglines.has(rawSettings.tagline)
         ? seed.settings.tagline
         : rawSettings.tagline,
     aboutText:
-      !rawSettings?.aboutText || rawSettings.aboutText === legacySettingDefaults.aboutText
+      !rawSettings?.aboutText || legacyAboutTexts.has(rawSettings.aboutText)
         ? seed.settings.aboutText
-        : rawSettings.aboutText.replace(/X\.PATH Labs|X-PATH Labs|XPath Labs|PathNovate/g, "OLYVIA"),
+        : rawSettings.aboutText.replace(/X-PATH Labs|XPath Labs|PathNovate/g, "X.PATH Labs"),
     contactEmail:
       !rawSettings?.contactEmail || rawSettings.contactEmail === legacySettingDefaults.contactEmail
         ? seed.settings.contactEmail

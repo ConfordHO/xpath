@@ -612,7 +612,7 @@ export function createSeedDatabase(): Database {
       {
         _id: "test-co-n-03",
         code: "CO-N-03",
-        name: "OLYVIA Therapeutic Strategy",
+        name: "X.PATH Labs Therapeutic Strategy",
         description: "Clinical advisory",
         category: "Consultation",
         sampleType: "N/A",
@@ -1971,7 +1971,7 @@ export function createSeedDatabase(): Database {
       {
         _id: "site-1",
         code: "HQ",
-        name: "OLYVIA Central Lab — Yaoundé",
+        name: "X.PATH Labs Central Lab — Yaounde",
         organizationId: DEFAULT_ORG_ID,
         address: "Rue 6460 Mbankolo (Petit Paris), Yaoundé, Cameroun",
         phone: "+237-691193779",
@@ -1983,7 +1983,7 @@ export function createSeedDatabase(): Database {
       {
         _id: "site-2",
         code: "DLA-COL",
-        name: "OLYVIA Collection Center — Douala",
+        name: "X.PATH Labs Collection Center — Douala",
         organizationId: DEFAULT_ORG_ID,
         address: "Akwa, Douala, Cameroun",
         phone: "+237-677804723",
@@ -2014,10 +2014,10 @@ export function createSeedDatabase(): Database {
       _id: "69b745b13507f37259f8186d",
       language: "english",
       locale: "fr",
-      labName: "OLYVIA",
-      tagline: "Center for Molecular Pathology and Genomics",
+      labName: "X.PATH Labs",
+      tagline: "OLYVIA Lab Information Management System",
       aboutText:
-        "OLYVIA is a center for molecular pathology and genomics in Yaounde, Cameroon. We provide pathology consultation, histology, cytology, immunohistochemistry, molecular testing, and coordinated result delivery for clinicians, hospitals, and patients.",
+        "OLYVIA is a Lab Information Management System (LIMS) developed by X.PATH Labs, a center for molecular pathology and genomics in Yaounde, Cameroon. X.PATH Labs provides pathology consultation, histology, cytology, immunohistochemistry, molecular testing, and coordinated result delivery for clinicians, hospitals, and patients.",
       contactEmail: "info@xpath-labs.com",
       contactPhone: "+237-691193779 / +237-677804723",
       address: "Rue 6460 Mbankolo (Petit Paris), BP: 35444, Yaounde - Cameroon",

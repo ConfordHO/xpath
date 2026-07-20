@@ -13,15 +13,15 @@ All passwords:
 | Role | Email | Site scope |
 | --- | --- | --- |
 | Super admin | `superadmin@xpath.lims` | Global |
-| Admin | `admin@xpath.lims` | `site-1` OLYVIA Central Lab |
-| Admin (other lab) | `admin.douala@xpath.lims` | `site-2` OLYVIA Collection Center - Douala |
-| Receptionist | `receptionist@xpath.lims` | `site-1` OLYVIA Central Lab |
-| Technician | `technician@xpath.lims` | `site-1` OLYVIA Central Lab |
-| Pathologist | `pathologist@xpath.lims` | `site-1` OLYVIA Central Lab |
-| Second review pathologist | `review.pathologist@xpath.lims` | `site-1` OLYVIA Central Lab |
-| Finance | `finance@xpath.lims` | `site-1` OLYVIA Central Lab |
-| Courier | `courier@xpath.lims` | `site-1` OLYVIA Central Lab |
-| Doctor / Referrer portal | `doctor@xpath.lims` | `site-1` OLYVIA Central Lab |
+| Admin | `admin@xpath.lims` | `site-1` X.PATH Labs Central Lab |
+| Admin (other lab) | `admin.douala@xpath.lims` | `site-2` X.PATH Labs Collection Center - Douala |
+| Receptionist | `receptionist@xpath.lims` | `site-1` X.PATH Labs Central Lab |
+| Technician | `technician@xpath.lims` | `site-1` X.PATH Labs Central Lab |
+| Pathologist | `pathologist@xpath.lims` | `site-1` X.PATH Labs Central Lab |
+| Second review pathologist | `review.pathologist@xpath.lims` | `site-1` X.PATH Labs Central Lab |
+| Finance | `finance@xpath.lims` | `site-1` X.PATH Labs Central Lab |
+| Courier | `courier@xpath.lims` | `site-1` X.PATH Labs Central Lab |
+| Doctor / Referrer portal | `doctor@xpath.lims` | `site-1` X.PATH Labs Central Lab |
 
 ## Notes
 
