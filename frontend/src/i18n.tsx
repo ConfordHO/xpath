@@ -20,8 +20,9 @@ import {
 
 import { api, storageKeys } from './api'
 import { useAuth } from './auth'
+import type { AppLocale } from './i18nGeo'
 
-export type AppLocale = 'en' | 'fr'
+export type { AppLocale }
 
 interface LanguageContextValue {
   locale: AppLocale
@@ -280,6 +281,163 @@ const regexReplacements: Array<[RegExp, string | ((...args: string[]) => string)
 ]
 
 const wordPairs: Array<[string, string]> = [
+  ['accepted', 'accepte'],
+  ['access', 'acces'],
+  ['accessions', 'accessions'],
+  ['account', 'compte'],
+  ['accounts', 'comptes'],
+  ['active', 'actif'],
+  ['added', 'ajoute'],
+  ['address', 'adresse'],
+  ['all', 'tous'],
+  ['amount', 'montant'],
+  ['analysis', 'analyse'],
+  ['analytics', 'analytique'],
+  ['approved', 'approuve'],
+  ['assigned', 'assigne'],
+  ['attachment', 'piece jointe'],
+  ['attachments', 'pieces jointes'],
+  ['audit', 'audit'],
+  ['available', 'disponible'],
+  ['barcode', 'code-barres'],
+  ['barcodes', 'codes-barres'],
+  ['billing', 'facturation'],
+  ['branch', 'branche'],
+  ['branches', 'branches'],
+  ['broadcast', 'diffusion'],
+  ['case', 'dossier'],
+  ['cases', 'dossiers'],
+  ['changes', 'modifications'],
+  ['city', 'ville'],
+  ['clinician', 'clinicien'],
+  ['clinicians', 'cliniciens'],
+  ['collected', 'collecte'],
+  ['collection', 'collecte'],
+  ['comment', 'commentaire'],
+  ['comments', 'commentaires'],
+  ['completed', 'termine'],
+  ['compliance', 'conformite'],
+  ['configured', 'configure'],
+  ['confirmation', 'confirmation'],
+  ['connector', 'connecteur'],
+  ['connectors', 'connecteurs'],
+  ['consultation', 'consultation'],
+  ['controls', 'controles'],
+  ['corrected', 'corrige'],
+  ['correction', 'correction'],
+  ['corrections', 'corrections'],
+  ['country', 'pays'],
+  ['created', 'cree'],
+  ['critical', 'critique'],
+  ['current', 'actuel'],
+  ['dashboard', 'tableau de bord'],
+  ['date', 'date'],
+  ['days', 'jours'],
+  ['default', 'par defaut'],
+  ['delivered', 'livre'],
+  ['delivery', 'livraison'],
+  ['details', 'details'],
+  ['diagnostic', 'diagnostique'],
+  ['disabled', 'desactive'],
+  ['document', 'document'],
+  ['documents', 'documents'],
+  ['download', 'telecharger'],
+  ['draft', 'brouillon'],
+  ['drafted', 'redige'],
+  ['eligible', 'eligible'],
+  ['enabled', 'active'],
+  ['entries', 'entrees'],
+  ['entry', 'entree'],
+  ['event', 'evenement'],
+  ['events', 'evenements'],
+  ['exception', 'exception'],
+  ['exceptions', 'exceptions'],
+  ['export', 'exporter'],
+  ['failed', 'echoue'],
+  ['file', 'fichier'],
+  ['files', 'fichiers'],
+  ['finalized', 'finalise'],
+  ['history', 'historique'],
+  ['identity', 'identite'],
+  ['image', 'image'],
+  ['images', 'images'],
+  ['invoices', 'factures'],
+  ['invoice', 'facture'],
+  ['language', 'langue'],
+  ['ledger', 'grand livre'],
+  ['linked', 'lie'],
+  ['loading', 'chargement'],
+  ['location', 'emplacement'],
+  ['locked', 'verrouille'],
+  ['management', 'gestion'],
+  ['manual', 'manuel'],
+  ['message', 'message'],
+  ['missing', 'manquant'],
+  ['module', 'module'],
+  ['modules', 'modules'],
+  ['new', 'nouveau'],
+  ['online', 'en ligne'],
+  ['open', 'ouvrir'],
+  ['organization', 'organisation'],
+  ['organizations', 'organisations'],
+  ['outstanding', 'en attente'],
+  ['password', 'mot de passe'],
+  ['pathology', 'pathologie'],
+  ['portal', 'portail'],
+  ['preference', 'preference'],
+  ['preferred', 'prefere'],
+  ['prices', 'prix'],
+  ['pricing', 'tarification'],
+  ['production', 'production'],
+  ['quality', 'qualite'],
+  ['ready', 'pret'],
+  ['receipt', 'recu'],
+  ['receipts', 'recus'],
+  ['reference', 'reference'],
+  ['referrer', 'referent'],
+  ['referrers', 'referents'],
+  ['refresh', 'actualiser'],
+  ['rejected', 'rejete'],
+  ['released', 'publie'],
+  ['request', 'demande'],
+  ['requested', 'demande'],
+  ['requests', 'demandes'],
+  ['required', 'requis'],
+  ['result', 'resultat'],
+  ['results', 'resultats'],
+  ['reviewed', 'revise'],
+  ['revision', 'revision'],
+  ['rule', 'regle'],
+  ['rules', 'regles'],
+  ['screening', 'depistage'],
+  ['secure', 'securise'],
+  ['security', 'securite'],
+  ['selected', 'selectionne'],
+  ['session', 'session'],
+  ['sessions', 'sessions'],
+  ['submitted', 'soumis'],
+  ['successfully', 'avec succes'],
+  ['summary', 'resume'],
+  ['team', 'equipe'],
+  ['test', 'analyse'],
+  ['tests', 'analyses'],
+  ['thread', 'fil'],
+  ['threads', 'fils'],
+  ['tracking', 'suivi'],
+  ['type', 'type'],
+  ['types', 'types'],
+  ['updated', 'mis a jour'],
+  ['upload', 'televerser'],
+  ['uploads', 'televersements'],
+  ['user', 'utilisateur'],
+  ['users', 'utilisateurs'],
+  ['validated', 'valide'],
+  ['validation', 'validation'],
+  ['vendor', 'fournisseur'],
+  ['vendors', 'fournisseurs'],
+  ['view', 'voir'],
+  ['warning', 'avertissement'],
+  ['workspace', 'espace de travail'],
   ['Yes', 'Oui'],
   ['No', 'Non'],
   ['Created', 'Cree'],
@@ -360,12 +518,20 @@ function applyCase(source: string, target: string) {
   return target
 }
 
-function readStoredLocale(): AppLocale {
+function readStoredLocale() {
   if (typeof window === 'undefined') {
-    return 'fr'
+    return null
   }
   const stored = window.localStorage.getItem(storageKeys.locale)
-  return stored === 'en' || stored === 'fr' ? stored : 'fr'
+  return stored === 'en' || stored === 'fr' ? stored : null
+}
+
+function readInitialLocale(defaultLocale: AppLocale): AppLocale {
+  return readStoredLocale() ?? defaultLocale
+}
+
+function userHasStoredLocalePreference() {
+  return readStoredLocale() !== null
 }
 
 function normalizeWhitespace(text: string) {
@@ -411,9 +577,12 @@ export function translateTextForLocale(text: string, locale: AppLocale) {
   return translated
 }
 
-export function LanguageProvider({ children }: PropsWithChildren) {
+export function LanguageProvider({
+  children,
+  defaultLocale = 'en',
+}: PropsWithChildren<{ defaultLocale?: AppLocale }>) {
   const { user, setUser } = useAuth()
-  const [locale, setLocaleState] = useState<AppLocale>(() => readStoredLocale())
+  const [locale, setLocaleState] = useState<AppLocale>(() => readInitialLocale(defaultLocale))
   const titleOriginalRef = useRef<string>('')
   const textOriginalsRef = useRef(new WeakMap<Text, string>())
   const attributeOriginalsRef = useRef(new WeakMap<HTMLElement, Map<string, string>>())
@@ -426,6 +595,31 @@ export function LanguageProvider({ children }: PropsWithChildren) {
       window.localStorage.setItem(storageKeys.locale, nextLocale)
     }
   }, [])
+
+  useEffect(() => {
+    if (user || userHasStoredLocalePreference()) {
+      return
+    }
+
+    let cancelled = false
+    fetch('/api/locale', { cache: 'no-store' })
+      .then((response) => (response.ok ? response.json() : null))
+      .then((data: { locale?: AppLocale } | null) => {
+        if (
+          cancelled ||
+          userHasStoredLocalePreference() ||
+          (data?.locale !== 'en' && data?.locale !== 'fr')
+        ) {
+          return
+        }
+        setLocaleState(data.locale)
+      })
+      .catch(() => undefined)
+
+    return () => {
+      cancelled = true
+    }
+  }, [user])
 
   const setLocale = useCallback(
     (nextLocale: AppLocale, options?: { persistPreference?: boolean }) => {

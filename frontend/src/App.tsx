@@ -1,9 +1,13 @@
 import { AppRoutes } from './app/AppRoutes'
-import { FloatingLanguageToggle, LanguageProvider } from './i18n'
+import { FloatingLanguageToggle, LanguageProvider, type AppLocale } from './i18n'
 
-function App() {
+interface AppProps {
+  defaultLocale?: AppLocale
+}
+
+function App({ defaultLocale = 'en' }: AppProps) {
   return (
-    <LanguageProvider>
+    <LanguageProvider defaultLocale={defaultLocale}>
       <AppRoutes />
       <FloatingLanguageToggle />
     </LanguageProvider>

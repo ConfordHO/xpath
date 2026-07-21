@@ -23,6 +23,17 @@ interface AuthContextValue {
 
 const AuthContext = createContext<AuthContextValue | null>(null)
 
+function readLocaleFallback(): 'en' | 'fr' {
+  if (typeof window === 'undefined') {
+    return 'en'
+  }
+  const stored = window.localStorage.getItem(storageKeys.locale)
+  if (stored === 'en' || stored === 'fr') {
+    return stored
+  }
+  return document.documentElement.lang === 'fr' ? 'fr' : 'en'
+}
+
 function normalizeSafeUser(value: Partial<SafeUser> & { id?: string } | null | undefined) {
   if (!value) {
     return null
@@ -31,11 +42,12 @@ function normalizeSafeUser(value: Partial<SafeUser> & { id?: string } | null | u
   if (!id || !value.email || !value.name || !value.role) {
     return null
   }
+  const preferredLocale = value.preferredLocale ?? readLocaleFallback()
   return {
     ...value,
     _id: id,
-    preferredLanguage: value.preferredLanguage ?? 'french',
-    preferredLocale: value.preferredLocale ?? 'fr',
+    preferredLanguage: value.preferredLanguage ?? (preferredLocale === 'fr' ? 'french' : 'english'),
+    preferredLocale,
     active: value.active ?? true,
     createdAt: value.createdAt ?? '',
     updatedAt: value.updatedAt ?? '',

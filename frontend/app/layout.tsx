@@ -1,6 +1,8 @@
 import type { Metadata } from 'next'
+import { headers } from 'next/headers'
 import type { ReactNode } from 'react'
 
+import { localeFromHeaders } from '../src/i18nGeo'
 import '@fontsource/dm-sans/400.css'
 import '@fontsource/dm-sans/500.css'
 import '@fontsource/dm-sans/700.css'
@@ -14,9 +16,12 @@ export const metadata: Metadata = {
   description: 'OLYVIA LIMS developed by X.PATH Labs',
 }
 
-export default function RootLayout({ children }: { children: ReactNode }) {
+export default async function RootLayout({ children }: { children: ReactNode }) {
+  const requestHeaders = await headers()
+  const defaultLocale = localeFromHeaders(requestHeaders)
+
   return (
-    <html lang="fr">
+    <html lang={defaultLocale}>
       <body>{children}</body>
     </html>
   )

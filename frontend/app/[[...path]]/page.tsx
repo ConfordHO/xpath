@@ -1,5 +1,12 @@
-import { NextClientApp } from '../../src/NextClientApp'
+import { headers } from 'next/headers'
 
-export default function AppPage() {
-  return <NextClientApp />
+import { NextClientApp } from '../../src/NextClientApp'
+import { localeFromHeaders } from '../../src/i18nGeo'
+
+export const dynamic = 'force-dynamic'
+
+export default async function AppPage() {
+  const requestHeaders = await headers()
+  const defaultLocale = localeFromHeaders(requestHeaders)
+  return <NextClientApp defaultLocale={defaultLocale} />
 }

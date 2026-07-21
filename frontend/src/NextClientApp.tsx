@@ -6,9 +6,14 @@ import { BrowserRouter } from 'react-router-dom'
 
 import App from './App'
 import { AuthProvider } from './auth'
+import type { AppLocale } from './i18n'
 import { appTheme } from './theme'
 
-export function NextClientApp() {
+interface NextClientAppProps {
+  defaultLocale?: AppLocale
+}
+
+export function NextClientApp({ defaultLocale = 'en' }: NextClientAppProps) {
   const [mounted, setMounted] = useState(false)
 
   useEffect(() => {
@@ -24,7 +29,7 @@ export function NextClientApp() {
       <CssBaseline />
       <BrowserRouter>
         <AuthProvider>
-          <App />
+          <App defaultLocale={defaultLocale} />
         </AuthProvider>
       </BrowserRouter>
     </ThemeProvider>
