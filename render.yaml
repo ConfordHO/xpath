@@ -24,9 +24,7 @@ services:
       - key: HL7_MLLP_ENABLED
         value: false
       - key: DATABASE_URL
-        fromDatabase:
-          name: xpath-postgres
-          property: connectionString
+        sync: false
       - key: DATABASE_SSL_MODE
         value: require
       - key: POSTGRES_STATE_TABLE
@@ -34,7 +32,7 @@ services:
       - key: POSTGRES_STATE_ID
         value: primary
       - key: POSTGRES_EXTERNAL_HOST_SUFFIX
-        value: oregon-postgres.render.com
+        value: frankfurt-postgres.render.com
       - key: HEALTH_DIAGNOSTICS_TOKEN
         sync: false
       - key: JWT_SECRET
@@ -129,8 +127,3 @@ services:
       name: ollama-models
       mountPath: /root/.ollama
       sizeGB: 10
-databases:
-  - name: xpath-postgres
-    databaseName: olyvia_lims
-    user: olyvia
-    plan: basic-256mb
