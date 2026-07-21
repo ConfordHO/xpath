@@ -1231,6 +1231,7 @@ function quotedIdentifier(value: string) {
 }
 
 const stateTableIdentifier = quotedIdentifier(POSTGRES_STATE_TABLE);
+let stateTableReadyPromise: Promise<void> | null = null;
 
 function getPreferredPostgresSslModes(): PostgresSslMode[] {
   if (activePostgresSslMode) {
@@ -1348,13 +1349,22 @@ async function queryPostgres<T extends QueryResultRow = QueryResultRow>(
 }
 
 async function ensureStateTable() {
-  await queryPostgres(`
-    CREATE TABLE IF NOT EXISTS ${stateTableIdentifier} (
-      id TEXT PRIMARY KEY,
-      state JSONB NOT NULL,
-      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    )
-  `);
+  if (!stateTableReadyPromise) {
+    stateTableReadyPromise = queryPostgres(`
+      CREATE TABLE IF NOT EXISTS ${stateTableIdentifier} (
+        id TEXT PRIMARY KEY,
+        state JSONB NOT NULL,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `).then(
+      () => undefined,
+      (error) => {
+        stateTableReadyPromise = null;
+        throw error;
+      },
+    );
+  }
+  await stateTableReadyPromise;
 }
 
 async function getStateRecord(orgId: string = POSTGRES_STATE_ID): Promise<DatabaseDocument | null> {
@@ -1576,6 +1586,48 @@ async function persistDb(db: Database, orgId: string = POSTGRES_STATE_ID) {
   return cloned;
 }
 
+const authStateCollections = [
+  "users",
+  "sessionRecords",
+  "credentialAudits",
+  "auditEvents",
+] as const;
+
+type AuthStateCollection = (typeof authStateCollections)[number];
+
+async function persistDbCollections(
+  db: Database,
+  orgId: string,
+  collections: readonly AuthStateCollection[],
+) {
+  await ensureStateTable();
+
+  const values: unknown[] = [orgId];
+  let stateExpression = "state";
+  collections.forEach((collection, index) => {
+    values.push(JSON.stringify(db[collection]));
+    stateExpression = `jsonb_set(${stateExpression}, '{${collection}}', $${index + 2}::jsonb, true)`;
+  });
+
+  const result = await queryPostgres(
+    `
+      UPDATE ${stateTableIdentifier}
+      SET state = ${stateExpression}, updated_at = NOW()
+      WHERE id = $1
+    `,
+    values,
+  );
+
+  if ((result.rowCount ?? 0) === 0) {
+    await persistDb(db, orgId);
+    return;
+  }
+
+  const cloned = cloneDb(db);
+  orgDbCache.set(orgId, cloned);
+  if (orgId === POSTGRES_STATE_ID) cachedDb = cloned;
+}
+
 async function ensureInitializedForOrg(orgId: string) {
   let promise = orgInitPromises.get(orgId);
   if (!promise) {
@@ -1655,6 +1707,7 @@ export async function closeStoreConnections() {
   orgDbCache.clear();
   orgInitPromises.clear();
   orgUpdateQueues.clear();
+  stateTableReadyPromise = null;
   const activePool = pool;
   pool = null;
   activePostgresSslMode = null;
@@ -1781,28 +1834,24 @@ function appendAutomaticMutationAudit(before: Database, after: Database) {
   });
 }
 
-export async function updateDb<T>(
+function resolveUpdateArgs<T>(
   orgIdOrUpdater: string | ((db: Database) => T | Promise<T>),
   updater?: (db: Database) => T | Promise<T>,
-): Promise<T> {
-  // Overload: updateDb(fn) — uses primary org
-  // Overload: updateDb(orgId, fn) — uses specified org
-  const orgId = typeof orgIdOrUpdater === "string" ? orgIdOrUpdater : POSTGRES_STATE_ID;
-  const fn = typeof orgIdOrUpdater === "function" ? orgIdOrUpdater : updater!;
+) {
+  return {
+    orgId: typeof orgIdOrUpdater === "string" ? orgIdOrUpdater : POSTGRES_STATE_ID,
+    fn: typeof orgIdOrUpdater === "function" ? orgIdOrUpdater : updater!,
+  };
+}
 
+async function runQueuedStateUpdate<T>(orgId: string, task: () => Promise<T>): Promise<T> {
   let result!: T;
 
-  // Per-org serialized update queue
   const currentQueue = orgUpdateQueues.get(orgId) ?? Promise.resolve();
-  // Also keep legacy global queue in sync for primary org
   const legacyQ = orgId === POSTGRES_STATE_ID ? updateQueue : currentQueue;
 
   const run = legacyQ.then(async () => {
-    const db = await loadDb(orgId);
-    const before = cloneDb(db);
-    result = await fn(db);
-    appendAutomaticMutationAudit(before, db);
-    await saveDb(db, orgId);
+    result = await task();
   });
 
   const settled = run.then(() => undefined, () => undefined);
@@ -1811,4 +1860,32 @@ export async function updateDb<T>(
 
   await run;
   return result;
+}
+
+export async function updateDb<T>(
+  orgIdOrUpdater: string | ((db: Database) => T | Promise<T>),
+  updater?: (db: Database) => T | Promise<T>,
+): Promise<T> {
+  const { orgId, fn } = resolveUpdateArgs(orgIdOrUpdater, updater);
+  return runQueuedStateUpdate(orgId, async () => {
+    const db = await loadDb(orgId);
+    const before = cloneDb(db);
+    const result = await fn(db);
+    appendAutomaticMutationAudit(before, db);
+    await saveDb(db, orgId);
+    return result;
+  });
+}
+
+export async function updateAuthState<T>(
+  orgIdOrUpdater: string | ((db: Database) => T | Promise<T>),
+  updater?: (db: Database) => T | Promise<T>,
+): Promise<T> {
+  const { orgId, fn } = resolveUpdateArgs(orgIdOrUpdater, updater);
+  return runQueuedStateUpdate(orgId, async () => {
+    const db = await loadDb(orgId);
+    const result = await fn(db);
+    await persistDbCollections(db, orgId, authStateCollections);
+    return result;
+  });
 }

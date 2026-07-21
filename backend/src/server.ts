@@ -121,7 +121,7 @@ import { registerSpeechAiRoutes } from "./server/speechAiRoutes.js";
 import { privacyRouter } from "./server/privacyRoutes.js";
 import { orgRouter } from "./server/orgRoutes.js";
 import { accountingRouter } from "./server/accountingExports.js";
-import { loadDb, updateDb } from "./store.js";
+import { loadDb, updateAuthState, updateDb } from "./store.js";
 import type {
   Accession,
   CourierStatus,
@@ -986,7 +986,7 @@ app.post("/api/auth/login", authLimiter, async (req, res) => {
   );
 
   if (!user || !user.active) {
-    await updateDb(resolvedOrgId, (mutableDb) => {
+    await updateAuthState(resolvedOrgId, (mutableDb) => {
       mutableDb.credentialAudits.unshift({
         _id: createId(),
         userId: user?._id ?? "unknown",
@@ -999,7 +999,7 @@ app.post("/api/auth/login", authLimiter, async (req, res) => {
   }
 
   if (user.lockedUntil && new Date(user.lockedUntil).getTime() > Date.now()) {
-    await updateDb(resolvedOrgId, (mutableDb) => {
+    await updateAuthState(resolvedOrgId, (mutableDb) => {
       mutableDb.credentialAudits.unshift({
         _id: createId(),
         userId: user._id,
@@ -1013,7 +1013,7 @@ app.post("/api/auth/login", authLimiter, async (req, res) => {
 
   const valid = await verifyPassword(parsed.data.password, user.passwordHash);
   if (!valid) {
-    await updateDb(resolvedOrgId, (mutableDb) => {
+    await updateAuthState(resolvedOrgId, (mutableDb) => {
       const mutableUser = mutableDb.users.find((entry) => entry._id === user._id);
       if (mutableUser) {
         mutableUser.failedLoginCount = (mutableUser.failedLoginCount ?? 0) + 1;
@@ -1042,7 +1042,7 @@ app.post("/api/auth/login", authLimiter, async (req, res) => {
 
   const sessionId = createId();
   const sessionCreatedAt = now();
-  await updateDb(resolvedOrgId, (db) => {
+  await updateAuthState(resolvedOrgId, (db) => {
     const mutableUser = db.users.find((entry) => entry._id === user._id);
     if (mutableUser) {
       mutableUser.failedLoginCount = 0;
@@ -1155,7 +1155,7 @@ app.post("/api/auth/logout", requireAuth, async (req: AuthRequest, res) => {
     return res.status(204).send();
   }
 
-  await updateDb((db) => {
+  await updateAuthState(getReqOrgId(req), (db) => {
     const session = db.sessionRecords.find((entry) => entry._id === sessionId);
     if (!session || session.status === "revoked") {
       return;
@@ -1554,6 +1554,7 @@ app.get("/api/public/order-authenticity/:orderNumber", async (req, res) => {
 
 app.get("/api/public/config", async (_req, res) => {
   const db = await loadDb();
+  res.set("Cache-Control", "public, max-age=60, stale-while-revalidate=300");
   res.json({
     labName: db.settings.labName,
     tagline: db.settings.tagline,
@@ -1569,6 +1570,7 @@ app.get("/api/public/config", async (_req, res) => {
 
 app.get("/api/public/services", async (_req, res) => {
   const db = await loadDb();
+  res.set("Cache-Control", "public, max-age=60, stale-while-revalidate=300");
   res.json(
     db.testTypes
       .filter((entry) => entry.active)
