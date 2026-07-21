@@ -102,6 +102,7 @@ const legacyTaglines = new Set([
 const legacyAboutTexts = new Set([
   legacySettingDefaults.aboutText,
   "OLYVIA is a center for molecular pathology and genomics in Yaounde, Cameroon. We provide pathology consultation, histology, cytology, immunohistochemistry, molecular testing, and coordinated result delivery for clinicians, hospitals, and patients.",
+  "OLYVIA is a Lab Information Management System (LIMS) developed by X.PATH Labs, a center for molecular pathology and genomics in Yaounde, Cameroon. X.PATH Labs provides pathology consultation, histology, cytology, immunohistochemistry, molecular testing, and coordinated result delivery for clinicians, hospitals, and patients.",
 ]);
 
 type LegacyRecord = Record<string, unknown>;

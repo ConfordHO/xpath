@@ -19,6 +19,7 @@ import {
   TextField,
   Typography,
 } from '@mui/material'
+import MuiLink from '@mui/material/Link'
 import type { StaticImageData } from 'next/image'
 import AccessTimeRoundedIcon from '@mui/icons-material/AccessTimeRounded'
 import DescriptionRoundedIcon from '@mui/icons-material/DescriptionRounded'
@@ -136,6 +137,36 @@ function buildPatientPortalOrderLink(orderId: string, lastName: string, dateOfBi
     dateOfBirth,
   })
   return `/patient-portal/order/${orderId}?${params.toString()}`
+}
+
+function LinkedAboutText({ text }: { text: string }) {
+  const partnerName = 'Buntu Labs Technologies'
+  const segments = text.split(partnerName)
+
+  if (segments.length === 1) {
+    return <>{text}</>
+  }
+
+  return (
+    <>
+      {segments.map((segment, index) => (
+        <span key={`${segment}-${index}`}>
+          {segment}
+          {index < segments.length - 1 ? (
+            <MuiLink
+              href="https://www.buntulabs.com"
+              target="_blank"
+              rel="noopener noreferrer"
+              underline="hover"
+              sx={{ fontWeight: 700 }}
+            >
+              {partnerName}
+            </MuiLink>
+          ) : null}
+        </span>
+      ))}
+    </>
+  )
 }
 
 interface PublicExperienceLayoutProps {
@@ -772,10 +803,10 @@ export function LandingPage() {
             Who We Are
           </Typography>
           <Typography variant="h3" sx={{ mt: 1.5 }}>
-            About OLYVIA and X.PATH Labs
+            About OLYVIA, X.PATH Labs & Buntu Labs
           </Typography>
           <Typography sx={{ mt: 1.5, color: 'text.secondary', lineHeight: 1.8 }}>
-            {settings.aboutText}
+            <LinkedAboutText text={settings.aboutText} />
           </Typography>
           <Stack direction="row" spacing={1.25} useFlexGap flexWrap="wrap" justifyContent="center" sx={{ mt: 3.5 }}>
             {settings.accreditations.map((item) => (

@@ -2017,7 +2017,7 @@ export function createSeedDatabase(): Database {
       labName: "X.PATH Labs",
       tagline: "OLYVIA Lab Information Management System",
       aboutText:
-        "OLYVIA is a Lab Information Management System (LIMS) developed by X.PATH Labs, a center for molecular pathology and genomics in Yaounde, Cameroon. X.PATH Labs provides pathology consultation, histology, cytology, immunohistochemistry, molecular testing, and coordinated result delivery for clinicians, hospitals, and patients.",
+        "OLYVIA is a Lab Information Management System (LIMS) developed by X.PATH Labs, a center for molecular pathology and genomics in Yaounde, Cameroon, in partnership with Buntu Labs Technologies, a software and systems development firm based in Nairobi, Kenya. OLYVIA supports pathology consultation, histology, cytology, immunohistochemistry, molecular testing, quality-controlled report release, and coordinated result delivery for laboratories in Africa and worldwide.",
       contactEmail: "info@xpath-labs.com",
       contactPhone: "+237-691193779 / +237-677804723",
       address: "Rue 6460 Mbankolo (Petit Paris), BP: 35444, Yaounde - Cameroon",

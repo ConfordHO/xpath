@@ -193,6 +193,15 @@ const exactPhrasePairs: Array<[string, string]> = [
   ['What We Offer', 'Nos services'],
   ['Transparent Pricing', 'Tarification transparente'],
   ['Who We Are', 'Qui sommes-nous'],
+  ['About OLYVIA, X.PATH Labs & Buntu Labs', "A propos d'OLYVIA, X.PATH Labs et Buntu Labs"],
+  [
+    'OLYVIA is a Lab Information Management System (LIMS) developed by X.PATH Labs, a center for molecular pathology and genomics in Yaounde, Cameroon, in partnership with',
+    'OLYVIA est un systeme de gestion des informations de laboratoire (LIMS) developpe par X.PATH Labs, centre de pathologie moleculaire et de genomique a Yaounde, Cameroun, en partenariat avec',
+  ],
+  [
+    ', a software and systems development firm based in Nairobi, Kenya. OLYVIA supports pathology consultation, histology, cytology, immunohistochemistry, molecular testing, quality-controlled report release, and coordinated result delivery for laboratories in Africa and worldwide.',
+    ", une entreprise de developpement logiciel et systemes basee a Nairobi, Kenya. OLYVIA prend en charge la consultation en pathologie, l'histologie, la cytologie, l'immunohistochimie, les tests moleculaires, la liberation des rapports avec controle qualite et la remise coordonnee des resultats pour les laboratoires en Afrique et dans le monde.",
+  ],
   ['Find my orders', 'Retrouver mes commandes'],
   ['Request test online', 'Demander une analyse en ligne'],
   ['Log in to Patient portal to track order', 'Se connecter au portail patient pour suivre la commande'],
