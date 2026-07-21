@@ -22,8 +22,8 @@ export { CreateOrderPage, OrderDetailPage, OrdersPage } from './views/orders'
 export { CommunicationsPage } from './views/communications'
 export { CameroonE2EPage } from './views/cameroonE2E'
 export { ProductionHardeningPage } from './views/production'
+export { LandingPage } from './views/landing'
 export {
-  LandingPage,
   LoginPage,
   PatientOrderDetailPage,
   PatientPortalPage,

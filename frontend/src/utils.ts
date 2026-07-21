@@ -1,6 +1,5 @@
-import { jsPDF } from 'jspdf'
+import type { jsPDF as JsPDFDocument } from 'jspdf'
 import type { StaticImageData } from 'next/image'
-import QRCode from 'qrcode'
 
 import { storageKeys } from './api'
 import logoLarge from './assets/logo_large.png'
@@ -180,7 +179,7 @@ async function loadImage(src: AssetSource) {
   })
 }
 
-function drawMetadataRow(pdf: jsPDF, rows: PdfMetadataRow[], startY: number) {
+function drawMetadataRow(pdf: JsPDFDocument, rows: PdfMetadataRow[], startY: number) {
   if (!rows.length) {
     return startY
   }
@@ -206,6 +205,7 @@ export async function downloadPdfDocument(
   lines: string[],
   options: DownloadPdfOptions = {},
 ) {
+  const { jsPDF } = await import('jspdf')
   const pdf = new jsPDF({ format: 'a4', unit: 'mm' })
   const pageWidth = pdf.internal.pageSize.getWidth()
   const sections = options.sections ?? [{ lines }]
@@ -438,6 +438,7 @@ async function buildAuthenticityQr(orderNumber: string) {
   if (!authenticityUrl) {
     return { authenticityUrl, qrSrc: '' }
   }
+  const QRCode = (await import('qrcode')).default
   const qrSrc = await QRCode.toDataURL(authenticityUrl, {
     width: 148,
     margin: 1,
@@ -449,7 +450,7 @@ async function buildAuthenticityQr(orderNumber: string) {
   return { authenticityUrl, qrSrc }
 }
 
-function splitToLines(pdf: jsPDF, text: string, width: number, maxLines: number) {
+function splitToLines(pdf: JsPDFDocument, text: string, width: number, maxLines: number) {
   const lines = pdf.splitTextToSize(text || '—', width) as string[]
   if (lines.length <= maxLines) {
     return lines
@@ -461,7 +462,7 @@ function splitToLines(pdf: jsPDF, text: string, width: number, maxLines: number)
 }
 
 function drawTextBlock(
-  pdf: jsPDF,
+  pdf: JsPDFDocument,
   label: string,
   body: string,
   x: number,
@@ -482,7 +483,7 @@ function drawTextBlock(
 }
 
 function drawReportChrome(
-  pdf: jsPDF,
+  pdf: JsPDFDocument,
   detail: PathologyReportDetail,
   report: Report | null,
   locale: ReportLocale,
@@ -594,6 +595,7 @@ export async function downloadPathologyReportPdf(
   const locale = currentReportLocale(options.locale)
   const copy = reportCopy[locale]
   const report = detail.report ?? null
+  const { jsPDF } = await import('jspdf')
   const pdf = new jsPDF({ format: 'a4', unit: 'mm' })
   const pageWidth = pdf.internal.pageSize.getWidth()
   const allSlides = detail.accession?.blocks?.flatMap((block) => block.slides?.map((slide) => slide.slideId) ?? []) ?? []

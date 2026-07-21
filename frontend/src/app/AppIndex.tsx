@@ -2,7 +2,7 @@ import { Navigate } from 'react-router-dom'
 
 import { useAuth } from '../auth'
 import { LoadingPanel } from '../components'
-import { LandingPage } from '../pages'
+import { LandingPage } from '../views/landing'
 
 export function AppIndex() {
   const { user, loading } = useAuth()

@@ -1,8 +1,8 @@
 'use client'
 
 import { CssBaseline, ThemeProvider } from '@mui/material'
-import { useEffect, useState } from 'react'
-import { BrowserRouter } from 'react-router-dom'
+import { BrowserRouter, StaticRouter } from 'react-router-dom'
+import type { ReactNode } from 'react'
 
 import App from './App'
 import { AuthProvider } from './auth'
@@ -11,27 +11,25 @@ import { appTheme } from './theme'
 
 interface NextClientAppProps {
   defaultLocale?: AppLocale
+  initialPath?: string
 }
 
-export function NextClientApp({ defaultLocale = 'en' }: NextClientAppProps) {
-  const [mounted, setMounted] = useState(false)
-
-  useEffect(() => {
-    setMounted(true)
-  }, [])
-
-  if (!mounted) {
-    return null
+function UniversalRouter({ children, initialPath = '/' }: { children: ReactNode; initialPath?: string }) {
+  if (typeof window === 'undefined') {
+    return <StaticRouter location={initialPath}>{children}</StaticRouter>
   }
+  return <BrowserRouter>{children}</BrowserRouter>
+}
 
+export function NextClientApp({ defaultLocale = 'en', initialPath = '/' }: NextClientAppProps) {
   return (
     <ThemeProvider theme={appTheme}>
       <CssBaseline />
-      <BrowserRouter>
+      <UniversalRouter initialPath={initialPath}>
         <AuthProvider>
           <App defaultLocale={defaultLocale} />
         </AuthProvider>
-      </BrowserRouter>
+      </UniversalRouter>
     </ThemeProvider>
   )
 }
