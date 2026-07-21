@@ -6,6 +6,10 @@ function hash(password: string) {
   return bcrypt.hashSync(password, 10);
 }
 
+function seededKiyPassword() {
+  return process.env.KIY_SUPER_ADMIN_PASSWORD?.trim() || "admin123";
+}
+
 const defaultUserPreference = {
   preferredLanguage: "french" as const,
   preferredLocale: "fr" as const,
@@ -116,6 +120,22 @@ export function createSeedDatabase(): Database {
         passwordHash: hash("admin123"),
         createdAt: "2026-03-31T06:59:00.000Z",
         updatedAt: "2026-03-31T06:59:00.000Z",
+      },
+      {
+        _id: "seed-user-kiy-super-admin",
+        email: "kiy@xpath-labs.com",
+        name: "Kiy",
+        role: "super_admin",
+        siteId: null,
+        active: true,
+        passwordHash: hash(seededKiyPassword()),
+        mfaEnabled: false,
+        mfaSecret: null,
+        mfaVerifiedAt: null,
+        failedLoginCount: 0,
+        lockedUntil: null,
+        createdAt: "2026-07-21T08:25:00.000Z",
+        updatedAt: "2026-07-21T08:25:00.000Z",
       },
       {
         _id: "69a524bffafff8415e680391",

@@ -21,6 +21,10 @@ services:
         value: 7d
       - key: PUBLIC_REGISTRATION_ENABLED
         value: false
+      - key: MFA_ENFORCED
+        value: false
+      - key: MFA_ENFORCED_ROLES
+        value: super_admin,admin
       - key: HL7_MLLP_ENABLED
         value: false
       - key: DATABASE_URL

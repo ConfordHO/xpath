@@ -36,6 +36,7 @@ type DatabaseDocument = {
 
 const canonicalSiteByEmail: Record<string, string | null> = {
   "superadmin@xpath.lims": null,
+  "kiy@xpath-labs.com": null,
   "admin@xpath.lims": "site-1",
   "admin.douala@xpath.lims": "site-2",
   // Legacy mapping kept so existing DB records are not broken
