@@ -19,8 +19,6 @@ import {
   DATABASE_SSL_MODE,
   DATABASE_URL,
   HEALTH_DIAGNOSTICS_TOKEN,
-  MFA_ENFORCED,
-  MFA_ENFORCED_ROLES,
   MFA_TOTP_ISSUER,
   MAVIANCE_ACCESS_SECRET,
   MAVIANCE_ACCESS_TOKEN,
@@ -1035,31 +1033,7 @@ app.post("/api/auth/login", authLimiter, async (req, res) => {
     return res.status(401).json({ message: "Invalid email or password" });
   }
 
-  const mfaRequiredForRole = MFA_ENFORCED && MFA_ENFORCED_ROLES.includes(user.role);
-  if ((user.mfaEnabled || mfaRequiredForRole) && !verifyTotpToken(user.mfaSecret, parsed.data.mfaToken)) {
-    await updateDb(resolvedOrgId, (mutableDb) => {
-      mutableDb.credentialAudits.unshift({
-        _id: createId(),
-        userId: user._id,
-        action: "mfa_update",
-        outcome: "failure",
-        createdAt: now(),
-      });
-      appendRequestAudit(mutableDb, req, {
-        module: "Security",
-        action: "mfa_challenge",
-        targetId: user._id,
-        summary: `${user.email} must complete MFA before sign-in`,
-      });
-    });
-    return res.status(401).json({
-      message: user.mfaEnabled
-        ? "MFA code is required"
-        : "MFA is required for this role. Ask an administrator to enroll this user.",
-      mfaRequired: true,
-      mfaConfigured: Boolean(user.mfaEnabled),
-    });
-  }
+  // MFA enrollment remains available, but login challenges are disabled until rollout is configured.
 
   // Ensure user carries the resolved orgId (handles legacy users without orgId)
   if (!user.organizationId) {
