@@ -47,6 +47,7 @@ import {
   LoadingPanel,
   MetricCard,
   PageHeader,
+  PasswordField,
   SectionCard,
 } from '../components'
 
@@ -317,7 +318,7 @@ export function UsersPage() {
                 <MenuItem value="fr">Francais</MenuItem>
               </Select>
             </FormControl>
-            <TextField
+            <PasswordField
               label={editing ? 'New password' : 'Temporary password'}
               value={form.password}
               helperText={editing ? 'Leave blank to keep the current password.' : 'Use at least 10 characters with upper, lower, number, and symbol.'}
@@ -789,9 +790,9 @@ export function MyAccountPage() {
             Save changes
           </Button>
           <Divider />
-          <TextField label="Current password" type="password" value={currentPassword} onChange={(event) => setCurrentPassword(event.target.value)} />
-          <TextField label="New password" type="password" value={newPassword} onChange={(event) => setNewPassword(event.target.value)} />
-          <TextField label="Confirm new password" type="password" value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} />
+          <PasswordField label="Current password" value={currentPassword} onChange={(event) => setCurrentPassword(event.target.value)} />
+          <PasswordField label="New password" value={newPassword} onChange={(event) => setNewPassword(event.target.value)} />
+          <PasswordField label="Confirm new password" value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} />
           <Button variant="outlined" onClick={savePassword}>
             Save password
           </Button>

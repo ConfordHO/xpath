@@ -52,6 +52,7 @@ import {
   BrandLogo,
   LoadingPanel,
   PageHeader,
+  PasswordField,
   SectionCard,
   StatusChip,
 } from '../components'
@@ -954,7 +955,7 @@ export function LoginPage() {
           <Typography color="text.secondary">OLYVIA LIMS by X.PATH Labs</Typography>
           {error ? <Alert severity="error">{error}</Alert> : null}
           <TextField label="Email" value={email} onChange={(event) => setEmail(event.target.value)} fullWidth />
-          <TextField label="Password" type="password" value={password} onChange={(event) => setPassword(event.target.value)} fullWidth />
+          <PasswordField label="Password" value={password} onChange={(event) => setPassword(event.target.value)} fullWidth />
           <Button disabled={submitting} variant="contained" onClick={submit} fullWidth>
             Sign in
           </Button>

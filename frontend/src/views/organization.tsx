@@ -24,7 +24,7 @@ import {
 } from '@mui/material'
 import { useState } from 'react'
 import { useAuth } from '../auth'
-import { EmptyState, LoadingPanel, PageHeader, SectionCard } from '../components'
+import { EmptyState, LoadingPanel, PageHeader, PasswordField, SectionCard } from '../components'
 import type { Branch, Organization } from '../types'
 import { api } from '../api'
 import { useLoadable, useActionLock } from './shared'
@@ -179,7 +179,7 @@ export function OrganizationManagementPage() {
             <Box sx={{ display: 'grid', gap: 2, gridTemplateColumns: { xs: '1fr', md: 'repeat(2, 1fr)' } }}>
               <TextField label="Admin full name" value={adminName} onChange={(e) => setAdminName(e.target.value)} />
               <TextField label="Admin email" value={adminEmail} onChange={(e) => setAdminEmail(e.target.value)} />
-              <TextField label="Admin password (min 10 chars)" type="password" value={adminPassword} onChange={(e) => setAdminPassword(e.target.value)} />
+              <PasswordField label="Admin password (min 10 chars)" value={adminPassword} onChange={(e) => setAdminPassword(e.target.value)} />
               <TextField label="Lab display name (optional)" value={labName} onChange={(e) => setLabName(e.target.value)} placeholder={draft.name} />
             </Box>
           </Stack>
