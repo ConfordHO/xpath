@@ -905,8 +905,12 @@ export function LoginPage() {
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
-  const requestedPath = (location.state as { from?: string } | null)?.from
+  const portalMode = new URLSearchParams(location.search).get('portal')
+  const requestedPath =
+    (location.state as { from?: string } | null)?.from ??
+    (portalMode === 'clinician' ? '/doctor-portal' : undefined)
   const postLoginPath = requestedPath?.startsWith('/') ? requestedPath : '/dashboard'
+  const isClinicianPortalLogin = postLoginPath === '/doctor-portal'
 
   useEffect(() => {
     if (user) {
@@ -950,9 +954,13 @@ export function LoginPage() {
         <Stack spacing={2.5}>
           <BrandLogo sx={{ width: 220 }} />
           <Typography variant="h4" sx={{ lineHeight: 1 }}>
-            OLYVIA
+            {isClinicianPortalLogin ? 'Clinician portal sign in' : 'Laboratory Information Management System'}
           </Typography>
-          <Typography color="text.secondary">OLYVIA LIMS by X.PATH Labs</Typography>
+          <Typography color="text.secondary">
+            {isClinicianPortalLogin
+              ? 'Sign in with your clinician account to access referrals and released reports.'
+              : 'Accurate and Efficient. Quick Access to Your Results'}
+          </Typography>
           {error ? <Alert severity="error">{error}</Alert> : null}
           <TextField label="Email" value={email} onChange={(event) => setEmail(event.target.value)} fullWidth />
           <PasswordField label="Password" value={password} onChange={(event) => setPassword(event.target.value)} fullWidth />
@@ -962,7 +970,13 @@ export function LoginPage() {
           <Button component={RouterLink} to="/patient-portal" variant="text">
             Patient? Look up your test results
           </Button>
-          <Button component={RouterLink} to="/doctor-portal" variant="text" startIcon={<MedicalInformationRoundedIcon />}>
+          <Button
+            component={RouterLink}
+            to="/login?portal=clinician"
+            state={{ from: '/doctor-portal' }}
+            variant="text"
+            startIcon={<MedicalInformationRoundedIcon />}
+          >
             Clinician? Open doctor portal
           </Button>
         </Stack>
