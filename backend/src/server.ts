@@ -2148,7 +2148,10 @@ app.delete("/api/security/mfa", async (req: AuthRequest, res) => {
 
 app.get("/api/users", requireRoles("admin"), async (req: AuthRequest, res) => {
   const db = await loadDb();
-  const all = getScopedDb(req, db).users.map((entry) => sanitizeUser(entry));
+  const all = getScopedDb(req, db)
+    .users
+    .filter((entry) => entry.active)
+    .map((entry) => sanitizeUser(entry));
   const page = Math.max(1, Number(req.query.page ?? 1));
   const limit = Math.min(200, Math.max(1, Number(req.query.limit ?? 50)));
   const start = (page - 1) * limit;
@@ -2294,18 +2297,34 @@ app.delete("/api/users/:id", requireRoles("admin"), async (req: AuthRequest, res
     if (!userCanManageUser(currentUser, target)) {
       throw new Error("You do not have access to manage this user");
     }
+    if (target._id === currentUser._id) {
+      throw new Error("You cannot delete your own account while signed in");
+    }
+    const timestamp = now();
     const [removed] = db.users.splice(index, 1);
     db.sessionRecords = db.sessionRecords.filter((entry) => entry.userId !== target._id);
     db.credentialAudits = db.credentialAudits.filter((entry) => entry.userId !== target._id);
+    db.passwordResetTokens = db.passwordResetTokens.filter((entry) => entry.userId !== target._id);
+    db.notifications = db.notifications.map((notification) => ({
+      ...notification,
+      audienceUserIds: notification.audienceUserIds?.filter((userId) => userId !== target._id) ?? null,
+      readBy: notification.readBy?.filter((entry) => entry.userId !== target._id) ?? null,
+      updatedAt: timestamp,
+    }));
     db.doctors.forEach((doctor) => {
       if (doctor.userId === target._id) {
         doctor.userId = null;
-        doctor.updatedAt = now();
+        doctor.updatedAt = timestamp;
       }
     });
     return { target: removed, actor: currentUser.email };
   }).catch((error: Error) => {
-    res.status(error.message.includes("access") ? 403 : 404).json({ message: error.message });
+    const status = error.message.includes("access")
+      ? 403
+      : error.message.includes("not found")
+        ? 404
+        : 400;
+    res.status(status).json({ message: error.message });
     return null;
   });
 

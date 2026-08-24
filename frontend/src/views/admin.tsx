@@ -84,7 +84,6 @@ export function UsersPage() {
     name: string
     email: string
     role: UserRole
-    active: boolean
     password: string
     siteId: string
     preferredLocale: 'en' | 'fr'
@@ -92,7 +91,6 @@ export function UsersPage() {
     name: '',
     email: '',
     role: 'receptionist',
-    active: true,
     password: 'ChangeMe123!',
     siteId: defaultSiteIdForUser(user),
     preferredLocale: user?.preferredLocale ?? 'fr',
@@ -106,7 +104,6 @@ export function UsersPage() {
       name: '',
       email: '',
       role: 'receptionist',
-      active: true,
       password: 'ChangeMe123!',
       siteId: defaultSiteIdForUser(user),
       preferredLocale: user?.preferredLocale ?? 'fr',
@@ -128,7 +125,6 @@ export function UsersPage() {
       name: user.name,
       email: user.email,
       role: user.role,
-      active: user.active,
       password: '',
       siteId: user.siteId ?? '',
       preferredLocale: user.preferredLocale ?? 'fr',
@@ -163,33 +159,6 @@ export function UsersPage() {
       usersState.refresh()
     } catch (saveError) {
       setError(errorMessage(saveError))
-    }
-  }
-
-  const toggleActive = async (target: SafeUser) => {
-    if (
-      !window.confirm(
-        translateTextForLocale(
-          `${target.active ? 'Deactivate' : 'Activate'} ${target.email}?`,
-          locale,
-        ),
-      )
-    ) {
-      return
-    }
-    try {
-      await api.put(`/users/${target._id}`, { active: !target.active })
-      setMessage(`${target.email} ${target.active ? 'deactivated' : 'activated'}.`)
-      usersState.setData((current) =>
-        current.map((entry) =>
-          entry._id === target._id
-            ? { ...entry, active: !target.active }
-            : entry,
-        ),
-      )
-      usersState.refresh()
-    } catch (toggleError) {
-      setError(errorMessage(toggleError))
     }
   }
 
@@ -231,18 +200,16 @@ export function UsersPage() {
                 <TableCell>Email</TableCell>
                 <TableCell>Role</TableCell>
                 <TableCell>Site</TableCell>
-                <TableCell>Active</TableCell>
                 <TableCell>Actions</TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
-              {usersState.data.map((account) => (
+              {usersState.data.filter((account) => account.active).map((account) => (
                 <TableRow key={account._id}>
                   <TableCell>{account.name}</TableCell>
                   <TableCell>{account.email}</TableCell>
                   <TableCell>{roleLabels[account.role]}</TableCell>
                   <TableCell>{siteName(account.siteId)}</TableCell>
-                  <TableCell>{account.active ? 'Yes' : 'No'}</TableCell>
                   <TableCell>
                     <Stack direction={{ xs: 'column', md: 'row' }} spacing={1}>
                       <Button
@@ -251,13 +218,7 @@ export function UsersPage() {
                       >
                         Edit
                       </Button>
-                      <Button
-                        disabled={!canManageListedUser(user, account)}
-                        onClick={() => toggleActive(account)}
-                      >
-                        {account.active ? 'Deactivate' : 'Activate'}
-                      </Button>
-                      {canDeleteUsers(user) && canManageListedUser(user, account) ? (
+                      {canDeleteUsers(user) && canManageListedUser(user, account) && user?._id !== account._id ? (
                         <Button color="error" onClick={() => deleteUser(account)}>
                           Delete
                         </Button>
@@ -324,7 +285,6 @@ export function UsersPage() {
               helperText={editing ? 'Leave blank to keep the current password.' : 'Use at least 10 characters with upper, lower, number, and symbol.'}
               onChange={(event) => setForm((prev) => ({ ...prev, password: event.target.value }))}
             />
-            <FormControlLabel control={<Checkbox checked={form.active} onChange={(event) => setForm((prev) => ({ ...prev, active: event.target.checked }))} />} label="Active" />
           </Stack>
         </DialogContent>
         <DialogActions>
