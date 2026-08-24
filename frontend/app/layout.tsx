@@ -46,11 +46,12 @@ export const metadata: Metadata = {
   },
   icons: {
     icon: [
+      { url: '/favicon.png', type: 'image/png', sizes: '256x256' },
       { url: '/favicon.svg', type: 'image/svg+xml' },
-      { url: '/olyvia-logo.svg', type: 'image/svg+xml', sizes: 'any' },
+      { url: '/olyvia-logo.png', type: 'image/png', sizes: '640x349' },
     ],
-    shortcut: ['/favicon.svg'],
-    apple: [{ url: '/favicon.svg', type: 'image/svg+xml' }],
+    shortcut: ['/favicon.png'],
+    apple: [{ url: '/favicon.png', type: 'image/png', sizes: '256x256' }],
   },
   openGraph: {
     type: 'website',
@@ -63,9 +64,9 @@ export const metadata: Metadata = {
       'Africa-built LIMS for pathology, genomics, histology, cytology, molecular diagnostics, quality-controlled reporting, and laboratory operations that can work worldwide.',
     images: [
       {
-        url: '/olyvia-logo.svg',
-        width: 1820,
-        height: 430,
+        url: '/olyvia-logo.jpg',
+        width: 1407,
+        height: 768,
         alt: 'OLYVIA by X.PATH Labs logo',
       },
     ],
@@ -75,7 +76,7 @@ export const metadata: Metadata = {
     title: 'OLYVIA LIMS | Africa-Built Laboratory Information Management System',
     description:
       'A Laboratory Information Management System developed in Africa for pathology, genomics, reporting, QC, and global laboratory operations.',
-    images: ['/olyvia-logo.svg'],
+    images: ['/olyvia-logo.jpg'],
   },
   robots: {
     index: true,
