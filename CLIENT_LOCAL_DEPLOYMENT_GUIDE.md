@@ -162,26 +162,17 @@ npm run seed --prefix backend
 
 Important: seeding resets the LIMS application state. Do not run this again after real patient/order/report data has been entered unless you intentionally want to reset the system.
 
-Seeded demo logins all use this password:
+The seeded super admin login uses this password unless `KIY_SUPER_ADMIN_PASSWORD` is configured before the first seed:
 
 ```text
 admin123
 ```
 
-Main seeded accounts:
+Main seeded account:
 
-- `superadmin@xpath.lims`
-- `admin@xpath.lims`
-- `admin.douala@xpath.lims`
-- `receptionist@xpath.lims`
-- `technician@xpath.lims`
-- `pathologist@xpath.lims`
-- `review.pathologist@xpath.lims`
-- `finance@xpath.lims`
-- `courier@xpath.lims`
-- `doctor@xpath.lims`
+- `kiy@xpath-labs.com`
 
-Before production use, create real user accounts, rotate or disable demo accounts, and enable MFA for administrator roles if required.
+Before production use, create real user accounts from the super admin console, rotate or disable seeded credentials as required, and enable MFA for administrator roles when ready.
 
 ## 8. Run In Development Mode
 
@@ -316,7 +307,7 @@ Login fails:
 
 - Confirm `npm run seed --prefix backend` was run once.
 - Confirm the backend is using the intended database.
-- Try `superadmin@xpath.lims` with password `admin123`.
+- Try `kiy@xpath-labs.com` with the configured seed password.
 
 Port already in use:
 

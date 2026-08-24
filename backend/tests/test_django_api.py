@@ -36,14 +36,14 @@ class DjangoCompatibilityApiTests(unittest.TestCase):
     def test_login_me_and_seed_catalog(self):
         login = self.post_json(
             "/api/auth/login",
-            {"email": "admin@xpath.lims", "password": "password"},
+            {"email": "kiy@xpath-labs.com", "password": "password"},
         )
         self.assertEqual(login.status_code, 200)
         token = login.json()["token"]
 
         me = self.client.get("/api/users/me", HTTP_AUTHORIZATION=f"Bearer {token}")
         self.assertEqual(me.status_code, 200)
-        self.assertEqual(me.json()["role"], "admin")
+        self.assertEqual(me.json()["role"], "super_admin")
 
         services = self.client.get("/api/public/services")
         self.assertEqual(services.status_code, 200)

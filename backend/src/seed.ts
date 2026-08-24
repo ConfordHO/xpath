@@ -20,7 +20,6 @@ export const DEFAULT_ORG_ID = "primary";
 
 const removedLegacySeedEmails = new Set([
   "edmond@gmail.com",
-  "kiy@xpath.lims",
   "clifford2@gmail.com",
   "cliffobure1@gmail.com",
   "cliffobure3@gmail.com",
@@ -28,19 +27,26 @@ const removedLegacySeedEmails = new Set([
   "cliffobure5@gmail.com",
 ]);
 
+const removedTestAccountDomain = ["@xpath", "lims"].join(".");
+
+function isRemovedSeedUserEmail(email: string) {
+  const normalized = email.toLowerCase();
+  return normalized.endsWith(removedTestAccountDomain) || removedLegacySeedEmails.has(normalized);
+}
+
 function createCleanSeedDatabase(db: Database): Database {
   const removedUserIds = new Set(
     db.users
-      .filter((user) => removedLegacySeedEmails.has(user.email.toLowerCase()))
+      .filter((user) => isRemovedSeedUserEmail(user.email))
       .map((user) => user._id),
   );
 
   return {
     ...db,
-    users: db.users.filter((user) => !removedLegacySeedEmails.has(user.email.toLowerCase())),
+    users: db.users.filter((user) => !isRemovedSeedUserEmail(user.email)),
     doctors: db.doctors.filter(
       (doctor) =>
-        !removedLegacySeedEmails.has(doctor.email.toLowerCase()) &&
+        !isRemovedSeedUserEmail(doctor.email) &&
         !removedUserIds.has(doctor.userId ?? ""),
     ),
     patients: [],
@@ -111,17 +117,6 @@ export function createSeedDatabase(): Database {
   return createCleanSeedDatabase({
     users: ([
       {
-        _id: "seed-user-super-admin",
-        email: "superadmin@xpath.lims",
-        name: "Platform Super Admin",
-        role: "super_admin",
-        siteId: null,
-        active: true,
-        passwordHash: hash("admin123"),
-        createdAt: "2026-03-31T06:59:00.000Z",
-        updatedAt: "2026-03-31T06:59:00.000Z",
-      },
-      {
         _id: "seed-user-kiy-super-admin",
         email: "kiy@xpath-labs.com",
         name: "Kiy",
@@ -136,182 +131,6 @@ export function createSeedDatabase(): Database {
         lockedUntil: null,
         createdAt: "2026-07-21T08:25:00.000Z",
         updatedAt: "2026-07-21T08:25:00.000Z",
-      },
-      {
-        _id: "69a524bffafff8415e680391",
-        email: "admin@xpath.lims",
-        name: "Admin",
-        role: "admin",
-        siteId: "site-1",
-        active: true,
-        passwordHash: hash("admin123"),
-        createdAt: "2026-03-02T05:48:47.595Z",
-        updatedAt: "2026-03-30T19:47:47.871Z",
-      },
-      {
-        _id: "seed-user-admin-douala",
-        email: "admin.douala@xpath.lims",
-        name: "Douala Lab Admin",
-        role: "admin",
-        siteId: "site-2",
-        active: true,
-        passwordHash: hash("admin123"),
-        createdAt: "2026-03-31T07:00:30.000Z",
-        updatedAt: "2026-03-31T07:00:30.000Z",
-      },
-      {
-        _id: "69a527174cfa86f8acf73a8f",
-        email: "clifford2@gmail.com",
-        name: "clifford2",
-        role: "receptionist",
-        siteId: "site-1",
-        active: true,
-        passwordHash: hash("admin123"),
-        createdAt: "2026-03-02T05:58:47.932Z",
-        updatedAt: "2026-03-02T05:58:47.932Z",
-      },
-      {
-        _id: "seed-user-receptionist",
-        email: "receptionist@xpath.lims",
-        name: "Reception Desk",
-        role: "receptionist",
-        siteId: "site-1",
-        active: true,
-        passwordHash: hash("admin123"),
-        createdAt: "2026-03-31T07:00:00.000Z",
-        updatedAt: "2026-03-31T07:00:00.000Z",
-      },
-      {
-        _id: "69a5275b4cfa86f8acf73a96",
-        email: "cliffobure1@gmail.com",
-        name: "clifford",
-        role: "receptionist",
-        siteId: "site-2",
-        active: true,
-        passwordHash: hash("admin123"),
-        createdAt: "2026-03-02T05:59:55.245Z",
-        updatedAt: "2026-03-02T05:59:55.245Z",
-      },
-      {
-        _id: "69a528624cfa86f8acf73afc",
-        email: "cliffobure3@gmail.com",
-        name: "clifford3",
-        role: "technician",
-        siteId: "site-1",
-        active: true,
-        passwordHash: hash("admin123"),
-        createdAt: "2026-03-02T06:04:18.867Z",
-        updatedAt: "2026-03-02T06:04:18.867Z",
-      },
-      {
-        _id: "seed-user-technician",
-        email: "technician@xpath.lims",
-        name: "Lab Technician",
-        role: "technician",
-        siteId: "site-1",
-        active: true,
-        passwordHash: hash("admin123"),
-        createdAt: "2026-03-31T07:01:00.000Z",
-        updatedAt: "2026-03-31T07:01:00.000Z",
-      },
-      {
-        _id: "69c0ce8e74c9d242e3911988",
-        email: "kiy@xpath.lims",
-        name: "Kiy",
-        role: "technician",
-        siteId: "site-2",
-        active: true,
-        passwordHash: hash("admin123"),
-        createdAt: "2026-03-23T05:24:30.192Z",
-        updatedAt: "2026-03-23T05:24:30.192Z",
-      },
-      {
-        _id: "69a5290b4cfa86f8acf73b03",
-        email: "cliffobure4@gmail.com",
-        name: "clifford4",
-        role: "pathologist",
-        siteId: "site-1",
-        active: true,
-        passwordHash: hash("admin123"),
-        createdAt: "2026-03-02T06:07:07.639Z",
-        updatedAt: "2026-03-02T06:07:07.639Z",
-      },
-      {
-        _id: "seed-user-pathologist",
-        email: "pathologist@xpath.lims",
-        name: "Chief Pathologist",
-        role: "pathologist",
-        siteId: "site-1",
-        active: true,
-        passwordHash: hash("admin123"),
-        createdAt: "2026-03-31T07:02:00.000Z",
-        updatedAt: "2026-03-31T07:02:00.000Z",
-      },
-      {
-        _id: "seed-user-review-pathologist",
-        email: "review.pathologist@xpath.lims",
-        name: "Second Review Pathologist",
-        role: "pathologist",
-        siteId: "site-1",
-        active: true,
-        passwordHash: hash("admin123"),
-        createdAt: "2026-03-31T07:02:30.000Z",
-        updatedAt: "2026-03-31T07:02:30.000Z",
-      },
-      {
-        _id: "69a5293c4cfa86f8acf73b14",
-        email: "cliffobure5@gmail.com",
-        name: "clifford5",
-        role: "finance",
-        siteId: "site-1",
-        active: true,
-        passwordHash: hash("admin123"),
-        createdAt: "2026-03-02T06:07:56.502Z",
-        updatedAt: "2026-03-02T06:07:56.502Z",
-      },
-      {
-        _id: "seed-user-finance",
-        email: "finance@xpath.lims",
-        name: "Finance Officer",
-        role: "finance",
-        siteId: "site-1",
-        active: true,
-        passwordHash: hash("admin123"),
-        createdAt: "2026-03-31T07:03:00.000Z",
-        updatedAt: "2026-03-31T07:03:00.000Z",
-      },
-      {
-        _id: "seed-user-courier",
-        email: "courier@xpath.lims",
-        name: "Courier Officer",
-        role: "courier",
-        siteId: "site-1",
-        active: true,
-        passwordHash: hash("admin123"),
-        createdAt: "2026-03-31T07:03:30.000Z",
-        updatedAt: "2026-03-31T07:03:30.000Z",
-      },
-      {
-        _id: "69c0e54e8ca2de7f4733b630",
-        email: "edmond@gmail.com",
-        name: "Edmond",
-        role: "doctor",
-        siteId: "site-1",
-        active: true,
-        passwordHash: hash("admin123"),
-        createdAt: "2026-03-23T07:01:34.085Z",
-        updatedAt: "2026-03-23T07:01:34.085Z",
-      },
-      {
-        _id: "seed-user-doctor",
-        email: "doctor@xpath.lims",
-        name: "Referral Doctor",
-        role: "doctor",
-        siteId: "site-1",
-        active: true,
-        passwordHash: hash("admin123"),
-        createdAt: "2026-03-31T07:04:00.000Z",
-        updatedAt: "2026-03-31T07:04:00.000Z",
       },
     ] as Array<Omit<Database["users"][number], "preferredLanguage" | "preferredLocale">>).map((user) => ({
       ...defaultUserPreference,
@@ -331,19 +150,6 @@ export function createSeedDatabase(): Database {
         userId: "69c0e54e8ca2de7f4733b630",
         createdAt: "2026-03-23T07:01:33.635Z",
         updatedAt: "2026-03-23T07:01:34.819Z",
-      },
-      {
-        _id: "seed-doctor-portal",
-        name: "Referral Doctor",
-        code: "DRP",
-        type: "doctor",
-        email: "doctor@xpath.lims",
-        phone: "+237 699 000 001",
-        active: true,
-        siteId: "site-1",
-        userId: "seed-user-doctor",
-        createdAt: "2026-03-31T07:04:00.000Z",
-        updatedAt: "2026-03-31T07:04:00.000Z",
       },
     ],
     patients: [
@@ -1649,19 +1455,7 @@ export function createSeedDatabase(): Database {
       },
     ],
     projectReviewComments: [],
-    sessionRecords: [
-      {
-        _id: "session-1",
-        userId: "69a524bffafff8415e680391",
-        email: "admin@xpath.lims",
-        role: "admin",
-        status: "active",
-        ipAddress: "127.0.0.1",
-        userAgent: "seeded-session",
-        createdAt: "2026-03-31T07:39:00.000Z",
-        updatedAt: "2026-03-31T07:39:00.000Z",
-      },
-    ],
+    sessionRecords: [],
     credentialAudits: [
       {
         _id: "credential-1",

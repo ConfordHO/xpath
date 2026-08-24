@@ -14,18 +14,111 @@ let authToken = "";
 let createdOrderId = "";
 let createdAccessionId = "";
 
+const seededSuperAdminEmail = "kiy@xpath-labs.com";
+const seededSuperAdminPassword = process.env.KIY_SUPER_ADMIN_PASSWORD?.trim() || "admin123";
+const testUserPassword = "OlyviaTest123!";
+const testEmailSuffix = testStateId.toLowerCase();
+const testRoleEmails = {
+  approvalSuperAdmin: `hardening-super-admin-${testEmailSuffix}@xpath.test`,
+  receptionist: `hardening-receptionist-${testEmailSuffix}@xpath.test`,
+  technician: `hardening-technician-${testEmailSuffix}@xpath.test`,
+  pathologist: `hardening-pathologist-${testEmailSuffix}@xpath.test`,
+  secondPathologist: `hardening-review-pathologist-${testEmailSuffix}@xpath.test`,
+  finance: `hardening-finance-${testEmailSuffix}@xpath.test`,
+  doctor: `hardening-doctor-${testEmailSuffix}@xpath.test`,
+} as const;
+const passwordByEmail = new Map<string, string>([
+  [seededSuperAdminEmail, seededSuperAdminPassword],
+  [testRoleEmails.approvalSuperAdmin, testUserPassword],
+  [testRoleEmails.receptionist, testUserPassword],
+  [testRoleEmails.technician, testUserPassword],
+  [testRoleEmails.pathologist, testUserPassword],
+  [testRoleEmails.secondPathologist, testUserPassword],
+  [testRoleEmails.finance, testUserPassword],
+]);
+
 async function loginAdmin() {
-  return loginUser("admin@xpath.lims");
+  return loginUser(seededSuperAdminEmail);
 }
 
 async function loginUser(email: string) {
+  const normalizedEmail = email.toLowerCase();
   const login = await request.post("/api/auth/login").send({
-    email,
-    password: "admin123",
+    email: normalizedEmail,
+    password: passwordByEmail.get(normalizedEmail) ?? testUserPassword,
   });
   assert.equal(login.status, 200);
   assert.ok(login.body.token);
   return login.body.token as string;
+}
+
+async function createRoleUser(
+  adminToken: string,
+  input: { name: string; email: string; role: "super_admin" | "receptionist" | "technician" | "pathologist" | "finance" },
+) {
+  const response = await request
+    .post("/api/users")
+    .set("Authorization", `Bearer ${adminToken}`)
+    .send({
+      name: input.name,
+      email: input.email,
+      role: input.role,
+      siteId: "site-1",
+      active: true,
+      password: testUserPassword,
+      preferredLocale: "fr",
+    });
+  assert.equal(response.status, 201, JSON.stringify(response.body));
+  return response.body;
+}
+
+async function createHardeningTestAccounts(adminToken: string) {
+  await createRoleUser(adminToken, {
+    name: "Hardening Approval Super Admin",
+    email: testRoleEmails.approvalSuperAdmin,
+    role: "super_admin",
+  });
+  await createRoleUser(adminToken, {
+    name: "Hardening Receptionist",
+    email: testRoleEmails.receptionist,
+    role: "receptionist",
+  });
+  await createRoleUser(adminToken, {
+    name: "Hardening Technician",
+    email: testRoleEmails.technician,
+    role: "technician",
+  });
+  await createRoleUser(adminToken, {
+    name: "Hardening Pathologist",
+    email: testRoleEmails.pathologist,
+    role: "pathologist",
+  });
+  await createRoleUser(adminToken, {
+    name: "Hardening Review Pathologist",
+    email: testRoleEmails.secondPathologist,
+    role: "pathologist",
+  });
+  await createRoleUser(adminToken, {
+    name: "Hardening Finance",
+    email: testRoleEmails.finance,
+    role: "finance",
+  });
+
+  const doctor = await request
+    .post("/api/doctors")
+    .set("Authorization", `Bearer ${adminToken}`)
+    .send({
+      name: "Hardening Referral Doctor",
+      code: "HDR",
+      type: "doctor",
+      email: testRoleEmails.doctor,
+      phone: "+237699009999",
+      active: true,
+      siteId: "site-1",
+    });
+  assert.equal(doctor.status, 201, JSON.stringify(doctor.body));
+  assert.ok(doctor.body.generatedPassword);
+  passwordByEmail.set(testRoleEmails.doctor, doctor.body.generatedPassword);
 }
 
 before(async () => {
@@ -42,6 +135,7 @@ before(async () => {
         : undefined,
   });
   await pgPool.query("SELECT 1");
+  await createHardeningTestAccounts(await loginAdmin());
 });
 
 after(async () => {
@@ -545,7 +639,7 @@ describe("production hardening", () => {
   });
 
   test("external clinician portal creates authorized patients, referral orders, OCR orders, invoices, and only released reports", async () => {
-    const doctorToken = await loginUser("doctor@xpath.lims");
+    const doctorToken = await loginUser(testRoleEmails.doctor);
 
     const profile = await request
       .get("/api/doctors/me/profile")
@@ -922,7 +1016,7 @@ describe("production hardening", () => {
     assert.equal(specialistAssist.body.provider, "local-template");
     assert.match(specialistAssist.body.safety, /Drafting aid only/);
 
-    const doctorToken = await loginUser("doctor@xpath.lims");
+    const doctorToken = await loginUser(testRoleEmails.doctor);
     const forbiddenReportAssist = await request
       .post("/api/ai/specialist-assist")
       .set("Authorization", `Bearer ${doctorToken}`)
@@ -945,8 +1039,8 @@ describe("production hardening", () => {
   });
 
   test("department communications support linked regulated threads, broadcasts, exceptions, read receipts, and attachments", async () => {
-    const pathologistToken = await loginUser("pathologist@xpath.lims");
-    const technicianToken = await loginUser("technician@xpath.lims");
+    const pathologistToken = await loginUser(testRoleEmails.pathologist);
+    const technicianToken = await loginUser(testRoleEmails.technician);
 
     const orderDetail = await request
       .get(`/api/orders/${createdOrderId}`)
@@ -1136,9 +1230,9 @@ describe("production hardening", () => {
   });
 
   test("module one and two governance flows enforce verification, approvals, and reversals", async () => {
-    const pathologistToken = await loginUser("pathologist@xpath.lims");
-    const financeToken = await loginUser("finance@xpath.lims");
-    const superAdminToken = await loginUser("superadmin@xpath.lims");
+    const pathologistToken = await loginUser(testRoleEmails.pathologist);
+    const financeToken = await loginUser(testRoleEmails.finance);
+    const superAdminToken = await loginUser(testRoleEmails.approvalSuperAdmin);
 
     const ocrJob = await request
       .post("/api/intake/ocr/jobs")
@@ -1204,9 +1298,10 @@ describe("production hardening", () => {
     assert.equal(lock.status, 200);
     assert.equal(lock.body.lockStatus, "locked");
 
+    const receptionistToken = await loginUser(testRoleEmails.receptionist);
     const blockedDirectEdit = await request
       .put(`/api/orders/${createdOrderId}`)
-      .set("Authorization", `Bearer ${authToken}`)
+      .set("Authorization", `Bearer ${receptionistToken}`)
       .send({ notes: "This direct edit must be blocked" });
     assert.equal(blockedDirectEdit.status, 400);
     assert.match(blockedDirectEdit.body.message, /controlled correction/i);

@@ -25,18 +25,10 @@ type DatabaseDocument = {
 };
 
 const canonicalSiteByEmail: Record<string, string | null> = {
-  "superadmin@xpath.lims": null,
   "kiy@xpath-labs.com": null,
-  "admin@xpath.lims": "site-1",
-  "admin.douala@xpath.lims": "site-2",
-  // Legacy mapping kept so existing DB records are not broken
-  "admin.nairobi@xpath.lims": "site-2",
-  "receptionist@xpath.lims": "site-1",
-  "technician@xpath.lims": "site-1",
-  "pathologist@xpath.lims": "site-1",
-  "finance@xpath.lims": "site-1",
-  "courier@xpath.lims": "site-1",
-  "doctor@xpath.lims": "site-1",
+  "eunice@xpath-labs.com": "site-1",
+  "bidiasjunior@gmail.com": null,
+  "hamiltonconford@gmail.com": null,
 };
 
 function languageFromLocale(locale: "en" | "fr") {
@@ -68,7 +60,7 @@ const legacySettingDefaults = {
   tagline: "Résultats fiables. Tarification claire. Délais rapides.",
   aboutText:
     "Nous sommes un laboratoire de pathologie et de diagnostic moléculaire engagé dans le diagnostic précis, la tarification transparente et le rendu des résultats dans les délais. Notre équipe de pathologistes et de personnel de laboratoire travaille avec les médecins référents et les patients pour fournir des résultats fiables conformément aux exigences de la loi camerounaise n° 2010/012 du 21 décembre 2010 relative à la cybersécurité et à la cybercriminalité ainsi qu'aux réglementations sanitaires applicables.",
-  contactEmail: "info@xpath.lims",
+  contactEmail: "info@xpath-labs.com",
   contactPhone: "+237 699 000 000",
   address: "Yaoundé, Cameroun",
   businessHours: "Lun–Ven 7:30–17:30; Sam 8:00–13:00",
@@ -789,7 +781,7 @@ function normalizeDatabase(raw: Partial<Database>): Database {
           : "patient",
       billingAccountName: legacyStringField(record, "billingAccountName", "billing_account_name") ?? null,
       billingInstructions: legacyStringField(record, "billingInstructions", "billing_instructions") ?? null,
-      createdBy: rawCreatedBy ? userIdByAnyId.get(rawCreatedBy) ?? rawCreatedBy : userIdByEmail.get("admin@xpath.lims") ?? users[0]?._id ?? "system",
+      createdBy: rawCreatedBy ? userIdByAnyId.get(rawCreatedBy) ?? rawCreatedBy : userIdByEmail.get("kiy@xpath-labs.com") ?? users[0]?._id ?? "system",
       notes: legacyStringField(record, "notes") ?? legacyStringField(record, "clinicalNotes", "clinical_notes") ?? order.notes,
       clinicalHistory: legacyStringField(record, "clinicalHistory", "clinical_history", "clinicalNotes", "clinical_notes"),
       validationStatus: order.validationStatus ?? "pending",

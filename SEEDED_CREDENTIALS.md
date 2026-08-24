@@ -1,36 +1,23 @@
 # Seeded Credentials
 
-The application now ensures canonical demo users exist for each core role, including site-scoped admins and a global super admin.
+The application seeds only the current OLYVIA super admin account. The old demo-domain accounts have been retired and should not be recreated.
 
-These credentials are for local/demo validation only. Before any live public deployment, create production users through the authenticated admin console, rotate or disable all seeded accounts, enable MFA for admin roles, and keep `PUBLIC_REGISTRATION_ENABLED=false`.
+These credentials are for local/demo validation only. Before any live public deployment, create production users through the authenticated admin console, rotate or disable seeded accounts as required, enable MFA for admin roles when ready, and keep `PUBLIC_REGISTRATION_ENABLED=false`.
 
-All passwords:
+Default password:
 
 `admin123`
 
-## Primary role logins
+## Primary Seeded Login
 
 | Role | Email | Site scope |
 | --- | --- | --- |
-| Super admin | `superadmin@xpath.lims` | Global |
 | Super admin | `kiy@xpath-labs.com` | Global |
-| Admin | `admin@xpath.lims` | `site-1` X.PATH Labs Central Lab |
-| Admin (other lab) | `admin.douala@xpath.lims` | `site-2` X.PATH Labs Collection Center - Douala |
-| Receptionist | `receptionist@xpath.lims` | `site-1` X.PATH Labs Central Lab |
-| Technician | `technician@xpath.lims` | `site-1` X.PATH Labs Central Lab |
-| Pathologist | `pathologist@xpath.lims` | `site-1` X.PATH Labs Central Lab |
-| Second review pathologist | `review.pathologist@xpath.lims` | `site-1` X.PATH Labs Central Lab |
-| Finance | `finance@xpath.lims` | `site-1` X.PATH Labs Central Lab |
-| Courier | `courier@xpath.lims` | `site-1` X.PATH Labs Central Lab |
-| Doctor / Referrer portal | `doctor@xpath.lims` | `site-1` X.PATH Labs Central Lab |
 
 ## Notes
 
-- `superadmin@xpath.lims` can see and manage every site, including creating, activating, deactivating, and deleting users.
-- `kiy@xpath-labs.com` is also seeded as a global super admin. It uses `admin123` unless `KIY_SUPER_ADMIN_PASSWORD` is set before a fresh database is initialized.
-- `admin@xpath.lims` is a single-site lab manager and is restricted to their own site’s operational users and data.
+- `kiy@xpath-labs.com` is seeded as a global super admin. It uses `admin123` unless `KIY_SUPER_ADMIN_PASSWORD` is set before a fresh database is initialized.
 - Site admins can activate, deactivate, edit, and delete their own site’s operational users, but they cannot manage admins or super admins.
-- `admin.douala@xpath.lims` is useful for confirming that one admin cannot see or manage users from the other lab.
 - The patient portal uses lookup rather than a seeded login account.
-- The removed legacy demo accounts are no longer part of the canonical seed set.
+- The removed legacy demo accounts are no longer part of the canonical seed set and are purged when older seed snapshots are cleaned.
 - Every authenticated role can open `/project-review` from the Account navigation to submit project review comments for developers. Admins can triage comments for their own site, while super admins can triage all comments.

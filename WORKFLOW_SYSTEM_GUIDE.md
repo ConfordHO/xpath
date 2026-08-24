@@ -397,17 +397,10 @@ Still important for future hardening:
 - explicit addendum/amendment UI for released reports
 - deeper audit exports for regulated environments
 
-## Recommended Test Credentials
+## Recommended Credentials
 
 See:
 
 - `SEEDED_CREDENTIALS.md`
 
-Most useful roles for checking the workflow:
-
-- `courier@xpath.lims`
-- `receptionist@xpath.lims`
-- `finance@xpath.lims`
-- `technician@xpath.lims`
-- `pathologist@xpath.lims`
-- `admin@xpath.lims`
+Use real active accounts created by the OLYVIA super admin when checking the workflow. The retired demo accounts are no longer part of the system.
