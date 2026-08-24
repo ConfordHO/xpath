@@ -55,9 +55,6 @@ export function AppShell({ groups, children }: AppShellProps) {
         }}
       >
         <BrandLogo sx={{ width: 210 }} />
-        <Typography variant="h6" sx={{ mt: 1, lineHeight: 1 }}>
-          OLYVIA
-        </Typography>
       </Paper>
       <Paper sx={{ p: 2, mb: 2, bgcolor: 'primary.main', color: 'primary.contrastText' }}>
         <Typography variant="body2" sx={{ opacity: 0.74, letterSpacing: '0.08em' }}>
