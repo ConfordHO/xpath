@@ -29,8 +29,6 @@ services:
         value: false
       - key: DATABASE_URL
         sync: false
-      - key: DATABASE_SSL_MODE
-        value: require
       - key: POSTGRES_STATE_TABLE
         value: app_state
       - key: POSTGRES_STATE_ID

@@ -230,7 +230,7 @@ If you stay on filesystem storage:
 
 - `render.yaml` now deploys the backend as Docker using `backend/Dockerfile`.
 - `render.yaml` adds a private Docker `pathnovate-ollama` service and injects its internal host/port into `AI_API_BASE_URL`.
-- Render generates `JWT_SECRET`; set `DATABASE_URL` explicitly to the current OLYVIA PostgreSQL database (`olyviadb` on the Frankfurt Render host) and keep `POSTGRES_STATE_TABLE=app_state` plus `POSTGRES_STATE_ID=primary`.
+- Render generates `JWT_SECRET`; set `DATABASE_URL` explicitly to the current OLYVIA PostgreSQL database. Use the internal Render URL for the backend (`postgresql://kiy:<password>@dpg-d9et5hn41pts73fijakg-a/olyviadb`) and the external Frankfurt URL only for local/admin access. Keep `POSTGRES_STATE_TABLE=app_state` plus `POSTGRES_STATE_ID=primary`; leave `DATABASE_SSL_MODE` unset so SSL is inferred from the host.
 - Whisper dictation is disabled by default in Render because installing and downloading Whisper models during the web-service build makes deploys large and fragile. Enable it only after building the backend image with `INSTALL_WHISPER=true`.
 - Remaining third-party credentials are declared with `sync: false`.
 - HL7 MLLP is disabled by default in the Render blueprint because the web deployment is intended for the HTTP API surface.

@@ -37,6 +37,7 @@ import {
   allowedUserRolesForManager,
   canManageListedUser,
   canDeleteUsers,
+  canUnlockUsers,
   canSelectUserSite,
   defaultSiteIdForUser,
   roleLabels,
@@ -180,6 +181,30 @@ export function UsersPage() {
     }
   }
 
+  const isLocked = (account: SafeUser) =>
+    Boolean(account.lockedUntil && new Date(account.lockedUntil).getTime() > Date.now())
+
+  const accountStatus = (account: SafeUser) => {
+    if (isLocked(account)) {
+      return `Locked until ${new Date(account.lockedUntil as string).toLocaleString()}`
+    }
+    const failedAttempts = account.failedLoginCount ?? 0
+    return failedAttempts > 0 ? `${failedAttempts} failed attempt${failedAttempts === 1 ? '' : 's'}` : 'Ready'
+  }
+
+  const unlockUser = async (target: SafeUser) => {
+    try {
+      const response = await api.post<SafeUser>(`/users/${target._id}/unlock`)
+      setMessage(`${target.email} unlocked.`)
+      usersState.setData((current) =>
+        current.map((entry) => (entry._id === target._id ? response.data : entry)),
+      )
+      usersState.refresh()
+    } catch (unlockError) {
+      setError(errorMessage(unlockError))
+    }
+  }
+
   const roleOptions = allowedUserRolesForManager(user)
 
   return (
@@ -200,6 +225,7 @@ export function UsersPage() {
                 <TableCell>Email</TableCell>
                 <TableCell>Role</TableCell>
                 <TableCell>Site</TableCell>
+                <TableCell>Status</TableCell>
                 <TableCell>Actions</TableCell>
               </TableRow>
             </TableHead>
@@ -211,6 +237,11 @@ export function UsersPage() {
                   <TableCell>{roleLabels[account.role]}</TableCell>
                   <TableCell>{siteName(account.siteId)}</TableCell>
                   <TableCell>
+                    <Typography color={isLocked(account) ? 'warning.dark' : 'text.secondary'} variant="body2">
+                      {accountStatus(account)}
+                    </Typography>
+                  </TableCell>
+                  <TableCell>
                     <Stack direction={{ xs: 'column', md: 'row' }} spacing={1}>
                       <Button
                         disabled={!canManageListedUser(user, account)}
@@ -218,6 +249,11 @@ export function UsersPage() {
                       >
                         Edit
                       </Button>
+                      {canUnlockUsers(user) && isLocked(account) ? (
+                        <Button color="warning" onClick={() => unlockUser(account)}>
+                          Unlock
+                        </Button>
+                      ) : null}
                       {canDeleteUsers(user) && canManageListedUser(user, account) && user?._id !== account._id ? (
                         <Button color="error" onClick={() => deleteUser(account)}>
                           Delete

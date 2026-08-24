@@ -2276,6 +2276,40 @@ app.put("/api/users/:id", requireRoles("admin"), async (req: AuthRequest, res) =
   res.json(sanitizeUser(updated));
 });
 
+app.post("/api/users/:id/unlock", requireRoles("super_admin"), async (req: AuthRequest, res) => {
+  const actor = ensureUser(req);
+  const unlocked = await updateDb((db) => {
+    const target = db.users.find((entry) => entry._id === req.params.id);
+    if (!target) {
+      throw new Error("User not found");
+    }
+    const timestamp = now();
+    target.failedLoginCount = 0;
+    target.lockedUntil = null;
+    target.updatedAt = timestamp;
+    appendRequestAudit(db, req, {
+      module: "Security",
+      action: "unlock_account",
+      targetId: target._id,
+      summary: `${actor.email} unlocked ${target.email}`,
+      metadata: {
+        unlockedUserEmail: target.email,
+        unlockedUserRole: target.role,
+      },
+    });
+    return target;
+  }).catch((error: Error) => {
+    res.status(error.message.includes("not found") ? 404 : 400).json({ message: error.message });
+    return null;
+  });
+
+  if (!unlocked) {
+    return;
+  }
+
+  res.json(sanitizeUser(unlocked));
+});
+
 app.delete("/api/users/:id", requireRoles("admin"), async (req: AuthRequest, res) => {
   const currentUser = ensureUser(req);
   const deleted = await updateDb((db) => {

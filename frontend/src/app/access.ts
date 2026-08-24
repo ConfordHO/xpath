@@ -27,6 +27,10 @@ export function canDeleteUsers(user: SafeUser | null | undefined) {
   return hasRole(user, adminRoles)
 }
 
+export function canUnlockUsers(user: SafeUser | null | undefined) {
+  return hasRole(user, ['super_admin'])
+}
+
 export function canManageListedUser(
   actor: SafeUser | null | undefined,
   target: SafeUser,
