@@ -1,17 +1,9 @@
-import { readFile } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
-import { MongoClient } from "mongodb";
 import { Pool, type QueryResult, type QueryResultRow } from "pg";
 
 import { normalizeSiteId } from "./auth.js";
 import {
   DATABASE_SSL_MODE,
   DATABASE_URL,
-  LEGACY_MONGODB_COLLECTION,
-  LEGACY_MONGODB_DB_NAME,
-  LEGACY_MONGODB_URI,
-  POSTGRES_EXTERNAL_HOST_SUFFIX,
   POSTGRES_STATE_ID,
   POSTGRES_STATE_TABLE,
 } from "./config.js";
@@ -26,8 +18,6 @@ import { deriveTatAlerts } from "./server/tat.js";
 import { createSeedDatabase } from "./seed.js";
 import type { Database } from "./types.js";
 
-const here = dirname(fileURLToPath(import.meta.url));
-const dataFile = resolve(here, "../data/runtime-db.json");
 type DatabaseDocument = {
   id: string;
   state: Database;
@@ -112,7 +102,6 @@ type PostgresSslMode = "require" | "disable";
 
 let pool: Pool | null = null;
 let activePostgresSslMode: PostgresSslMode | null = null;
-let activePostgresConnectionUrl: string | null = null;
 
 // Per-org caches — keyed by orgId (= PostgreSQL app_state row id)
 const orgDbCache = new Map<string, Database>();
@@ -1214,15 +1203,6 @@ function cloneDb(db: Database) {
   return structuredClone(db);
 }
 
-async function readLegacyDb(): Promise<Partial<Database> | null> {
-  try {
-    const raw = await readFile(dataFile, "utf-8");
-    return JSON.parse(raw) as Partial<Database>;
-  } catch {
-    return null;
-  }
-}
-
 function quotedIdentifier(value: string) {
   if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(value)) {
     throw new Error(`Unsafe SQL identifier ${value}`);
@@ -1233,95 +1213,24 @@ function quotedIdentifier(value: string) {
 const stateTableIdentifier = quotedIdentifier(POSTGRES_STATE_TABLE);
 let stateTableReadyPromise: Promise<void> | null = null;
 
-function getPreferredPostgresSslModes(): PostgresSslMode[] {
-  if (activePostgresSslMode) {
-    return [
-      activePostgresSslMode,
-      activePostgresSslMode === "require" ? "disable" : "require",
-    ];
-  }
-  return DATABASE_SSL_MODE === "require" ? ["require", "disable"] : ["disable", "require"];
-}
-
-function getPostgresConnectionUrls() {
-  const urls = [DATABASE_URL];
-
-  try {
-    const parsedUrl = new URL(DATABASE_URL);
-    if (
-      POSTGRES_EXTERNAL_HOST_SUFFIX &&
-      parsedUrl.hostname &&
-      !parsedUrl.hostname.includes(".")
-    ) {
-      parsedUrl.hostname = `${parsedUrl.hostname}.${POSTGRES_EXTERNAL_HOST_SUFFIX}`;
-      const fallbackUrl = parsedUrl.toString();
-      if (!urls.includes(fallbackUrl)) {
-        urls.push(fallbackUrl);
-      }
-    }
-  } catch {
-    // Keep the primary URL only; connection handling will surface the original error.
-  }
-
-  return urls;
-}
-
-function getPostgresConnectionAttempts() {
-  const urls = getPostgresConnectionUrls();
-  const primaryUrl = urls[0];
-  const fallbackUrl = urls[1];
-  const [preferredMode, alternateMode] = getPreferredPostgresSslModes();
-  const attempts: Array<{ connectionString: string; mode: PostgresSslMode }> = [];
-
-  if (activePostgresConnectionUrl && activePostgresSslMode) {
-    attempts.push({
-      connectionString: activePostgresConnectionUrl,
-      mode: activePostgresSslMode,
-    });
-  }
-
-  attempts.push({ connectionString: primaryUrl, mode: preferredMode });
-  if (fallbackUrl) {
-    attempts.push({ connectionString: fallbackUrl, mode: "require" });
-    attempts.push({ connectionString: fallbackUrl, mode: "disable" });
-  }
-  attempts.push({ connectionString: primaryUrl, mode: alternateMode });
-
-  const seen = new Set<string>();
-  return attempts.filter((attempt) => {
-    const key = `${attempt.connectionString}|${attempt.mode}`;
-    if (seen.has(key)) {
-      return false;
-    }
-    seen.add(key);
-    return true;
-  });
-}
-
-async function getPool(connectionString: string, mode: PostgresSslMode) {
-  if (
-    pool &&
-    activePostgresConnectionUrl === connectionString &&
-    activePostgresSslMode === mode
-  ) {
+async function getPool() {
+  if (pool && activePostgresSslMode === DATABASE_SSL_MODE) {
     return pool;
   }
 
   const previousPool = pool;
   pool = null;
   activePostgresSslMode = null;
-  activePostgresConnectionUrl = null;
   await previousPool?.end().catch(() => undefined);
 
   pool = new Pool({
-    connectionString,
-    ssl: mode === "require" ? { rejectUnauthorized: false } : undefined,
+    connectionString: DATABASE_URL,
+    ssl: DATABASE_SSL_MODE === "require" ? { rejectUnauthorized: false } : undefined,
     max: 4,
     idleTimeoutMillis: 10_000,
     connectionTimeoutMillis: 8_000,
   });
-  activePostgresSslMode = mode;
-  activePostgresConnectionUrl = connectionString;
+  activePostgresSslMode = DATABASE_SSL_MODE;
   return pool;
 }
 
@@ -1329,23 +1238,15 @@ async function queryPostgres<T extends QueryResultRow = QueryResultRow>(
   text: string,
   params?: unknown[],
 ): Promise<QueryResult<T>> {
-  let lastError: unknown;
-  for (const attempt of getPostgresConnectionAttempts()) {
-    try {
-      return await (
-        await getPool(attempt.connectionString, attempt.mode)
-      ).query<T>(text, params);
-    } catch (error) {
-      lastError = error;
-      const failedPool = pool;
-      pool = null;
-      activePostgresSslMode = null;
-      activePostgresConnectionUrl = null;
-      await failedPool?.end().catch(() => undefined);
-    }
+  try {
+    return await (await getPool()).query<T>(text, params);
+  } catch (error) {
+    const failedPool = pool;
+    pool = null;
+    activePostgresSslMode = null;
+    await failedPool?.end().catch(() => undefined);
+    throw error;
   }
-
-  throw lastError;
 }
 
 async function ensureStateTable() {
@@ -1519,50 +1420,6 @@ export async function updateOrganizationRecord(id: string, updates: Partial<Omit
   );
 }
 
-async function readLegacyMongoDb(): Promise<Partial<Database> | null> {
-  if (!LEGACY_MONGODB_URI) {
-    return null;
-  }
-
-  const client = new MongoClient(LEGACY_MONGODB_URI, {
-    connectTimeoutMS: 8000,
-    serverSelectionTimeoutMS: 8000,
-    socketTimeoutMS: 10000,
-  });
-  try {
-    await client.connect();
-    const collection = client
-      .db(LEGACY_MONGODB_DB_NAME)
-      .collection<{ _id: string; state: Partial<Database> }>(LEGACY_MONGODB_COLLECTION);
-    const existing = await collection.findOne({ _id: POSTGRES_STATE_ID });
-    return existing?.state ?? null;
-  } finally {
-    await client.close().catch(() => undefined);
-  }
-}
-
-export async function clearLegacyMongoState() {
-  if (!LEGACY_MONGODB_URI) {
-    return false;
-  }
-
-  const client = new MongoClient(LEGACY_MONGODB_URI, {
-    connectTimeoutMS: 8000,
-    serverSelectionTimeoutMS: 8000,
-    socketTimeoutMS: 10000,
-  });
-  try {
-    await client.connect();
-    const collection = client
-      .db(LEGACY_MONGODB_DB_NAME)
-      .collection<{ _id: string; state: Partial<Database> }>(LEGACY_MONGODB_COLLECTION);
-    const result = await collection.deleteOne({ _id: POSTGRES_STATE_ID });
-    return result.deletedCount > 0;
-  } finally {
-    await client.close().catch(() => undefined);
-  }
-}
-
 async function persistDb(db: Database, orgId: string = POSTGRES_STATE_ID) {
   const existing = await getStateRecord(orgId);
   const normalized = normalizeDatabase({
@@ -1643,11 +1500,7 @@ async function ensureInitializedForOrg(orgId: string) {
         }
         return;
       }
-      // Only seed the primary org; new orgs start with fresh seed
-      const legacy = orgId === POSTGRES_STATE_ID
-        ? (await readLegacyMongoDb()) ?? (await readLegacyDb())
-        : null;
-      const initial = normalizeDatabase(legacy ?? createSeedDatabase());
+      const initial = normalizeDatabase(createSeedDatabase());
       await persistDb(initial, orgId);
     })().catch((error) => {
       orgInitPromises.delete(orgId);
@@ -1693,13 +1546,6 @@ export async function resetDb() {
   await saveDb(createSeedDatabase());
 }
 
-export async function migrateLegacyDbToPostgres() {
-  const legacy = (await readLegacyMongoDb()) ?? (await readLegacyDb());
-  const migrated = normalizeDatabase(legacy ?? createSeedDatabase());
-  await persistDb(migrated);
-  return cloneDb(migrated);
-}
-
 export async function closeStoreConnections() {
   cachedDb = null;
   initializationPromise = null;
@@ -1711,7 +1557,6 @@ export async function closeStoreConnections() {
   const activePool = pool;
   pool = null;
   activePostgresSslMode = null;
-  activePostgresConnectionUrl = null;
   await activePool?.end().catch(() => undefined);
 }
 

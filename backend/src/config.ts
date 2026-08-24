@@ -31,20 +31,12 @@ function readOrigins() {
     new Set([
       ...configuredOrigins,
       "https://olyvia.xpath-labs.com",
-      "https://xpath-two.vercel.app",
-      "https://x-path.vercel.app",
     ]),
   );
 }
 
 function normalizeLocalOrigin(value: string) {
   return value.replace(/^https?:\/\/localhost/i, "localhost");
-}
-
-function inferMongoDbName(uri: string) {
-  const withoutScheme = uri.replace(/^mongodb(?:\+srv)?:\/\/[^/]+\/?/, "");
-  const path = withoutScheme.split("?")[0]?.trim().replace(/^\/+/, "");
-  return path || null;
 }
 
 function inferPostgresSslMode(url: string) {
@@ -76,17 +68,8 @@ export const DATABASE_SSL_MODE =
     : inferPostgresSslMode(DATABASE_URL);
 export const POSTGRES_STATE_TABLE = process.env.POSTGRES_STATE_TABLE?.trim() || "app_state";
 export const POSTGRES_STATE_ID = process.env.POSTGRES_STATE_ID?.trim() || "primary";
-export const POSTGRES_EXTERNAL_HOST_SUFFIX =
-  process.env.POSTGRES_EXTERNAL_HOST_SUFFIX?.trim().replace(/^\./, "") ||
-  "oregon-postgres.render.com";
 export const HEALTH_DIAGNOSTICS_TOKEN =
   process.env.HEALTH_DIAGNOSTICS_TOKEN?.trim() || "";
-export const LEGACY_MONGODB_URI = process.env.LEGACY_MONGODB_URI?.trim() || "";
-export const LEGACY_MONGODB_DB_NAME =
-  process.env.LEGACY_MONGODB_DB_NAME?.trim() ||
-  (LEGACY_MONGODB_URI ? inferMongoDbName(LEGACY_MONGODB_URI) || "xpath_lims" : "");
-export const LEGACY_MONGODB_COLLECTION =
-  process.env.LEGACY_MONGODB_COLLECTION?.trim() || "app_state";
 export const CORS_ORIGINS = readOrigins();
 export const TRUST_PROXY =
   process.env.TRUST_PROXY?.trim() === "true"

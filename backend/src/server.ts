@@ -25,7 +25,6 @@ import {
   MAVIANCE_ENABLED,
   POSTGRES_STATE_ID,
   POSTGRES_STATE_TABLE,
-  POSTGRES_EXTERNAL_HOST_SUFFIX,
   PORT,
   PUBLIC_REGISTRATION_ENABLED,
   isAllowedOrigin,
@@ -193,7 +192,6 @@ app.get("/api/health/runtime", (req, res) => {
   let databaseHost = "unparseable";
   let databaseProtocol = "unparseable";
   let databaseHostClass = "unknown";
-  let derivedExternalDatabaseHost: string | null = null;
   try {
     const parsedUrl = new URL(DATABASE_URL);
     databaseHost = parsedUrl.hostname || "missing";
@@ -206,13 +204,6 @@ app.get("/api/health/runtime", (req, res) => {
           : databaseHost.includes(".")
           ? "external"
             : "render-internal";
-    if (
-      databaseHostClass === "render-internal" &&
-      databaseHost !== "missing" &&
-      POSTGRES_EXTERNAL_HOST_SUFFIX
-    ) {
-      derivedExternalDatabaseHost = `${databaseHost}.${POSTGRES_EXTERNAL_HOST_SUFFIX}`;
-    }
   } catch {
     // Keep the sanitized fallback labels above.
   }
@@ -225,7 +216,6 @@ app.get("/api/health/runtime", (req, res) => {
     databaseProtocol,
     databaseHost,
     databaseHostClass,
-    derivedExternalDatabaseHost,
     databaseSslMode: DATABASE_SSL_MODE,
     postgresStateTable: POSTGRES_STATE_TABLE,
     postgresStateId: POSTGRES_STATE_ID,

@@ -35,14 +35,12 @@ services:
         value: app_state
       - key: POSTGRES_STATE_ID
         value: primary
-      - key: POSTGRES_EXTERNAL_HOST_SUFFIX
-        value: frankfurt-postgres.render.com
       - key: HEALTH_DIAGNOSTICS_TOKEN
         sync: false
       - key: JWT_SECRET
         generateValue: true
       - key: CORS_ORIGIN
-        value: https://olyvia.xpath-labs.com,https://x-path.vercel.app,http://localhost:5173,http://localhost:3000
+        value: https://olyvia.xpath-labs.com
       - key: OCR_TESSERACT_BINARY
         value: tesseract
       - key: OCR_TESSERACT_LANG

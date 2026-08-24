@@ -8,8 +8,7 @@
     "build": "tsc -p tsconfig.json",
     "start": "node dist/src/server.js",
     "test": "node --import tsx --test tests/*.test.ts",
-    "seed": "tsx scripts/seed.ts",
-    "migrate:postgres": "tsx scripts/migrate-to-postgres.ts"
+    "seed": "tsx scripts/seed.ts"
   },
   "keywords": [
     "express",
@@ -46,7 +45,6 @@
     "ioredis": "^5.10.1",
     "jsonwebtoken": "^9.0.2",
     "mammoth": "^1.12.0",
-    "mongodb": "^7.1.1",
     "multer": "^2.1.1",
     "officeparser": "^6.1.1",
     "pdfjs-dist": "^5.7.284",
