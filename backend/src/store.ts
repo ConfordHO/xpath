@@ -2,10 +2,12 @@ import { Pool, type QueryResult, type QueryResultRow } from "pg";
 
 import { normalizeSiteId } from "./auth.js";
 import {
+  DATABASE_FALLBACK_URL,
   DATABASE_SSL_MODE,
   DATABASE_URL,
   POSTGRES_STATE_ID,
   POSTGRES_STATE_TABLE,
+  RENDER_POSTGRES_EXTERNAL_HOST_SUFFIX,
 } from "./config.js";
 import {
   appendAuditEvent,
@@ -91,9 +93,15 @@ const legacyAboutTexts = new Set([
 type LegacyRecord = Record<string, unknown>;
 
 type PostgresSslMode = "require" | "disable";
+type PostgresConnectionTarget = {
+  connectionString: string;
+  key: string;
+  sslMode: PostgresSslMode;
+};
 
 let pool: Pool | null = null;
 let activePostgresSslMode: PostgresSslMode | null = null;
+let activePostgresConnectionKey: string | null = null;
 
 // Per-org caches — keyed by orgId (= PostgreSQL app_state row id)
 const orgDbCache = new Map<string, Database>();
@@ -1205,24 +1213,88 @@ function quotedIdentifier(value: string) {
 const stateTableIdentifier = quotedIdentifier(POSTGRES_STATE_TABLE);
 let stateTableReadyPromise: Promise<void> | null = null;
 
-async function getPool() {
-  if (pool && activePostgresSslMode === DATABASE_SSL_MODE) {
+function postgresSslModeForUrl(url: string): PostgresSslMode {
+  try {
+    const host = new URL(url).hostname.toLowerCase();
+    if (host === "localhost" || host === "127.0.0.1" || !host.includes(".")) {
+      return "disable";
+    }
+  } catch {
+    // Fall through to secure mode for malformed or opaque URLs.
+  }
+  return "require";
+}
+
+function renderExternalFallbackUrl(url: string) {
+  try {
+    const parsed = new URL(url);
+    const host = parsed.hostname.toLowerCase();
+    if (!host.startsWith("dpg-") || host.includes(".")) {
+      return null;
+    }
+    parsed.hostname = `${host}.${RENDER_POSTGRES_EXTERNAL_HOST_SUFFIX}`;
+    return parsed.toString();
+  } catch {
+    return null;
+  }
+}
+
+function getPostgresConnectionTargets(): PostgresConnectionTarget[] {
+  const targets: PostgresConnectionTarget[] = [
+    {
+      connectionString: DATABASE_URL,
+      key: `primary:${DATABASE_URL}:${DATABASE_SSL_MODE}`,
+      sslMode: DATABASE_SSL_MODE,
+    },
+  ];
+  const fallbackUrls = [DATABASE_FALLBACK_URL, renderExternalFallbackUrl(DATABASE_URL)].filter(
+    (value): value is string => Boolean(value),
+  );
+  for (const fallbackUrl of fallbackUrls) {
+    if (targets.some((target) => target.connectionString === fallbackUrl)) {
+      continue;
+    }
+    const sslMode = postgresSslModeForUrl(fallbackUrl);
+    targets.push({
+      connectionString: fallbackUrl,
+      key: `fallback:${fallbackUrl}:${sslMode}`,
+      sslMode,
+    });
+  }
+  const activeTarget = targets.find((target) => target.key === activePostgresConnectionKey);
+  return activeTarget
+    ? [activeTarget, ...targets.filter((target) => target.key !== activeTarget.key)]
+    : targets;
+}
+
+async function closeActivePool() {
+  const failedPool = pool;
+  pool = null;
+  activePostgresSslMode = null;
+  activePostgresConnectionKey = null;
+  await failedPool?.end().catch(() => undefined);
+}
+
+async function getPool(target: PostgresConnectionTarget) {
+  if (
+    pool &&
+    activePostgresSslMode === target.sslMode &&
+    activePostgresConnectionKey === target.key
+  ) {
     return pool;
   }
 
-  const previousPool = pool;
-  pool = null;
-  activePostgresSslMode = null;
-  await previousPool?.end().catch(() => undefined);
+  await closeActivePool();
 
   pool = new Pool({
-    connectionString: DATABASE_URL,
-    ssl: DATABASE_SSL_MODE === "require" ? { rejectUnauthorized: false } : undefined,
+    connectionString: target.connectionString,
+    ssl: target.sslMode === "require" ? { rejectUnauthorized: false } : undefined,
     max: 4,
     idleTimeoutMillis: 10_000,
     connectionTimeoutMillis: 8_000,
   });
-  activePostgresSslMode = DATABASE_SSL_MODE;
+  activePostgresSslMode = target.sslMode;
+  activePostgresConnectionKey = target.key;
   return pool;
 }
 
@@ -1230,15 +1302,16 @@ async function queryPostgres<T extends QueryResultRow = QueryResultRow>(
   text: string,
   params?: unknown[],
 ): Promise<QueryResult<T>> {
-  try {
-    return await (await getPool()).query<T>(text, params);
-  } catch (error) {
-    const failedPool = pool;
-    pool = null;
-    activePostgresSslMode = null;
-    await failedPool?.end().catch(() => undefined);
-    throw error;
+  let lastError: unknown = null;
+  for (const target of getPostgresConnectionTargets()) {
+    try {
+      return await (await getPool(target)).query<T>(text, params);
+    } catch (error) {
+      lastError = error;
+      await closeActivePool();
+    }
   }
+  throw lastError;
 }
 
 async function ensureStateTable() {

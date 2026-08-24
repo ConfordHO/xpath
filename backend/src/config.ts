@@ -55,6 +55,15 @@ function inferPostgresSslMode(url: string) {
   return "require";
 }
 
+function resolvePostgresSslMode(url: string) {
+  const inferred = inferPostgresSslMode(url);
+  const requested = process.env.DATABASE_SSL_MODE?.trim().toLowerCase();
+  if (requested === "disable" && inferred === "disable") {
+    return "disable";
+  }
+  return inferred;
+}
+
 export const PORT = Number(process.env.PORT ?? 4000);
 export const NODE_ENV = process.env.NODE_ENV?.trim() || "development";
 export const JWT_SECRET = readRequiredEnv("JWT_SECRET");
@@ -62,10 +71,11 @@ export const JWT_ISSUER = process.env.JWT_ISSUER?.trim() || "xpath-backend";
 export const JWT_AUDIENCE = process.env.JWT_AUDIENCE?.trim() || "xpath-clients";
 export const JWT_EXPIRY = process.env.JWT_EXPIRY?.trim() || "7d";
 export const DATABASE_URL = readRequiredEnv("DATABASE_URL");
-export const DATABASE_SSL_MODE =
-  process.env.DATABASE_SSL_MODE?.trim().toLowerCase() === "disable"
-    ? "disable"
-    : inferPostgresSslMode(DATABASE_URL);
+export const DATABASE_SSL_MODE = resolvePostgresSslMode(DATABASE_URL);
+export const DATABASE_FALLBACK_URL = process.env.DATABASE_FALLBACK_URL?.trim() || "";
+export const RENDER_POSTGRES_EXTERNAL_HOST_SUFFIX =
+  process.env.RENDER_POSTGRES_EXTERNAL_HOST_SUFFIX?.trim() ||
+  "frankfurt-postgres.render.com";
 export const POSTGRES_STATE_TABLE = process.env.POSTGRES_STATE_TABLE?.trim() || "app_state";
 export const POSTGRES_STATE_ID = process.env.POSTGRES_STATE_ID?.trim() || "primary";
 export const HEALTH_DIAGNOSTICS_TOKEN =
