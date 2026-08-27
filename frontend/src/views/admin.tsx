@@ -66,6 +66,25 @@ import type {
 
 import { formatInsurancePrice, formatTestPrice } from '../utils'
 
+function userPasswordValidationMessage(password: string) {
+  if (password.length < 10) {
+    return 'Password must be at least 10 characters.'
+  }
+  if (!/[a-z]/.test(password)) {
+    return 'Password must include at least one lowercase letter.'
+  }
+  if (!/[A-Z]/.test(password)) {
+    return 'Password must include at least one uppercase letter.'
+  }
+  if (!/[0-9]/.test(password)) {
+    return 'Password must include at least one number.'
+  }
+  if (!/[^A-Za-z0-9]/.test(password)) {
+    return 'Password must include at least one symbol.'
+  }
+  return null
+}
+
 export function UsersPage() {
   const { user } = useAuth()
   const { locale } = useLanguage()
@@ -135,8 +154,17 @@ export function UsersPage() {
 
   const save = async () => {
     setError(null)
+    const password = form.password.trim()
+    const passwordError = !editing || password ? userPasswordValidationMessage(password) : null
+    if (passwordError) {
+      setError(passwordError)
+      return
+    }
     const payload = {
       ...form,
+      name: form.name.trim(),
+      email: form.email.trim().toLowerCase(),
+      password,
       siteId:
         form.role === 'super_admin'
           ? null
@@ -274,34 +302,38 @@ export function UsersPage() {
             {error ? <Alert severity="error">{error}</Alert> : null}
             <TextField label="Name" value={form.name} onChange={(event) => setForm((prev) => ({ ...prev, name: event.target.value }))} />
             <TextField label="Email" value={form.email} onChange={(event) => setForm((prev) => ({ ...prev, email: event.target.value }))} />
-            <FormControl>
+            <FormControl fullWidth>
               <InputLabel>Role</InputLabel>
               <Select
+                native
                 label="Role"
                 value={form.role}
                 onChange={(event) => setForm((prev) => ({ ...prev, role: String(event.target.value) as UserRole }))}
               >
                 {roleOptions.map((role) => (
-                  <MenuItem key={role} value={role}>{roleLabels[role]}</MenuItem>
+                  <option key={role} value={role}>{roleLabels[role]}</option>
                 ))}
               </Select>
             </FormControl>
-            <FormControl>
+            <FormControl fullWidth>
               <InputLabel>Site</InputLabel>
               <Select
+                native
                 label="Site"
                 value={form.role === 'super_admin' ? '' : form.siteId}
                 disabled={!canSelectUserSite(user) || form.role === 'super_admin'}
                 onChange={(event) => setForm((prev) => ({ ...prev, siteId: String(event.target.value) }))}
               >
+                <option value="">Global</option>
                 {sitesState.data.map((site) => (
-                  <MenuItem key={site._id} value={site._id}>{site.name}</MenuItem>
+                  <option key={site._id} value={site._id}>{site.name}</option>
                 ))}
               </Select>
             </FormControl>
-            <FormControl>
+            <FormControl fullWidth>
               <InputLabel>Preferred language</InputLabel>
               <Select
+                native
                 label="Preferred language"
                 value={form.preferredLocale}
                 onChange={(event) =>
@@ -311,8 +343,8 @@ export function UsersPage() {
                   }))
                 }
               >
-                <MenuItem value="en">English</MenuItem>
-                <MenuItem value="fr">Francais</MenuItem>
+                <option value="en">English</option>
+                <option value="fr">Francais</option>
               </Select>
             </FormControl>
             <PasswordField

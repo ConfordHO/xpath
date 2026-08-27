@@ -162,6 +162,16 @@ const projectReviewStatusSchema = z.object({
   developerResponse: z.string().trim().max(4000).nullable().optional(),
 });
 
+function userPayloadErrorMessage(error: z.ZodError) {
+  const issue = error.issues[0];
+  const field = issue?.path.join(".");
+  if (field === "name") return "Name is required.";
+  if (field === "email") return "Enter a valid email address.";
+  if (field === "role") return "Select a valid role.";
+  if (field === "password") return issue.message;
+  return issue?.message || "Invalid user payload";
+}
+
 app.use(
   cors({
     credentials: true,
@@ -1082,7 +1092,7 @@ app.post("/api/auth/register", async (req, res) => {
 
   const parsed = userSchema.safeParse(req.body);
   if (!parsed.success) {
-    return res.status(400).json({ message: "Invalid registration payload" });
+    return res.status(400).json({ message: userPayloadErrorMessage(parsed.error) });
   }
   if (parsed.data.role !== "doctor") {
     return res.status(403).json({ message: "Public registration is limited to referrer portal accounts" });
@@ -2151,7 +2161,7 @@ app.get("/api/users", requireRoles("admin"), async (req: AuthRequest, res) => {
 app.post("/api/users", requireRoles("admin"), async (req: AuthRequest, res) => {
   const parsed = userSchema.safeParse(req.body);
   if (!parsed.success) {
-    return res.status(400).json({ message: "Invalid user payload" });
+    return res.status(400).json({ message: userPayloadErrorMessage(parsed.error) });
   }
 
   const currentUser = ensureUser(req);
@@ -2211,7 +2221,7 @@ app.post("/api/users", requireRoles("admin"), async (req: AuthRequest, res) => {
 app.put("/api/users/:id", requireRoles("admin"), async (req: AuthRequest, res) => {
   const parsed = userSchema.partial().safeParse(req.body);
   if (!parsed.success) {
-    return res.status(400).json({ message: "Invalid user payload" });
+    return res.status(400).json({ message: userPayloadErrorMessage(parsed.error) });
   }
 
   const currentUser = ensureUser(req);

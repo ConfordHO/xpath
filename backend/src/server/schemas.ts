@@ -8,11 +8,11 @@ export const loginSchema = z.object({
 
 export const strongPasswordSchema = z
   .string()
-  .min(10)
-  .regex(/[a-z]/)
-  .regex(/[A-Z]/)
-  .regex(/[0-9]/)
-  .regex(/[^A-Za-z0-9]/);
+  .min(10, { message: "Password must be at least 10 characters." })
+  .regex(/[a-z]/, { message: "Password must include at least one lowercase letter." })
+  .regex(/[A-Z]/, { message: "Password must include at least one uppercase letter." })
+  .regex(/[0-9]/, { message: "Password must include at least one number." })
+  .regex(/[^A-Za-z0-9]/, { message: "Password must include at least one symbol." });
 
 export const patientSchema = z.object({
   firstName: z.string().min(1),
