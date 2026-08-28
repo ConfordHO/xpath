@@ -15,6 +15,7 @@ function lazyPage(loader: () => Promise<unknown>, exportName: string) {
 }
 
 const DashboardPage = lazyPage(() => import('../views/dashboard'), 'DashboardPage')
+const UserGuidePage = lazyPage(() => import('../views/userGuide'), 'UserGuidePage')
 const ProjectReviewPage = lazyPage(() => import('../views/projectReview'), 'ProjectReviewPage')
 const UsersPage = lazyPage(() => import('../views/admin'), 'UsersPage')
 const DoctorsPage = lazyPage(() => import('../views/admin'), 'DoctorsPage')
@@ -74,6 +75,7 @@ export function AppRoutes() {
         <Route element={<ProtectedLayout />}>
           <Route path="/dashboard" element={<DashboardPage />} />
           <Route path="/orders/:orderId" element={<OrderDetailPage />} />
+          <Route path="/user-guide" element={<UserGuidePage />} />
           <Route path="/settings" element={<MyAccountPage />} />
           <Route path="/project-review" element={<ProjectReviewPage />} />
 

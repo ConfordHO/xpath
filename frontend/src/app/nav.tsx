@@ -11,6 +11,7 @@ import Inventory2OutlinedIcon from '@mui/icons-material/Inventory2Outlined'
 import ListAltOutlinedIcon from '@mui/icons-material/ListAltOutlined'
 import LocalShippingOutlinedIcon from '@mui/icons-material/LocalShippingOutlined'
 import MedicalInformationOutlinedIcon from '@mui/icons-material/MedicalInformationOutlined'
+import MenuBookOutlinedIcon from '@mui/icons-material/MenuBookOutlined'
 import NotificationsNoneOutlinedIcon from '@mui/icons-material/NotificationsNoneOutlined'
 import PaymentsOutlinedIcon from '@mui/icons-material/PaymentsOutlined'
 import RateReviewOutlinedIcon from '@mui/icons-material/RateReviewOutlined'
@@ -30,6 +31,7 @@ function settingsGroup(): NavGroup {
   return {
     label: 'Account',
     items: [
+      { label: 'User Guide', to: '/user-guide', icon: <MenuBookOutlinedIcon /> },
       { label: 'Project review', to: '/project-review', icon: <RateReviewOutlinedIcon /> },
       { label: 'Settings', to: '/settings', icon: <AccountCircleOutlinedIcon /> },
     ],

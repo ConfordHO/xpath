@@ -115,6 +115,12 @@ export function UsersPage() {
     siteId: defaultSiteIdForUser(user),
     preferredLocale: user?.preferredLocale ?? 'fr',
   })
+  const [currentTime, setCurrentTime] = useState(() => Date.now())
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setCurrentTime(Date.now()), 60_000)
+    return () => window.clearInterval(timer)
+  }, [])
 
   const siteName = (siteId?: string | null) =>
     sitesState.data.find((site) => site._id === siteId)?.name ?? siteId ?? 'Global'
@@ -210,7 +216,7 @@ export function UsersPage() {
   }
 
   const isLocked = (account: SafeUser) =>
-    Boolean(account.lockedUntil && new Date(account.lockedUntil).getTime() > Date.now())
+    Boolean(account.lockedUntil && new Date(account.lockedUntil).getTime() > currentTime)
 
   const accountStatus = (account: SafeUser) => {
     if (isLocked(account)) {
